@@ -32,7 +32,7 @@ dataloadv          # 或 python -m dataloadv
 - 单测：`pytest`（137 项，含真实羊 latin1 EDF 与真实 GDF 数据）
 - 端到端：`python scripts/e2e_m1.py` … `e2e_m5.py`（各里程碑真实数据验收，幂等可反复跑）
 
-环境搭建完整命令见 [HANDOFF.md](HANDOFF.md)；开发计划见 [plan.md](plan.md)，当前进度见 [STATUS.md](STATUS.md)。
+环境搭建完整命令见 [HANDOFF.md](HANDOFF.md)；开发计划见 [plan.md](plan.md)，当前进度见 [STATUS.md](STATUS.md)；**说明·运行·使用·调试一册通览见 [MANUAL.md](MANUAL.md)**。
 
 ## 技术栈
 

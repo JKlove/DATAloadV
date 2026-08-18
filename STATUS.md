@@ -74,6 +74,8 @@
 
 ## 最近变更记录（新条目加在最上面）
 
+- 2026-08-18（v1 收官后补充）：编写 **MANUAL.md**（说明/运行/使用/调试一册通览，README 已链接）；盘点 UI 时发现并修复 **事件跳转按钮接线反了**（signal_browser.py：`◀ 上一事件`误接 `_jump_event(+1)` 即跳更晚事件——两按钮 lambda 对调，代码内留注释；e2e_m1 直接调 `_jump_event(1)` 语义未受影响，回归 ALL OK）。
+
 - 2026-08-18（M5 完成，v1 收官）：batch/jobs.py（JobSpec/PipelineSpec 启动前校验/FileResult/BatchSummary）+ batch/engine.py（**BatchEngine 纯 Python**——ThreadPoolExecutor 默认 2 线程、threading.Event 取消、单文件失败不杀整批、LoadedRawCache pin 防并发互逐、_export CSV/H5+sidecar batch extra）；proc/base.py + features/base.py 加 `cancel_check`（逐步骤检查抛 PipelineCancelled）；core/app_settings.py（pydantic 设置 + 原子写 + 热生效）；UI（batch_view 进度表/失败行红显/双击日志对话框、batch_dialog 两页+queue.Queue+QTimer150ms 事件泵、settings_dialog 三字段、主窗口文件/处理菜单接线 + 批处理结果 tab）；io/neo_reader.py（_NeoRawReader 模板 + Blackrock/OpenEphys/Intan）+ io/nwb_reader.py（ElectricalSeries/trials→EventTable）；README 重写（v1 全览/典型流程/验证口径）；tests +15（137 绿）；e2e_m5 19 项 ALL OK + m1-m4/smoke 回归全绿。
 
 - 2026-08-18（M4 完成）：proc/crop.py（时间窗裁剪，四层决策第③层；raw 绝对时间/epochs 相对事件锚点）；features/base.py（FeatureExtractor ABC + FEATURE_REGISTRY + apply_features，与 proc 层同构）+ spectral.py 扩展（array_welch 数组版 + BandPowerFeature 频带功率 δθαβγ+自定义+相对/对数 + WelchPsdFeature PSD 曲线仅 raw）+ timedomain.py（8 统计量纯 numpy）；batch/results.py FeatureTable（长表 COLUMNS 7 列 + 中文表头映射 + to_wide dropna=False）；export/ 三模块（features_io CSV BOM 中文表头+曲线宽表分轴分组/HDF5、epochs_io HDF5 结构化+FIF、provenance .pipeline.json sidecar）；UI（pipeline_panel 特征区+视口预填+features_ready、feature_table.py 特征结果 tab 数值排序、主窗口处理菜单 4 动作）；tests +50（122 绿）；e2e_m4（18 项：羊 104 行/50Hz 峰消除、A01T 14400 行、HDF5/FIF 回读一致）。

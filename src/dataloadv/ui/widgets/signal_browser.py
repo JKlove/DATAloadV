@@ -117,8 +117,10 @@ class SignalBrowserView(QWidget):
         self._lbl_time = QLabel(S.BROWSER_NO_DATA)
         self._btn_prev = QPushButton(S.BTN_PREV_EVENT)
         self._btn_next = QPushButton(S.BTN_NEXT_EVENT)
-        self._btn_prev.clicked.connect(lambda: self._jump_event(+1))
-        self._btn_next.clicked.connect(lambda: self._jump_event(-1))
+        # 「◀ 上一事件」= 时间更早（direction=-1）；「下一事件 ▶」= 更晚（+1）。
+        # 曾长期接反（prev→+1/next→-1），写使用手册盘点 UI 时发现于 2026-08-18 修正。
+        self._btn_prev.clicked.connect(lambda: self._jump_event(-1))
+        self._btn_next.clicked.connect(lambda: self._jump_event(+1))
         gain_lbl = QLabel(S.LBL_GAIN)
         self._gain_slider = QSlider(Qt.Orientation.Horizontal)
         self._gain_slider.setRange(-20, 20)  # 10^(x/10)：0.1× – 10×，指数刻度
