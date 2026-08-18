@@ -135,6 +135,7 @@ src/dataloadv/
 ## 当前接手要点（2026-08-18，M3 已完成）
 
 - M3 全部完成并验证（pytest 72 绿 + e2e_m1 13 + e2e_m2 17 + e2e_m3 11 项全过，见 review.md）；下一步是 **M4 特征+导出**，任务拆解见 TODO.md「M4」一节
+- **特征范围决策（用户 2026-08-18 确认）：四层组合**——全量默认 + epochs 逐段 + crop 步骤（显式时间窗，进 sidecar）+ 视口一键预填（不隐式绑定）；滤波类预处理仍全量（边界效应），crop 只裁数据范围
 - M4 动工顺序建议：先 features/base.py（FeatureExtractor ABC + registry，照抄 proc/base.py 的注册表模式）+ 三个提取器（WelchPsd/BandPower 复用 features/spectral.py 的 mean_welch；TimeDomainStats 纯 numpy），再 FeatureTable（长表 DataFrame：recording/epoch_index/event_code/channel/feature/value）+ feature_table.py 视图，最后 export/（features_io CSV UTF-8 BOM/HDF5 + epochs_io + provenance——管线 JSON 直接用 `pipeline_panel.pipeline_dicts()`，即 step_to_dict 列表）
 - M3 关键设计（M4/M5 沿用）：**ProcStep 模式**——每步骤 = pydantic 参数模型（Field(title=中文) + json_schema_extra 的 unit/min/max/decimals）+ `apply(ctx)->ctx`；`applies_to` 声明可用阶段；STEP_REGISTRY 注册后 params_form 零 UI 代码自动出表单；`apply_pipeline(ctx, [(step_id, params)])` 统一入口（阶段检查/计时/history/中文日志）。**新步骤三件套：参数模型 + Step 类 + strings_zh 文案**
 - 预览机制：`ProcessingContext.from_recording` 强制 PRELOAD + `raw.copy()`（原始逐位不变，pytest 有断言）；处理副本经 `make_preview_recording` 包装成不注册、不入工作区的 Recording → 复用全部浏览器机制

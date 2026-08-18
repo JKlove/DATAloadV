@@ -47,8 +47,19 @@
 
 ## M4 特征 + 导出（下一个里程碑）
 
-- [ ] features/ 三个提取器（Welch PSD / 频带功率 / 时域统计）
-- [ ] batch/results.py FeatureTable + ui/widgets/feature_table.py
+> **特征范围决策（用户 2026-08-18 确认）：四层组合**——① 全量默认（文件级摘要/批处理基线）；
+> ② epochs 逐段（每段一行长表，BCI 事件锁时分析）；③ proc 链加 `crop` 步骤实现显式任意时间窗
+> （可序列化进 sidecar、批处理复用）；④ 特征入口"用当前显示窗口"按钮**预填**时间窗参数
+> （不隐式绑定视口，保证可复现）。注意：预处理滤波类步骤仍全量做（边界效应/滤波器状态），
+> crop 是裁剪数据范围而非按视口滤波。
+
+- [ ] proc/crop.py：时间窗裁剪步骤（tmin/tmax 秒，raw+epochs 皆可；序）
+- [ ] features/base.py（FeatureExtractor ABC + registry，照 proc/base 模式）+ 三个提取器
+      （WelchPsd/BandPower 复用 mean_welch；TimeDomainStats 纯 numpy）——raw 作用于处理上下文全量，
+      epochs 逐段
+- [ ] batch/results.py FeatureTable（长表：recording/epoch_index/event_code/channel/feature/value）
+      + ui/widgets/feature_table.py
+- [ ] 特征入口"用当前显示窗口"预填按钮（读活动浏览器视口起止 → 填 crop/特征时间窗参数）
 - [ ] export/：features_io（CSV BOM / HDF5）+ epochs_io（HDF5/FIF）+ provenance JSON sidecar
 - [ ] 验证：CSV Excel 可开中文表头；HDF5 回读形状一致
 
