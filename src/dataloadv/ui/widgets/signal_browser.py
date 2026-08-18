@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QListWidget,
     QListWidgetItem,
+    QMenu,
     QPushButton,
     QSlider,
     QVBoxLayout,
@@ -83,6 +84,7 @@ class SignalBrowserView(QWidget):
     """
 
     gain_changed = Signal(float)
+    bads_changed = Signal(list)  # 坏道标记变化（携带通道名列表；管线面板联动）
 
     def __init__(self, recording: Recording, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -92,6 +94,8 @@ class SignalBrowserView(QWidget):
         self._gain = 1.0
         self._event_lines: list[pg.InfiniteLine] = []
         self._loaded_once = False
+        # 坏道标记（raw 未加载时先记在这里，加载后一次性写入 info["bads"]）
+        self._bad_names: set[str] = set()
 
         self._build_ui()
         self._populate_channels()
@@ -125,10 +129,12 @@ class SignalBrowserView(QWidget):
             bar.addWidget(w)
         bar.addStretch(1)
 
-        # 通道列表（左）
+        # 通道列表（左）：勾选显隐 + 右键标记坏道（M3 与 BadChannelsStep 联动）
         self._ch_list = QListWidget()
         self._ch_list.setMaximumWidth(150)
         self._ch_list.itemChanged.connect(self._on_channel_toggle)
+        self._ch_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self._ch_list.customContextMenuRequested.connect(self._on_channel_context)
 
         # 图形区：主图 + 事件条
         self._gfx = pg.GraphicsLayoutWidget()
@@ -187,6 +193,8 @@ class SignalBrowserView(QWidget):
     def _on_raw_ready(self, _raw) -> None:
         """后台 ensure_raw 完成后（主线程）：绑定视口事件并画第一帧."""
         self._loaded_once = True
+        if self._bad_names and self.rec.raw is not None:
+            self.rec.raw.info["bads"] = self.current_bads()  # 加载前的标记补写
         vb = self._plot.getViewBox()
         vb.sigRangeChanged.connect(self._schedule_refresh)
         self._refresh_data()
@@ -309,6 +317,40 @@ class SignalBrowserView(QWidget):
             self._channels[row]["enabled"] = on
             self._channels[row]["curve"].setVisible(on)
             self._refresh_data()
+
+    # ------------------------------------------------------------------ 坏道标记
+
+    def current_bads(self) -> list[str]:
+        """当前已标记的坏道（管线面板添加 BadChannelsStep 时的默认值）."""
+        return sorted(self._bad_names)
+
+    def _on_channel_context(self, pos) -> None:
+        """通道右键 → 标记/取消坏道."""
+        item = self._ch_list.itemAt(pos)
+        if item is None:
+            return
+        name = item.text()
+        menu = QMenu(self._ch_list)
+        unmark = name in self._bad_names
+        act = menu.addAction(S.MENU_UNMARK_BAD if unmark else S.MENU_MARK_BAD)
+        if menu.exec(self._ch_list.mapToGlobal(pos)) is act:
+            self.toggle_bad(name)
+
+    def toggle_bad(self, name: str) -> None:
+        """切换某通道的坏道标记：曲线灰显 + 写回 raw.info['bads'] + 广播."""
+        if name not in self.rec.meta.channel_names:
+            return
+        if name in self._bad_names:
+            self._bad_names.discard(name)
+        else:
+            self._bad_names.add(name)
+        for ch in self._channels:
+            if ch["name"] == name:
+                color = S.BAD_PEN_COLOR if name in self._bad_names else "#7fbfff"
+                ch["curve"].setPen(pg.mkPen(color, width=1))
+        if self.rec.raw is not None:  # 未加载时标记暂存，_on_raw_ready 统一写入
+            self.rec.raw.info["bads"] = self.current_bads()
+        self.bads_changed.emit(self.current_bads())
 
     def teardown(self) -> None:
         """tab 关闭清理（主窗口调用 state.close_recording 完成数据释放）."""

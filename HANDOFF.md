@@ -41,14 +41,15 @@ pip install -e "/Users/huyingbing/VSproject/intervention BCI/DataloadV[dev]"
 ```bash
 conda activate dlv
 dataloadv                                    # 启动应用（或 python -m dataloadv）
-pytest                                       # 全部单测（M2：43 passed，含 5 个 real 数据项）
+pytest                                       # 全部单测（M3：72 passed，含 5 个 real 数据项）
 pytest -m real                               # 仅真实数据冒烟（data/sheep 缺失自动跳过）
 python scripts/smoke_gui.py                  # GUI 冒烟：真窗口启动自检后自动退出
 python scripts/e2e_m1.py                     # M1 端到端：真实导入→浏览→渲染→释放（幂等，可反复跑）
 python scripts/e2e_m2.py                     # M2 端到端：4.9GB 扫描+六格式打开（幂等，可反复跑）
+python scripts/e2e_m3.py                     # M3 端到端：预览/PSD 压制/分段/tab 释放（幂等，可反复跑）
 ```
 
-## 架构导览（M2 后的实际结构）
+## 架构导览（M3 后的实际结构）
 
 ```
 src/dataloadv/
@@ -66,8 +67,17 @@ src/dataloadv/
 │   ├── event_maps.py        # GDF 官方事件码→中文标签（16 码，desc_2a/2b.pdf 原文核实）
 │   ├── table.py             # CSV/TXT：分隔符嗅探+数值性验证+FS_UNSET_NOTE 询问标记
 │   └── hdf5.py              # 通用 HDF5：零数据 IO 定位 2-D 信号集，歧义拒绝
-├── proc/                    # 预处理步骤（M3）——每步=pydantic参数+apply(ctx)，可序列化
-├── features/                # 特征提取器（M4）
+├── proc/                    # 预处理层（M3，禁止 import Qt）——每步=pydantic参数+apply(ctx)
+│   ├── context.py           # ProcessingContext：raw/epochs/stage/events/history/logs + from_recording（副本隔离）
+│   ├── base.py              # ProcStep ABC + STEP_REGISTRY + register_step + step_to/from_dict + apply_pipeline
+│   ├── filters.py           # bandpass（raw+epochs）/ notch（仅 raw——mne Epochs 无 notch_filter）
+│   ├── referencing.py       # reref：平均/自定义参考（mne 1.12 返回副本，必须写回 ctx！）
+│   ├── resample.py          # resample：降采样（升采样拒绝）
+│   ├── bads.py              # bads：标记（幂等）/插值；默认值带入浏览器右键标记
+│   ├── epoching.py          # epoching：事件分段（raw→epochs 阶段翻转；reject_uv 阈值丢弃）
+│   └── preview.py           # PreviewReader + make_preview_recording：处理副本包装成可浏览 Recording
+├── features/                # 特征提取层（M3 起步，M4 扩展）
+│   └── spectral.py          # mean_welch：跨通道平均 Welch PSD（PSD 视图与 M4 特征共用）
 ├── batch/                   # 批处理引擎（M5）
 ├── export/                  # 导出与溯源 sidecar（M4）
 ├── workers/generic.py       # run_in_thread：后台任务→_MainRelay 主线程回调（见坑 #7/#13）
@@ -77,13 +87,16 @@ src/dataloadv/
     ├── strings_zh.py        # 全部中文文案集中（class S）
     ├── dialogs/import_dialog.py   # 导入控制器：worker 扫描→进度→错误表
     └── widgets/             # workspace_tree / meta_table / signal_browser / event_lane / log_panel
+    │                         #   + params_form（pydantic 自动表单）/ pipeline_panel（步骤链+预览+PSD）
+    │                         #   + psd_view（原始 vs 处理后对比）/ epochs_preview（分段跨段平均视图）
 ```
 
 **四条硬性规则**（review 时检查）：
 1. core/io/proc/features/batch/export 不得 import PySide6/pyqtgraph
 2. UI 不做计算，一律经 workers/batch 线程 + 信号
 3. 跨线程只传纯 Python/mne 对象
-4. 里程碑收尾四件事：治理文件更新 → review.md 记录 → 上下文检查（≥70% 压缩）→ git commit
+4. 上下文检测双检查点（用户 2026-08-18 更新）：里程碑**中途**（每 1–2 个子任务）与**收尾**各查一次，接近/超过 70% → 先把关键状态写入治理文件再压缩；
+5. 里程碑收尾四件事：治理文件更新 → review.md 记录 → 上下文检测 → git commit
 
 ## 代码风格约定
 
@@ -111,11 +124,20 @@ src/dataloadv/
 15. **scipy.io.savemat 的 struct 不接受 None 字段**（`Could not convert None to array`）：合成 mat 夹具里别放 None 占位，删掉该字段即可。
 16. **搜索摘要不可信，官方 PDF 才是权威**：GDF 事件码表从搜索结果拿到的"含义"多处错误（781 被猜成 correction/beep wrong、1077 被猜成 eyes closed）；用 pypdf（一次性 pip 工具，不入应用依赖）从官方 desc_2a.pdf/desc_2b.pdf 提取原文核实——781 = "BCI feedback (continuous)"，1077–1081 = 眼动伪迹标记。
 17. **macOS zsh 无 `timeout` 命令**：限时跑命令用执行工具自带的 timeout 参数，别写 `timeout 60 cmd`。
+18. **mne 1.12 `set_eeg_reference` 返回副本非就地**（M3 实测 `inst is raw` 为 False）：必须用返回值写回 ctx.raw/ctx.epochs，否则重参考悄悄失效。
+19. **mne `Epochs` 没有 `notch_filter` 也没有 `event_name`**：陷波限 raw 阶段（applies_to）；每类段数统计用 `event_id` 逆映射 `{v: k for k, v in event_id.items()}`。
+20. **`compute_psd` 不接受 `fmax=None`**（np.isfinite 报 TypeError）：fmax 为 None 时显式传 Nyquist（sfreq/2）。
+21. **同刻多事件 + 表单覆盖时序**（M3 e2e 排障）：① 同一时刻多事件会让 `mne.Epochs` 抛 "Event time samples were not unique"——必须 `event_repeated="drop"`；② PipelinePanel 的参数覆盖必须在**表单构建之前**合入（`add_step(step_id, **overrides)`），表单 collect() 会用控件当前值冲掉之后改的 `_steps` 条目。
+22. **pydantic 步骤参数默认值必须可构造**：空列表/非空类校验放模型 validator 会让 `default_params()` 直接 ValidationError（表单往返测试暴露）——此类校验移到 apply() 执行期给中文 StepError。
+23. **QListWidget 清空触发 currentRowChanged(-1)**：清空/删除步骤行时 `list.clear()` 会用过期行号调 `_on_select`——槽函数必须做行号边界守卫。
+24. **tmin=0 时 baseline (None, 0) 只含一个样本**，mne 拒绝（"Baseline interval is only one sample"）：epoching 内自动转 (0.0, 0.0)。
 
-## 当前接手要点（2026-08-18，M2 已完成）
+## 当前接手要点（2026-08-18，M3 已完成）
 
-- M2 全部完成并验证（pytest 43 绿 + e2e_m1 13 项 + e2e_m2 17 项全过，见 review.md）；下一步是 **M3 预处理链+预览**，任务拆解见 TODO.md「M3」一节
-- M3 动工顺序建议：先 proc/context.py + proc/base.py（ProcStep ABC + STEP_REGISTRY + to_dict/from_dict 序列化——预览/批处理/sidecar 共用），再 6 个步骤（bandpass/notch/reref/resample/bads/epoching，全是 mne raw/epochs 方法包装），最后 pipeline_panel + params_form（pydantic 自动表单）+ psd_view + 预览副本 tab
-- M2 关键设计（M3 沿用）：`_MneRawReader` 模板基类——新 mne 格式只需声明 `_fmt`/`_read_fn`（**staticmethod 包住**，见坑 #12）/`_extra` 三行；预处理 apply 前记得坑 #3（mne 滤波要 preload=True）
-- 读取器新格式的通用套路：`RecordingMeta(**self.common_meta_fields(path, fmt), ...)` 一次构造（勿手拼 dict，会缺必填字段）；`_meta_from_raw` 用已构造的 raw 提 n_channels/freq/duration/events
-- 真实数据路径速查：羊 EDF `data/sheep/*.edf`；PhysioNet `data/dataset/files/S001/`；2a GDF `data/dataset/BCICIV_2a_gdf/A01T.gdf`；2b GDF `data/dataset/BCICIV_2b_gdf/B0303T.gdf`；ds4 mat `data/dataset/BCICIV_4_mat/sub9_comp.mat`
+- M3 全部完成并验证（pytest 72 绿 + e2e_m1 13 + e2e_m2 17 + e2e_m3 11 项全过，见 review.md）；下一步是 **M4 特征+导出**，任务拆解见 TODO.md「M4」一节
+- M4 动工顺序建议：先 features/base.py（FeatureExtractor ABC + registry，照抄 proc/base.py 的注册表模式）+ 三个提取器（WelchPsd/BandPower 复用 features/spectral.py 的 mean_welch；TimeDomainStats 纯 numpy），再 FeatureTable（长表 DataFrame：recording/epoch_index/event_code/channel/feature/value）+ feature_table.py 视图，最后 export/（features_io CSV UTF-8 BOM/HDF5 + epochs_io + provenance——管线 JSON 直接用 `pipeline_panel.pipeline_dicts()`，即 step_to_dict 列表）
+- M3 关键设计（M4/M5 沿用）：**ProcStep 模式**——每步骤 = pydantic 参数模型（Field(title=中文) + json_schema_extra 的 unit/min/max/decimals）+ `apply(ctx)->ctx`；`applies_to` 声明可用阶段；STEP_REGISTRY 注册后 params_form 零 UI 代码自动出表单；`apply_pipeline(ctx, [(step_id, params)])` 统一入口（阶段检查/计时/history/中文日志）。**新步骤三件套：参数模型 + Step 类 + strings_zh 文案**
+- 预览机制：`ProcessingContext.from_recording` 强制 PRELOAD + `raw.copy()`（原始逐位不变，pytest 有断言）；处理副本经 `make_preview_recording` 包装成不注册、不入工作区的 Recording → 复用全部浏览器机制
+- 读取器新格式的通用套路（M2）：`_MneRawReader` 模板基类，只声明 `_fmt`/`_read_fn`（**staticmethod 包住**，坑 #12）/`_extra`；`RecordingMeta(**self.common_meta_fields(path, fmt), ...)` 一次构造；预处理前记得坑 #3（mne 滤波要 preload=True）
+- 真实数据路径速查：羊 EDF `data/sheep/*.edf`；PhysioNet `data/dataset/files/S001/`；2a GDF `data/dataset/BCICIV_2a_gdf/A01T.gdf`；2b GDF `data/dataset/BCICIV_2b_gdf/B0101T.gdf`；ds1 mat `data/dataset/BCICIV_1_mat/BCICIV_calib_ds1a.mat`；ds4 mat `data/dataset/BCICIV_4_mat/sub1_comp.mat`
+- **数据集详细信息（来源/结构/参数/事件码表/已知坑）全部在根目录 `DATA_NOTES.md`**（2026-08-18 按用户要求建立），改读取器前先读它；新数据/新实证发现要回写它

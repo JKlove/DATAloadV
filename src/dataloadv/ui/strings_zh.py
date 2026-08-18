@@ -101,3 +101,40 @@ class S:
         "文件 {name} 内不含采样率信息，\n"
         "请输入该数据的采样率（Hz）。\n（记住一次，之后直接使用）"
     )
+
+    # ===== M3：处理管线面板 =====
+    PIPE_BTN_ADD = "添加步骤"
+    PIPE_BTN_REMOVE = "删除"
+    PIPE_BTN_UP = "上移"
+    PIPE_BTN_DOWN = "下移"
+    PIPE_BTN_CLEAR = "清空"
+    PIPE_BTN_PREVIEW = "预览当前文件"
+    PIPE_BTN_PSD = "对比 PSD"
+    PIPE_LBL_STEPS = "处理步骤（自上而下执行）"
+    PIPE_LBL_PARAMS = "步骤参数"
+    PIPE_EMPTY_HINT = "先添加处理步骤，再点「预览当前文件」。\n预览在数据副本上进行，不影响原始数据。"
+    PIPE_MSG_NO_STEPS = "尚未添加任何处理步骤"
+    PIPE_MSG_NO_ACTIVE = "请先打开一个浏览 tab（预览作用于当前 tab 的数据）"
+    PIPE_MSG_NOT_LOADED = "当前 tab 数据尚未加载完成，请稍候再试"
+    PIPE_MSG_PARAMS_INVALID = "步骤参数不合法"
+    PIPE_MSG_PREVIEW_RUNNING = "正在预览处理…"
+    PIPE_MSG_PSD_RUNNING = "正在计算 PSD…"
+    PIPE_MSG_PSD_NO_PREVIEW = "尚无预览结果——将只显示原始数据 PSD（先「预览当前文件」可对比）"
+    PIPE_PREVIEW_TAB_FMT = "预览 · {name}"
+    PIPE_PREVIEW_FAIL_TITLE = "预览失败"
+    PIPE_PSD_TITLE = "功率谱对比（通道平均，Welch）"
+    PIPE_PSD_LABEL_BEFORE = "原始"
+    PIPE_PSD_LABEL_AFTER = "处理后"
+    PIPE_PSD_AXIS_X = "频率 (Hz)"
+    PIPE_PSD_AXIS_Y = "功率谱密度 (µV²/Hz)"
+    PIPE_EPOCHS_TAB_FMT = "分段预览 · {name}"
+    PIPE_EPOCHS_TOTAL = "分段总数：{n}"
+    PIPE_EPOCHS_PER_CODE = "各类分段数"
+    PIPE_EPOCHS_AVG_PLOT = "各通道分段平均波形（跨段平均，µV）"
+    PIPE_EPOCHS_NO_PLOT = "（无分段可画）"
+
+    # ===== M3：浏览器坏道标记 =====
+    MENU_MARK_BAD = "标记为坏道"
+    MENU_UNMARK_BAD = "取消坏道标记"
+    BAD_PEN_COLOR = "#8a8a8a"  # 坏道曲线灰显色
+

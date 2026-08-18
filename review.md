@@ -131,3 +131,49 @@
 - 跨线程只传纯 Python/mne 对象 ✅（_MainRelay 槽参数 object/str，投递到主线程后才转 Python 回调）
 
 **收尾四件事**：治理文件已更新（STATUS/TODO/HANDOFF：坑清单 11→17 条、架构树 M2 版、接手要点改 M3）→ review.md 本节 ✅ → 上下文检查：M2 开发期间本会话上下文已满并自动压缩过一次（压缩摘要续接完成全部 M2 工作与验证）；当前窗口以摘要重启，占用远低于 70% 阈值，无需再压——全部关键状态已落盘治理文件 → git commit `M2: ...` ✅
+
+## M3 预处理链 + 预览（2026-08-18 完成）
+
+**做了什么**：proc 层（ProcessingContext 副本隔离 + ProcStep ABC/STEP_REGISTRY/apply_pipeline 阶段检查 + 6 步骤：bandpass/notch/reref/resample/bads/epoching + step_to/from_dict 序列化）→ features/spectral.py mean_welch → UI（params_form pydantic 自动表单、pipeline_panel 步骤链编排、psd_view 原始 vs 处理后对比、epochs_preview 分段视图、signal_browser 坏道右键标记灰显+联动）→ 主窗口接线（处理菜单/预览 tab/分段预览 tab）→ tests +29 → e2e_m3。
+
+**验证执行情况**
+
+| 验证项 | 结果 |
+|---|---|
+| pytest 全量 | ✅ **72 passed**（M3 新增 29：proc 23 + UI 6；1.55s） |
+| 表单往返不变量（6 步骤默认值 → 表单 → collect 全等） | ✅ |
+| 陷波 50Hz 抑制 >10×（合成 ch1 30µV 工频） | ✅ |
+| 副本隔离（from_recording 后原始 raw 逐位不变） | ✅ np.array_equal |
+| 重参考后跨通道均值 ≈0（mne 1.12 返回副本陷阱已处理） | ✅ <1e-15 |
+| 阶段守卫（分段后陷波 → 中文"需要连续数据"报错） | ✅ |
+| 序列化往返（step_to_dict → step_from_dict 参数全等） | ✅ |
+| **验收 1：羊 EDF 带通1-40+陷波50+平均参考 后 50Hz PSD 比值 <0.1** | ✅ **0.0001**（e2e_m3，全 GUI 路径） |
+| **验收 2：A01T 事件分段（769-772，-1~4s）= 288** | ✅ **288**（pytest real 项 + e2e_m3 双验证） |
+| 坏道标记联动（浏览器右键 → bads 步骤默认带入） | ✅（e2e 阶段 1） |
+| 分段预览 tab（总数 + 每类计数 + 跨段平均波形） | ✅（e2e 阶段 2） |
+| tab 关闭释放（预览/分段 tab teardown） | ✅ |
+| e2e_m3 全量 | ✅ ALL OK（11 项） |
+| e2e_m1 / e2e_m2 / smoke_gui 回归 | ✅ ALL OK / ALL OK / SMOKE OK |
+
+**计划偏离（实证驱动）**
+1. **notch 限 raw 阶段**（applies_to={"raw"}）：计划未预见 mne Epochs 无 notch_filter——分段前陷波是标准流程，顺序错误由 apply_pipeline 阶段检查给中文提示（不静默跳过）
+2. **PSD 对比取前 120s**：超长文件全量 Welch 无谓耗时，120s 已覆盖工频/α 验证需求（参数在 _psd_job 内注释说明）
+3. **分段预览为独立 EpochsPreviewView 而非复用浏览器**：epochs 是 3-D 数据，浏览器窗口化绘制模型不适用；跨段平均 + 每类计数已满足"确认分段正确"的验收意图
+4. **预览 Recording 不入工作区**：meta.model_copy 换新 rec_id/format="预览"，避免污染持久化工作区（计划未明确，按"预览是临时视图"理解）
+
+**发现的问题与修正（全部有测试或 e2e 复现）**
+1. **mne 1.12 set_eeg_reference 返回副本非就地**（测试实测均值不归零 1.4e-5 → `inst is raw` 为 False）→ 用返回值写回 ctx.raw/ctx.epochs
+2. **Epochs 无 event_name**（AttributeError）→ event_id 逆映射统计每类段数
+3. **compute_psd fmax=None TypeError** → None 时显式传 Nyquist
+4. **A01T "Event time samples were not unique"**：根因有二——① e2e 在表单构建后改 _steps 参数被 collect() 冲回默认（event_codes 空=全事件→同刻重复）；② 全码确有同刻事件 → add_step(**overrides) 先合后建表单 + mne.Epochs(event_repeated="drop")
+5. **e2e PSD 比值恒 1.0000**：start_preview 后当前 tab 已切预览，"原始"取成了预览自身 → shared dict 保存原浏览器引用
+6. **_on_select IndexError**：list.clear() 触发 currentRowChanged(-1) 用过期行号 → 行号边界守卫
+7. **BadChannelsParams 空列表 validator 致 default_params() ValidationError**（表单往返测试暴露）→ 校验移到 apply() 给中文 StepError——**pydantic 步骤参数默认值必须可构造**是通用规则
+8. **baseline (None,0)+tmin=0 单样本拒绝** → epoching 内自动转 (0.0,0.0)
+
+**架构规则自查**
+- proc/features 无 Qt import ✅（仅 numpy/mne/pydantic）；UI 新控件只编排不计算——预览/PSD 全部经 run_in_thread worker（_MainRelay 保护），apply_pipeline 在 worker 内执行 ✅
+- 跨线程只传纯 Python/mne 对象 ✅（preview_ready 信号传 ProcessingContext——dataclass 持 mne 对象，符合规则 3）
+- 副本隔离：预览全程在 raw.copy() 上，原始 Recording 逐位不动（pytest 断言）✅
+
+**收尾四件事**：治理文件已更新（STATUS：M3 完成态+72 绿+实证结论 7 条+变更记录；TODO：M3 全勾、M4 置下一个；HANDOFF：坑清单 17→24 条、架构树 M3 版、接手要点改 M4）→ review.md 本节 ✅ → 上下文检查：本窗口自压缩摘要重启后连续完成 M2 收尾+DATA_NOTES 建立+整个 M3（proc/features/UI/测试/e2e），上下文占用已高，全部关键状态均已落盘治理文件——**建议用户执行 /compact 后再开 M4** → git commit `M3: ...`

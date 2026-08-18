@@ -33,15 +33,19 @@
 - [x] 验证：4.9GB 扫描 5.2s <2min ✅；六格式打开绘图 ✅；ds4 加载 0.2s <10s ✅；pytest 43 绿；e2e_m2 17 项 ALL OK
 - [x] 收尾四件事：review.md → STATUS/TODO/HANDOFF → 上下文检查 → git commit
 
-## M3 预处理链 + 预览（下一个里程碑）
+## M3 预处理链 + 预览（✅ 2026-08-18 完成，验证见 review.md）
 
-- [ ] proc/context.py + proc/base.py + 6 步骤（bandpass/notch/reref/resample/bads/epoching）
-- [ ] ui/widgets/pipeline_panel.py + params_form.py（pydantic 自动表单）
-- [ ] 当前文件预览（处理副本 tab + 步骤日志）+ psd_view.py
-- [ ] 浏览器坏道标记联动 BadChannelsStep
-- [ ] 验证：羊文件滤波后 50Hz 消失；2a GDF 分段数 = 288（A01T）
+- [x] proc/context.py + proc/base.py（ProcStep ABC + STEP_REGISTRY + to/from_dict 序列化 + apply_pipeline）
+- [x] 6 步骤：filters（bandpass/notch，notch 限 raw——mne Epochs 无 notch_filter）、referencing（reref）、resample、bads、epoching（raw→epochs 阶段翻转）
+- [x] features/spectral.py mean_welch（M3 PSD 视图与 M4 特征共用）
+- [x] tests/test_proc_m3.py 23 项全绿——**含真实 A01T 分段 = 288 验收**、陷波 50Hz 抑制 >10×、副本隔离
+- [x] ui/widgets/pipeline_panel.py + params_form.py（pydantic 自动表单，6 步骤零 UI 代码）+ test_ui_m3 表单往返不变量
+- [x] 预览：proc/preview.py 副本包装成浏览 tab；EpochsPreviewView 分段预览；psd_view.py 对比视图（原始 vs 处理后）
+- [x] 浏览器坏道标记（右键 toggle_bad 灰显 + bads_changed）联动 BadChannelsStep 默认参数
+- [x] e2e_m3 11 项 ALL OK：羊 50Hz 压制比 0.0001；A01T 分段 = 288（全 GUI 路径）
+- [x] 收尾四件事：review.md → STATUS/TODO/HANDOFF → 上下文检测 → git commit
 
-## M4 特征 + 导出
+## M4 特征 + 导出（下一个里程碑）
 
 - [ ] features/ 三个提取器（Welch PSD / 频带功率 / 时域统计）
 - [ ] batch/results.py FeatureTable + ui/widgets/feature_table.py

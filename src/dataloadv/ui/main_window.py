@@ -30,12 +30,16 @@ from .. import __version__
 from ..core.fs_store import FsStore
 from ..io.registry import open_file
 from ..io.table import FS_UNSET_NOTE
+from ..proc.context import ProcessingContext
+from ..proc.preview import make_preview_recording
 from ..workers.generic import run_in_thread
 from .dialogs.import_dialog import ImportController
 from .state import SessionState
 from .strings_zh import S
+from .widgets.epochs_preview import EpochsPreviewView
 from .widgets.log_panel import LogPanel
 from .widgets.meta_table import MetaTableView
+from .widgets.pipeline_panel import PipelinePanel
 from .widgets.signal_browser import SignalBrowserView
 from .widgets.workspace_tree import WorkspaceTree
 
@@ -85,17 +89,17 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self.meta_view, S.TAB_META_TABLE)
 
     def _build_docks(self) -> None:
-        """左工作区树 / 右处理占位 / 下日志."""
+        """左工作区树 / 右处理管线 / 下日志."""
         self.workspace_tree = WorkspaceTree()
         self.workspace_tree.open_requested.connect(self._open_recording_async)
         self._dock_workspace = QDockWidget(S.DOCK_WORKSPACE, self)
         self._dock_workspace.setWidget(self.workspace_tree)
 
+        # M3：处理管线面板（预览结果经 preview_ready 回主窗口开 tab）
+        self.pipeline_panel = PipelinePanel(self._get_active_browser, self)
+        self.pipeline_panel.preview_ready.connect(self._on_preview_ready)
         self._dock_pipeline = QDockWidget(S.DOCK_PIPELINE, self)
-        placeholder = QLabel(S.PLACEHOLDER_PIPELINE)
-        placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        placeholder.setWordWrap(True)
-        self._dock_pipeline.setWidget(placeholder)
+        self._dock_pipeline.setWidget(self.pipeline_panel)
 
         self.log_panel = LogPanel(self)
         self._dock_log = QDockWidget(S.DOCK_LOG, self)
@@ -114,10 +118,10 @@ class MainWindow(QMainWindow):
             self.addDockWidget(area, dock)
 
     def _build_menus(self) -> None:
-        """中文菜单（导入动作 M1 已接通）."""
+        """中文菜单（导入 M1 / 处理 M3 已接通）."""
         menu_file = self.menuBar().addMenu(S.MENU_FILE)
         menu_view = self.menuBar().addMenu(S.MENU_VIEW)
-        self.menuBar().addMenu(S.MENU_PROCESS)
+        menu_proc = self.menuBar().addMenu(S.MENU_PROCESS)
         menu_help = self.menuBar().addMenu(S.MENU_HELP)
 
         act_import_files = menu_file.addAction(S.ACT_IMPORT_FILES, self.importer.import_files)
@@ -134,6 +138,10 @@ class MainWindow(QMainWindow):
 
         menu_help.addAction(S.ACT_ABOUT, self._show_about)
         self._import_actions = (act_import_files, act_import_folder)
+
+        # 处理菜单：与右 Dock 面板按钮同一动作（M3）
+        menu_proc.addAction(S.PIPE_BTN_PREVIEW, self.pipeline_panel.start_preview)
+        menu_proc.addAction(S.PIPE_BTN_PSD, self.pipeline_panel.start_psd)
 
     def _build_statusbar(self) -> None:
         self.statusBar().showMessage(S.STATUS_READY)
@@ -210,15 +218,38 @@ class MainWindow(QMainWindow):
             self.tabs.setCurrentWidget(widget)
 
     def _on_tab_close(self, index: int) -> None:
-        """关 tab：元数据表常驻不可关；浏览 tab 释放数据."""
+        """关 tab：元数据表常驻不可关；浏览/预览 tab 释放数据."""
         widget = self.tabs.widget(index)
         if widget is self.meta_view:
             return
-        if hasattr(widget, "rec"):  # SignalBrowserView
+        if hasattr(widget, "teardown"):  # SignalBrowserView / EpochsPreviewView
             widget.teardown()
-            self.state.close_recording(widget.rec)
+        if hasattr(widget, "rec"):  # SignalBrowserView（含预览副本）
+            self.state.close_recording(widget.rec)  # 未登记的预览Recording此处为安全 no-op+卸载
             self._browser_tabs.pop(widget.rec.meta.rec_id, None)
         self.tabs.removeTab(index)
+
+    # ------------------------------------------------------------------ 预览（M3）
+
+    def _get_active_browser(self) -> SignalBrowserView | None:
+        """当前激活 tab 若是信号浏览器则返回之（预览作用于它）."""
+        widget = self.tabs.currentWidget()
+        return widget if isinstance(widget, SignalBrowserView) else None
+
+    def _on_preview_ready(self, ctx: ProcessingContext) -> None:
+        """管线面板预览完成（主线程）：raw→浏览 tab；epochs→分段预览 tab."""
+        browser = self._get_active_browser()
+        name = browser.rec.meta.filename if browser is not None else "数据"
+        if ctx.stage == "raw":
+            preview_rec = make_preview_recording(browser.rec, ctx)
+            view = SignalBrowserView(preview_rec)
+            self._browser_tabs[preview_rec.meta.rec_id] = view
+            self.tabs.addTab(view, S.PIPE_PREVIEW_TAB_FMT.format(name=name))
+        else:
+            view = EpochsPreviewView(ctx, name)
+            self.tabs.addTab(view, S.PIPE_EPOCHS_TAB_FMT.format(name=name))
+        self.tabs.setCurrentWidget(view)
+        logger.info("预览 tab 已建立：%s（阶段 %s，%d 步）", name, ctx.stage, len(ctx.history))
 
     # ------------------------------------------------------------------ 其他
 
