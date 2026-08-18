@@ -22,14 +22,7 @@ logger = logging.getLogger(__name__)
 
 READER_REGISTRY: dict[str, BaseReader] = {}
 
-# 扫描时按扩展名直接忽略的文件（目录里的索引/说明/图片等非录制文件）
-_IGNORED_SUFFIXES = {
-    ".png", ".pdf", ".txt", ".json", ".csv",  # csv 有专用读取器接管，这里的 .txt 是说明文件
-    ".sha256sums", ".ds_store", ".event",  # .event 是 EDF 边车，不作为独立录制
-    ".py", ".md", ".yaml", ".yml", ".wfdbcal",
-}
-
-# .event 边车等非录制但属于数据集的配套文件：不报错、不进列表，仅记日志
+# .event 边车等无读取器接管的配套文件：扫描时不报错、不进列表（skipped 计数）
 
 
 def register_reader(cls: type[BaseReader]) -> type[BaseReader]:
@@ -114,8 +107,13 @@ def scan_folder(
     root = Path(root)
     report = ScanReport()
     it = sorted(p for p in (root.rglob("*") if recursive else root.glob("*")))
-    # 先数出候选文件总量（进度分母；只数有读取器接管的）
-    candidates = [p for p in it if p.is_file() and _readers_for(p)]
+
+    def _is_candidate(p: Path) -> bool:
+        """候选 = 有读取器接管的文件，或 EGI .mff 这类"目录即录制"的包."""
+        return (p.is_file() or p.suffix.lower() == ".mff") and bool(_readers_for(p))
+
+    # 先数出候选总量（进度分母；只数有读取器接管的）
+    candidates = [p for p in it if _is_candidate(p)]
     total = len(candidates)
     for done, path in enumerate(candidates, start=1):
         report.scanned += 1
@@ -131,8 +129,8 @@ def scan_folder(
             report.errors.append(e)
         except Exception as e:  # noqa: BLE001 - 扫描器绝不能被单文件异常杀死
             report.errors.append(ScanError(str(path), "", f"意外错误：{e}"))
-    # 其余文件（配套索引/图片/边车）统一计 skipped
-    report.skipped = sum(1 for p in it if p.is_file()) - total
+    # 其余文件（配套索引/图片/边车）统一计 skipped（.mff 目录计入候选口径）
+    report.skipped = sum(1 for p in it if p.is_file() or p.suffix.lower() == ".mff") - total
     logger.info(
         "扫描 %s：识别 %d，失败 %d，忽略 %d",
         root, len(report.items), len(report.errors), report.skipped,

@@ -90,9 +90,13 @@ def test_scan_sheep_folder():
 
 
 def test_scan_folder_unknown_extensions_ignored(tmp_path):
-    """未知扩展名静默跳过（不产生错误行）——RECORDS/图片等配套文件场景."""
+    """无读取器接管的扩展名静默跳过（不产生错误行）——RECORDS/图片等配套文件场景.
+
+    注：.txt/.csv 自 M2 起由 TableReader 接管（非数值 txt 会进错误表并
+    说明原因，见 test_readers_m2.py::test_prose_txt_refused）。
+    """
     (tmp_path / "RECORDS").write_text("x")
-    (tmp_path / "note.txt").write_text("x")
+    (tmp_path / "note.md").write_text("x")
     (tmp_path / "img.png").write_bytes(b"\x89PNG")
     report = scan_folder(tmp_path)
     assert report.items == []

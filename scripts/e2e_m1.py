@@ -55,7 +55,9 @@ def main() -> int:
     added2, _ = state.workspace.add_metas(str(S001), [i.meta for i in report_s001.items])
     state.workspace.save()
     win._refresh_views()
-    check("工作区入库 17 条", added1 + added2 == 17)
+    # 幂等：重复运行时重复导入计 dup（added=0 是预期）——断言总量而非新增
+    check("工作区共 17 条", len(state.workspace) == 17,
+          f"(新增 {added1 + added2}，总量 {len(state.workspace)})")
     check("工作区树刷新", win.workspace_tree._tree.topLevelItem(0) is not None)
     check("元数据表 17 行", win.meta_view._model.rowCount() == 17)
 

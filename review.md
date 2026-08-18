@@ -76,3 +76,58 @@
 - 跨线程只传纯 Python/mne 对象 ✅（open_file 返回 Recording 含 mne 句柄，纯数据对象）
 
 **收尾四件事**：治理文件已更新（STATUS/TODO/HANDOFF）→ review.md 本节 ✅ → 上下文检查：本会话已执行一次压缩（压缩前全部关键状态已落盘治理文件），当前占用远低于 70% 阈值，无需再压 → git commit `M1: ...` ✅
+
+---
+
+## M2 读取器全覆盖（2026-08-18 完成）
+
+**做了什么**
+1. `io/mne_readers.py` 重写：`_MneRawReader` 模板基类（read_meta/open/load_raw/events_from_raw 全部通用实现），8 个子类只声明差异——EdfReader（latin1 回退）、BdfReader（stim auto）、GdfReader（事件套官方中文标签）、BrainVisionReader（.vhdr）、FifReader（epoched 文件/MaxShield 双中文提示重试）、EeglabReader、CntReader、EgiReader（.egi/.mff 目录）
+2. `io/event_maps.py`：GDF 事件码官方中文映射 16 码（276/277/768/769-772/781/783/1023/1072/1077-1081/32766）——**码表以官方 desc_2a.pdf/desc_2b.pdf 原文为准**（pypdf 提取），未知码原样返回不猜
+3. `io/bciciv_mat.py`：ds1（whosmat 判形 + 只 loadmat nfo/mrk 跳过 cnt；eval 无 mrk 时明确 note"评估集无标注"）；ds4（纯 whosmat 头解析 <1s；fs=1000 来自官方 desc_4.pdf；加载跳过 test_data；手套 5 指为 misc 通道）；GenericMatReader 识别 ds3 后明确拒绝（分段 MEG 记 backlog）、未知结构拒绝猜测
+4. `io/table.py` CSV/TXT：分隔符嗅探（, ; \t | 空格）+ 数值性验证（≥90% 行全 float，挡住 SHA256SUMS.txt 类文件）+ FS_UNSET_NOTE 标记 → 主窗口 QInputDialog 询问采样率 → `core/fs_store.py` 记忆（~/.dataloadv/table_fs.json）
+5. `io/hdf5.py`：零数据 IO 定位（3 层递归找 2-D 数值数据集、最大者胜、次大 >50% 拒绝歧义）；fs 从 attrs 四个别名或 FsStore
+6. `io/sniffing.py` 补 GDF/BDF/HDF5/BrainVision 魔数；registry 支持 .mff 目录候选；base.py 文件名实体加 2b 三段式（B0303T）与 ds1 calib/eval 模式
+7. **`workers/generic.py` 加 `_MainRelay`**（M2 最关键产品修复，见下）
+8. 测试：synthetic_helpers.py（savemat 伪造 ds1/ds4/ds3/未知 mat + 4 分隔符 CSV + 可配 HDF5）+ test_readers_m2.py 26 项；scripts/e2e_m2.py 17 项端到端
+
+**验证执行与结果**
+
+| 验证项 | 结果 |
+|---|---|
+| `pytest` 全量（M1 17 + M2 新增 26） | ✅ 43 passed |
+| 4.9GB dataset 全量扫描 <2min | ✅ **5.2s**（目标 120s） |
+| 扫描识别 1606 条、错误仅 3 条已知结构（ds3×2 + SHA256SUMS.txt） | ✅（诚实报错而非误导入） |
+| 每格式各开一个能绘图：羊 EDF / 2a GDF / 2b GDF / ds1 mat / ds4 mat / CSV | ✅ 六格式曲线均有真实数据 |
+| 2a GDF 中文标签（769→提示：左手（类1）等 769-772） | ✅；2a 事件 603 个 |
+| 2b GDF（B0303T）实体解析 + 781 BCI 反馈标签 | ✅ |
+| ds1 mat：200 事件中文标签 + µV 标度正确 | ✅ |
+| ds4 mat 134MB 加载 <10s | ✅ **0.2s**（跳过 test_data） |
+| 元数据表 1606 行可用（1000+ 文件） | ✅ |
+| 六 tab 全部关闭后数据释放 | ✅ |
+| e2e_m1 回归（幂等总量断言修复后） | ✅ ALL OK 13 项 |
+| smoke_gui 回归 | ✅ SMOKE OK |
+
+**计划偏离（实证驱动）**
+1. **GDF 码表来源改官方 PDF**：WebSearch 摘要多处错误（781 误作 correction/beep、1077 误作 eyes closed）——落盘官方 desc_2a/2b.pdf 用 pypdf 提取原文核实（781=BCI feedback continuous，1077-1081=眼动伪迹）。计划未预料，码表以实测原文为准
+2. **ds1 评估集实际无 mrk 变量**（pipelineMotor yaml 所说"评估集有提示"与实物不符）：读取成功但 n_events=0，notes 明确说明，不猜标签
+3. **ds4 train_data 是 double 非 int32、文件无采样率**：fs=1000Hz 取自官方 desc_4.pdf，读取器内固化并注释来源
+4. **发现数据集混有 ds3 分段 MEG（S1/S2.mat）**：识别后明确拒绝（"分段结构，已记入 backlog"）——M2 范围不含 ds3，记入 TODO backlog
+5. **BDF/CNT/EGI/BrainVision/EEGLAB 无真实数据**：无法按计划"每格式开真实文件"——以模板基类 + FIF 合成往返测试保证（五格式走同一模板代码路径，风险集中在 `_read_fn` 参数，见 TODO backlog 待真实数据冒烟）
+
+**发现的问题与修正（全部有测试或 e2e 复现）**
+1. **类属性函数变绑定方法**：`_read_fn = mne.io.read_raw_gdf` 使 `self._read_fn(path)` 实为 `read_raw_gdf(self, path)`（"File must be path-like, got GdfReader"）→ 全部 `staticmethod(...)` 包住
+2. **e2e_m2 两次不定时挂起（0.1% CPU 空转）**：根因是产品缺陷——`on_error=lambda: QMessageBox.critical(...)` 普通函数连接在 **worker 线程**直连执行，非 GUI 线程弹模态框 macOS 上不定时冻结。三层修复：① 产品修复 `_MainRelay`（回调保证主线程）；② e2e patch QMessageBox；③ 连续 8/8+6/6 全过确认
+3. **bciciv_mat 初版三处缺陷**（cnt 形状索引 [1]→[0]、无结构守卫致 ds1 读取器碰 ds4 文件、load_raw 重复解析 meta）→ 整文件重写（whosmat 让位守卫 + `_read_header` 复用）
+4. **hdf5 read_meta 曾整读数据集**（`d[()]` 只为拿形状）→ `_locate`（只看 shape/attrs）与 load_raw 分离
+5. **散文 txt 误判合法表格**（空格分列恰好一致）→ 嗅探后加数值性验证（≥90% 行全 float）
+6. **savemat struct 含 None 字段 TypeError** → 合成夹具删 None 占位
+7. **e2e 幂等**：重复运行 added=0 触发断言失败 → 总量断言（len(workspace)==1606）
+8. **M1 旧测试与新读取器冲突**：note.txt 被 TableReader 接管报错（预期行为）→ 夹具改 note.md
+
+**架构规则自查**
+- core/io 无 Qt import ✅（新增 fs_store/bciciv_mat/table/hdf5/event_maps 仅 numpy/scipy/h5py/mne/pydantic）
+- UI 不直接算：采样率询问后的 meta 更新是字段赋值；六格式打开仍走 `_open_recording_async`（run_in_thread + _MainRelay）✅
+- 跨线程只传纯 Python/mne 对象 ✅（_MainRelay 槽参数 object/str，投递到主线程后才转 Python 回调）
+
+**收尾四件事**：治理文件已更新（STATUS/TODO/HANDOFF：坑清单 11→17 条、架构树 M2 版、接手要点改 M3）→ review.md 本节 ✅ → 上下文检查：M2 开发期间本会话上下文已满并自动压缩过一次（压缩摘要续接完成全部 M2 工作与验证）；当前窗口以摘要重启，占用远低于 70% 阈值，无需再压——全部关键状态已落盘治理文件 → git commit `M2: ...` ✅

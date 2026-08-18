@@ -18,6 +18,7 @@ import logging
 import pyqtgraph as pg
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
+    QInputDialog,
     QLabel,
     QMainWindow,
     QMessageBox,
@@ -26,7 +27,9 @@ from PySide6.QtWidgets import (
 )
 
 from .. import __version__
+from ..core.fs_store import FsStore
 from ..io.registry import open_file
+from ..io.table import FS_UNSET_NOTE
 from ..workers.generic import run_in_thread
 from .dialogs.import_dialog import ImportController
 from .state import SessionState
@@ -159,9 +162,39 @@ class MainWindow(QMainWindow):
         )
 
     def _on_opened(self, rec) -> None:
-        """worker 返回 Recording（主线程）：登记 → recording_opened 信号开 tab."""
+        """worker 返回 Recording（主线程）：登记 → recording_opened 信号开 tab.
+
+        CSV/TXT/HDF5 等文件内不含采样率：先问一次（FsStore 持久记忆），
+        用户取消则不开 tab（以错误采样率浏览是坏数据）。
+        """
+        if FS_UNSET_NOTE in rec.meta.notes and not self._ask_sample_rate(rec):
+            self.statusBar().showMessage(S.STATUS_READY)
+            return
         self.state.attach_open(rec)
         self.statusBar().showMessage(S.STATUS_READY)
+
+    def _ask_sample_rate(self, rec) -> bool:
+        """询问采样率并写回 meta 与 FsStore；返回 False = 用户取消."""
+        n_times = max(1, round(rec.meta.duration_s * rec.meta.sfreq))
+        fs, ok = QInputDialog.getDouble(
+            self, S.ASK_FS_TITLE, S.ASK_FS_TEXT.format(name=rec.meta.filename),
+            value=250.0, minValue=0.1, maxValue=100000.0, decimals=2,
+        )
+        if not ok:
+            return False
+        FsStore().put(rec.meta.path, fs)
+        rec.meta.sfreq = fs
+        rec.meta.duration_s = n_times / fs
+        rec.meta.notes = rec.meta.notes.replace(FS_UNSET_NOTE, "").strip("；; ")
+        # 工作区里的同一条 meta 同步（表里时长列才正确）
+        ws_meta = self.state.workspace.find_by_path(rec.meta.path)
+        if ws_meta is not None:
+            ws_meta.sfreq, ws_meta.duration_s = fs, rec.meta.duration_s
+            ws_meta.notes = rec.meta.notes
+            self.state.workspace.save()
+            self.meta_view.refresh(self.state.workspace.all_metas())
+        logger.info("采样率已设定：%s → %s Hz（已记忆）", rec.meta.filename, fs)
+        return True
 
     def _on_recording_opened(self, rec) -> None:
         """建浏览 tab（SessionState.recording_opened 的唯一消费者）."""

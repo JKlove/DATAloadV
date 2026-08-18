@@ -24,15 +24,16 @@
 - [x] tests：conftest synthetic_raw + EDF 读取测试（real 标记用 data/sheep）
 - [x] 验证：导入 sheep 3 文件 + PhysioNet S001 → E2E 13 项全过（scripts/e2e_m1.py ALL OK）
 
-## M2 读取器全覆盖
+## M2 读取器全覆盖（✅ 2026-08-18 完成，验证见 review.md）
 
-- [ ] mne_readers.py 补全：BDF/GDF/BrainVision/FIF/EEGLAB/CNT/EGI
-- [ ] io/bciciv_mat.py：ds1（cnt/mrk/nfo）+ ds4（train_data/train_dg→glove misc 通道）+ 通用 mat 拒绝猜测
-- [ ] io/event_maps.py：GDF 事件码→中文标签映射（769-772/783/1023/32766）
-- [ ] io/table.py CSV/TXT + io/hdf5.py 通用 HDF5
-- [ ] 验证：4.9GB dataset 全量扫描 <2min；每格式开一个能绘图；ds4 mat <10s
+- [x] mne_readers.py 重写为 `_MneRawReader` 模板基类家族：EDF(latin1)/BDF/GDF/BrainVision/FIF/EEGLAB/CNT/EGI
+- [x] io/bciciv_mat.py：ds1（头只 loadmat nfo/mrk；eval 无 mrk 明确 note）+ ds4（纯 whosmat 头、跳过 test_data、fs=1000 官方）+ 通用 mat 拒绝猜测
+- [x] io/event_maps.py：GDF 事件码→中文标签（官方 desc_2a/2b.pdf 原文核实的 16 码，非搜索摘要）
+- [x] io/table.py CSV/TXT（分隔符嗅探+数值性验证+FsStore 询问记忆）+ io/hdf5.py（零数据 IO 定位）+ core/fs_store.py
+- [x] 验证：4.9GB 扫描 5.2s <2min ✅；六格式打开绘图 ✅；ds4 加载 0.2s <10s ✅；pytest 43 绿；e2e_m2 17 项 ALL OK
+- [x] 收尾四件事：review.md → STATUS/TODO/HANDOFF → 上下文检查 → git commit
 
-## M3 预处理链 + 预览
+## M3 预处理链 + 预览（下一个里程碑）
 
 - [ ] proc/context.py + proc/base.py + 6 步骤（bandpass/notch/reref/resample/bads/epoching）
 - [ ] ui/widgets/pipeline_panel.py + params_form.py（pydantic 自动表单）
@@ -57,3 +58,6 @@
 ## 已知问题 / Backlog（暂缓项）
 
 - .edf.event WFDB 边车解析：M1 实测 PhysioNet EDF 内嵌注释已完整，边车为冗余副本，暂不需要；若未来遇到只有边车、无内嵌注释的数据集再补
+- **ds3 分段 MEG 读取**（data/dataset 里的 S1/S2.mat，BCI-IV 数据集 3）：数据是分段结构（非连续），与当前连续 raw 模型不匹配；M2 已识别并明确拒绝（提示记入 backlog）。若 M3 分段模型落地后需求明确再实现
+- **BDF/CNT/EGI/BrainVision/EEGLAB 无真实数据实测**：M2 只有模板基类 + FIF 合成往返测试保证；拿到真实文件后跑 `open_file()` 冒烟即可（读取器走同一模板路径，风险低）
+- eeglabio / pybv 装入 dev 依赖：可对 EEGLAB/BrainVision 做合成写出→读回往返测试（暂缓，等真实数据或 M5 收尾时决定）

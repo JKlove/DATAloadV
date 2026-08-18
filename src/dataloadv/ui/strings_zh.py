@@ -94,3 +94,10 @@ class S:
     UNIT_UV = "µV"
     TIME_FMT = "{t:.2f} s / {total:.1f} s"
     LOAD_FAILED_TITLE = "打开失败"
+
+    # ===== M2：采样率询问（CSV/TXT/HDF5 内无采样率）=====
+    ASK_FS_TITLE = "设定采样率"
+    ASK_FS_TEXT = (
+        "文件 {name} 内不含采样率信息，\n"
+        "请输入该数据的采样率（Hz）。\n（记住一次，之后直接使用）"
+    )

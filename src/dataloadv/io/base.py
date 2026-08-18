@@ -87,15 +87,26 @@ class BaseReader(ABC):
         """从文件名猜 BIDS 风格实体（subject/run/task），猜不出值为 None.
 
         已知模式（按需扩充）：
-        - BCI-IV 2a/2b：``A01T.gdf`` → subject=A01, task=T（T=训练/E=评估）
+        - BCI-IV 2a：``A01T.gdf`` → subject=A01, task=T（T=训练/E=评估）
+        - BCI-IV 2b：``B0303T.gdf`` → subject=B03, session=03, task=T
+        - BCI-IV 1：``BCICIV_calib_ds1a.mat`` → subject=ds1a, task=calib
         - BCI-IV 1/4：``sub1_comp.mat`` → subject=sub1
         - PhysioNet：``S001R01.edf`` → subject=S001, run=R01
         """
         name = path.stem
         out: dict[str, Optional[str]] = {"subject": None, "session": None, "run": None, "task": None}
-        m = re.fullmatch(r"([A-Za-z]\d{2})([TE])(?:\.cdt)?", name)  # BCI 2a/2b
+        m = re.fullmatch(r"([A-Za-z]\d{2})([TE])(?:\.cdt)?", name)  # BCI 2a
         if m:
             out["subject"], out["task"] = m.group(1), {"T": "train", "E": "eval"}[m.group(2)]
+            return out
+        m = re.fullmatch(r"(B\d{2})(\d{2})([TE])", name)  # BCI 2b：被试+会话+T/E
+        if m:
+            out["subject"], out["session"] = m.group(1), m.group(2)
+            out["task"] = {"T": "train", "E": "eval"}[m.group(3)]
+            return out
+        m = re.fullmatch(r"BCICIV_(calib|eval)_(ds\w+)", name)  # BCI 1 mat
+        if m:
+            out["task"], out["subject"] = m.group(1), m.group(2)
             return out
         m = re.fullmatch(r"(sub\d+).*", name)  # BCI 1/4 mat
         if m:
