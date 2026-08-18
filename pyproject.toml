@@ -1,0 +1,50 @@
+[build-system]
+# hatchling + src-layout，与 pipelineMotor 项目惯例保持一致
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "dataloadv"
+version = "0.1.0"
+description = "DataloadV 电生理数据平台：读取、浏览、预处理与特征提取桌面工作台"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Proprietary" }
+authors = [{ name = "DataloadV Dev" }]
+dependencies = [
+    "numpy>=1.24",
+    "scipy>=1.10",
+    "pandas>=2.0",
+    "mne>=1.4",
+    "edfio>=0.4",
+    "pydantic>=2.4,<3",
+    "h5py>=3.8",
+    "PyYAML>=6",
+    "PySide6>=6.5,<7",
+    "pyqtgraph>=0.13.7",
+]
+
+[project.optional-dependencies]
+# 可选读取格式的额外依赖（M5 启用；缺失时应用照常运行，仅对应格式不可用）
+extra-readers = [
+    "neo>=0.13",
+    "pynwb>=2.6",
+]
+dev = [
+    "pytest>=7",
+    "pytest-qt>=4.2",
+]
+
+[project.scripts]
+# 安装后可直接运行 `dataloadv` 命令
+dataloadv = "dataloadv.app:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/dataloadv"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "real: 需要本地真实数据(data/sheep 等)的冒烟测试，数据缺失时跳过",
+    "slow: 耗时较长的测试",
+]

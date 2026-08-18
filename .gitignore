@@ -1,0 +1,43 @@
+# ===== 数据（4.9GB，绝不入库）=====
+data/
+*.edf
+*.bdf
+*.gdf
+*.vhdr
+*.eeg
+*.vmrk
+*.fif
+*.set
+*.fdt
+*.rhd
+*.rhs
+*.nwb
+*.plx
+*.pl2
+*.nev
+*.ns5
+*.ns6
+*.cnt
+
+# ===== Python =====
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.pytest_cache/
+.coverage
+htmlcov/
+.venv/
+venv/
+
+# ===== macOS / IDE =====
+.DS_Store
+*.swp
+.idea/
+.vscode/
+
+# ===== 应用运行产物 =====
+*.pipeline.json.bak
+*.h5.tmp
