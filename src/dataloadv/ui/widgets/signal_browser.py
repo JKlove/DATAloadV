@@ -5,20 +5,29 @@
    （``Recording.get_window``，LAZY 大文件也只读这一段）
 2. **峰值抽取**：每像素约 2 对 min/max 点，用 ``connect="pairs"`` 画包络
    ——无混叠伪影，点数与数据总量无关（134MB 文件与 1MB 文件同速）
-3. 通道垂直堆叠：每通道一条曲线 + 固定 y 偏移；y 轴刻度直接标通道名
+3. 通道垂直堆叠：每通道一条曲线 + 固定 y 偏移；通道名画在曲线行左端
+   **内侧**（M6 重构，替代旧的 y 轴刻度——任意导联数都不重叠、不截断）
 
-交互：滚轮/拖动缩放平移（pyqtgraph 原生）、通道列表开关显隐、增益滑杆、
-上一/下一事件跳转、事件条点击跳转。
+交互（M6 重构，用户实测反馈驱动）：
+- **滚轮 = 平移**时间轴（y 轴锁定，通道行不再被滚轮压挤重叠）；
+  **Ctrl+滚轮** = 以鼠标位置为锚点缩放一屏时长；右键拖框 = 框选缩放
+- 键盘 ←/→ = 上一/下一屏、Home/End = 最前/最后一屏、↑/↓ = 增益 ±1 档
+  （点一下图区获取焦点；通道列表/时长框/滑杆聚焦时按键归控件原生行为）
+- 工具栏：|◀ 最前 / ◀ 上一屏 / 一屏时长下拉（可输入自定义秒）/ 下一屏 ▶ / 最末 ▶|
+- 右上角**幅值标尺**：竖线像素长度固定，标注换算回真实 µV（随增益动态更新）
+- 事件跳转、增益滑杆、通道显隐、右键坏道标记沿用旧版
 """
 
 from __future__ import annotations
 
 import logging
+import math
 
 import numpy as np
 import pyqtgraph as pg
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtWidgets import (
+    QComboBox,
     QHBoxLayout,
     QLabel,
     QListWidget,
@@ -45,6 +54,14 @@ _INITIAL_VIEW_S = 10.0
 # 通道间距的稳健估计：振幅 = 全通道 MAD 的倍数（对尖峰/坏道不敏感）
 _SPACING_MAD_SCALE = 8.0
 _UV = 1e6  # 伏特 → 微伏
+# 翻屏步进占一屏的比例（留 10% 上下文，避免信号被硬切断跟丢）
+_PAGE_STEP = 0.9
+# 滚轮平移步长占一屏的比例
+_WHEEL_STEP_FRAC = 0.1
+# Ctrl+滚轮每档缩放系数（×1.25 / ÷1.25，与常见看图工具一致）
+_WHEEL_ZOOM_PER_NOTCH = 1.25
+# 幅值标尺的像素长度（固定像素 → 换算回数据坐标，与增益解耦）
+_SCALE_BAR_PX = 60.0
 
 
 def minmax_decimate(times: np.ndarray, values: np.ndarray, max_points: int):
@@ -64,7 +81,7 @@ def minmax_decimate(times: np.ndarray, values: np.ndarray, max_points: int):
     i_min = v.argmin(axis=1)
     i_max = v.argmax(axis=1)
     t_min, v_min = t[rows, i_min], v[rows, i_min]
-    t_max, v_max = t[rows, i_max], v[rows, i_max]
+    t_max, v_max = t[rows, i_max], t[rows, i_max]
     # 保证每对内两点按时间序（包络竖线方向一致）
     swap = t_min > t_max
     out_t = np.empty(2 * t.shape[0])
@@ -74,6 +91,53 @@ def minmax_decimate(times: np.ndarray, values: np.ndarray, max_points: int):
     out_t[1::2] = np.where(swap, t_min, t_max)
     out_v[1::2] = np.where(swap, v_min, v_max)
     return out_t, out_v
+
+
+def _nice_number(v: float) -> float:
+    """取 v 邻近的 1/2/5×10^k 漂亮数（幅值标尺长度换算用）.
+
+    恒等式（测试依赖）：``_nice_number(v/10) == _nice_number(v)/10``——
+    因为 1/2/5 阶梯乘除 10 只挪指数，尾数取值不变。
+    """
+    if not (v > 0) or not math.isfinite(v):
+        return 1.0
+    e = math.floor(math.log10(v))
+    frac = v / 10.0**e
+    for m in (1.0, 2.0, 5.0):
+        if frac <= m * 1.000001:
+            return m * 10.0**e
+    return 10.0 ** (e + 1)
+
+
+class _PanViewBox(pg.ViewBox):
+    """滚轮平移的 ViewBox：竖滚=时间平移，Ctrl+滚轮=锚点缩放，y 轴锁定.
+
+    pyqtgraph 默认滚轮同时缩放 x/y——y 被滚几下后通道行挤成一团
+    （用户实测反馈的"通道名重叠"根因之一）。本类接管滚轮：y 轴用
+    ``setMouseEnabled(x=True, y=False)`` 锁死，滚轮只动 x。
+    """
+
+    def __init__(self, browser: "SignalBrowserView") -> None:
+        super().__init__()
+        self._browser = browser  # 平移/缩放统一走浏览器的 clamp 出口
+
+    def wheelEvent(self, ev, axis=None) -> None:  # noqa: N802 - Qt 命名
+        if ev.delta() == 0:
+            return
+        t0, t1 = self.viewRange()[0]
+        if ev.modifiers() & Qt.KeyboardModifier.ControlModifier:
+            # Ctrl+滚轮：以鼠标下方时刻为锚点缩放（锚点在屏幕上不动）
+            factor = (1.0 / _WHEEL_ZOOM_PER_NOTCH) if ev.delta() > 0 else _WHEEL_ZOOM_PER_NOTCH
+            try:
+                ta = float(self.mapSceneToView(ev.scenePos()).x())
+            except Exception:  # noqa: BLE001 - scene 未就绪时退回视口中心
+                ta = (t0 + t1) / 2
+            self._browser._set_x_range(ta - (ta - t0) * factor, ta + (t1 - ta) * factor)
+        else:
+            # 竖滚 = 平移：向上滚（delta>0）看更早，步长一屏的 10%
+            step = (t1 - t0) * _WHEEL_STEP_FRAC * (-1 if ev.delta() > 0 else 1)
+            self._browser._set_x_range(t0 + step, t1 + step)
+        ev.accept()
 
 
 class SignalBrowserView(QWidget):
@@ -89,13 +153,17 @@ class SignalBrowserView(QWidget):
     def __init__(self, recording: Recording, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.rec = recording
-        self._channels: list[dict] = []  # 每通道 {idx, name, curve, enabled}
+        # 每通道 {idx, name, curve, label, enabled}；label = 行内嵌通道名标签
+        self._channels: list[dict] = []
         self._spacing_uv = 100.0  # 通道间距（µV），首帧数据到来后自动估计
-        self._gain = 1.0
+        self._gain = 0.0  # 滑杆刻度值（增益=10^(x/10)）；初值 0 = 1.0×。
+        # （M6 修复：旧值 1.0 让首帧一直带 10^0.1≈1.26× 的隐形增益——
+        #   滑杆初始就是 0，字段却初始化成 1.0，从 M1 潜伏至今）
         self._event_lines: list[pg.InfiniteLine] = []
         self._loaded_once = False
         # 坏道标记（raw 未加载时先记在这里，加载后一次性写入 info["bads"]）
         self._bad_names: set[str] = set()
+        self._combo_lock = False  # 时长框程序化回写时不触发用户处理逻辑
 
         self._build_ui()
         self._populate_channels()
@@ -112,8 +180,26 @@ class SignalBrowserView(QWidget):
     # ------------------------------------------------------------------ UI 构建
 
     def _build_ui(self) -> None:
-        # 工具条
+        # 工具条：翻屏导航 + 一屏时长（M6）｜ 时间 + 事件跳转 + 增益（旧版沿用）
         bar = QHBoxLayout()
+        self._btn_first = QPushButton(S.BTN_GO_FIRST)
+        self._btn_prev_page = QPushButton(S.BTN_PREV_PAGE)
+        self._btn_next_page = QPushButton(S.BTN_NEXT_PAGE)
+        self._btn_last = QPushButton(S.BTN_GO_LAST)
+        self._btn_first.clicked.connect(lambda: self._go_edge(first=True))
+        self._btn_prev_page.clicked.connect(lambda: self._page(-1))
+        self._btn_next_page.clicked.connect(lambda: self._page(+1))
+        self._btn_last.clicked.connect(lambda: self._go_edge(first=False))
+
+        win_lbl = QLabel(S.LBL_WINDOW_S)
+        self._window_combo = QComboBox()
+        self._window_combo.setEditable(True)  # 预设之外可直接输入秒数
+        self._window_combo.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
+        self._window_combo.addItems(list(S.WINDOW_PRESETS))
+        self._window_combo.setCurrentText(f"{_INITIAL_VIEW_S:g}")
+        self._window_combo.setMaximumWidth(72)
+        self._window_combo.currentTextChanged.connect(self._on_window_changed)
+
         self._lbl_time = QLabel(S.BROWSER_NO_DATA)
         self._btn_prev = QPushButton(S.BTN_PREV_EVENT)
         self._btn_next = QPushButton(S.BTN_NEXT_EVENT)
@@ -127,9 +213,14 @@ class SignalBrowserView(QWidget):
         self._gain_slider.setValue(0)
         self._gain_slider.valueChanged.connect(self._on_gain)
         self._gain_slider.setMaximumWidth(160)
-        for w in (self._lbl_time, self._btn_prev, self._btn_next, gain_lbl, self._gain_slider):
+        for w in (
+            self._btn_first, self._btn_prev_page, self._btn_next_page, self._btn_last,
+            win_lbl, self._window_combo,
+        ):
             bar.addWidget(w)
         bar.addStretch(1)
+        for w in (self._lbl_time, self._btn_prev, self._btn_next, gain_lbl, self._gain_slider):
+            bar.addWidget(w)
 
         # 通道列表（左）：勾选显隐 + 右键标记坏道（M3 与 BadChannelsStep 联动）
         self._ch_list = QListWidget()
@@ -150,6 +241,11 @@ class SignalBrowserView(QWidget):
         self._gfx.ci.layout.setRowStretchFactor(0, 5)
         self._gfx.ci.layout.setRowStretchFactor(1, 1)
 
+        # 键盘导航需要焦点：点击图区 → 焦点代理到本控件 → keyPressEvent 生效
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self._gfx.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
+        self._gfx.setFocusProxy(self)
+
         center = QHBoxLayout()
         center.addWidget(self._ch_list)
         center.addWidget(self._gfx, 1)
@@ -158,31 +254,47 @@ class SignalBrowserView(QWidget):
         root.addLayout(bar)
         root.addLayout(center, 1)
 
-    @staticmethod
-    def _plot_item() -> pg.PlotItem:
-        """主图配置：时间轴秒、无 y 刻度值、深色网格."""
-        p = pg.PlotItem()
+    def _plot_item(self) -> pg.PlotItem:
+        """主图配置：时间轴秒、滚轮平移 ViewBox、y 轴锁定."""
+        p = pg.PlotItem(viewBox=_PanViewBox(self))
         p.showGrid(x=True, y=False, alpha=0.25)
         p.setLabel("bottom", S.LBL_TIME)
         p.setDownsampling(auto=True, mode="peak")  # 双保险（我们已自抽峰值）
         p.setClipToView(True)
+        # y 锁定：通道行高只由间距估计决定，滚轮/拖动不再压缩通道
+        p.getViewBox().setMouseEnabled(x=True, y=False)
         return p
 
     def _populate_channels(self) -> None:
-        """按 meta 通道表建曲线与列表项（数据未到也先建，首帧统一填数）."""
+        """按 meta 通道表建曲线/行内标签/列表项（数据未到也先建，首帧统一填数）."""
         names = self.rec.meta.channel_names
-        axis = self._plot.getAxis("left")
-        ticks: list[tuple[float, str]] = []
+        label_fill = pg.mkBrush(255, 255, 255, 200)  # 半透明白底：压在波形上也读得清
         for i, name in enumerate(names):
-            curve = pg.PlotCurveItem(pen=pg.mkPen("#7fbfff", width=1))
+            curve = pg.PlotCurveItem(pen=pg.mkPen(S.SIGNAL_PEN_COLOR, width=1))
             self._plot.addItem(curve)
-            self._channels.append({"idx": i, "name": name, "curve": curve, "enabled": True})
+            label = pg.TextItem(
+                name, color=S.PLOT_TEXT_COLOR, anchor=(0, 0.5), fill=label_fill
+            )
+            self._plot.addItem(label)
+            self._channels.append(
+                {"idx": i, "name": name, "curve": curve, "label": label, "enabled": True}
+            )
+            label.setPos(0.0, i * self._spacing_uv)  # 先放个初值，首帧刷新对齐
             item = QListWidgetItem(name)
             item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
             item.setCheckState(Qt.CheckState.Checked)
             self._ch_list.addItem(item)
-            ticks.append((float(i), name))
-        axis.setTicks([ticks])
+        # M6：通道名不再走 y 轴刻度（全量 setTicks 在导联多时必然挤叠/截断）
+        self._plot.getAxis("left").setVisible(False)
+
+        # 幅值标尺（右上角竖线 + µV 标注；首帧数据后按视口高度换算）
+        self._scale_line = pg.PlotCurveItem(pen=pg.mkPen("#666666", width=2))
+        self._plot.addItem(self._scale_line)
+        self._scale_text = pg.TextItem(
+            "", color=S.PLOT_TEXT_COLOR, anchor=(1, 0.5), fill=label_fill
+        )
+        self._plot.addItem(self._scale_text)
+
         # 初始视图与 y 范围（间距首帧后修正）
         dur = self.rec.meta.duration_s
         self._plot.setXRange(0, min(_INITIAL_VIEW_S, dur), padding=0)
@@ -229,12 +341,22 @@ class SignalBrowserView(QWidget):
             max_points = width_px * _SAMPLES_PER_PIXEL
             if data_uv.shape[1] > 0 and not self._spacing_estimated:
                 self._estimate_spacing(data_uv)
+            gain = self._gain_scale()
             for row, ch in enumerate(enabled):
                 out_t, out_v = minmax_decimate(times, data_uv[row], max_points)
+                # 增益乘波形、间距不乘（M6 修复：旧版 `out_v + idx*spacing*gain`
+                # 只拉开基线不缩波形，gain>1 时上方通道飞出固定 yRange、
+                # gain<1 时全部叠回基线——与"只缩波形不挪基线"的语义相反）
                 ch["curve"].setData(
-                    out_t, out_v + (ch["idx"] * self._spacing_uv * self._gain_scale()),
+                    out_t, out_v * gain + ch["idx"] * self._spacing_uv,
                     connect="pairs",
                 )
+        # 通道标签跟随视口左缘（所有通道都更新，含隐藏——便宜且状态一致）
+        margin = (t1 - t0) * 0.012
+        for ch in self._channels:
+            ch["label"].setPos(t0 + margin, ch["idx"] * self._spacing_uv)
+        self._update_scale_bar(t0, t1)
+        self._update_window_label(t1 - t0)
         # 时间标签
         self._lbl_time.setText(
             S.TIME_FMT.format(t=(t0 + t1) / 2, total=self.rec.meta.duration_s)
@@ -266,6 +388,35 @@ class SignalBrowserView(QWidget):
         self._gain = value
         self._refresh_data()
 
+    def _update_scale_bar(self, t0: float, t1: float) -> None:
+        """右上角幅值标尺：像素长度固定，标注换算回真实 µV（含增益）.
+
+        竖线画在**数据坐标**里（长度 = 真实幅度 × 增益），所以增益变化时
+        线长跟着波形一起变，而文字标注（真实 µV）只反映数据本身——
+        堆叠显示下所有通道共享同一比例尺（EEG 浏览器标准做法）。
+        """
+        vb = self._plot.getViewBox()
+        _, (y0, y1) = vb.viewRange()
+        if y1 - y0 <= 0:
+            return
+        h_px = float(max(vb.height(), 50))
+        gain = self._gain_scale()
+        # 60px 对应的数据坐标长度 ÷ 增益 = 真实信号幅度，再取漂亮数
+        real_uv = _nice_number((y1 - y0) * (_SCALE_BAR_PX / h_px) / gain)
+        x = t1 - (t1 - t0) * 0.03
+        y_top = y0 + (y1 - y0) * 0.12
+        self._scale_line.setData([x, x], [y_top, y_top + real_uv * gain])
+        self._scale_text.setPos(x - (t1 - t0) * 0.012, y_top + real_uv * gain / 2)
+        self._scale_text.setText(f"{real_uv:g} {S.UNIT_UV}")
+
+    def _update_window_label(self, width_s: float) -> None:
+        """把当前视口宽度回写到一屏时长框（拖框缩放/Ctrl+滚轮后保持一致）."""
+        txt = f"{width_s:g}"
+        if txt != self._window_combo.currentText():
+            self._combo_lock = True
+            self._window_combo.setCurrentText(txt)
+            self._combo_lock = False
+
     def _update_event_lines(self, t0: float, t1: float) -> None:
         """可视区内事件画彩色虚线.
 
@@ -287,6 +438,52 @@ class SignalBrowserView(QWidget):
             self._event_lines.append(line)
 
     # ------------------------------------------------------------------ 导航
+
+    def _set_x_range(self, t0: float, t1: float) -> None:
+        """设置 x 视口并 clamp 到 [0, duration]（滚轮/按钮/键盘的统一出口）."""
+        dur = self.rec.meta.duration_s
+        w = t1 - t0
+        if w >= dur:  # 一屏比全长还宽 → 全显
+            self._plot.setXRange(0.0, dur, padding=0)
+            return
+        t0c = min(max(t0, 0.0), dur - w)
+        self._plot.setXRange(t0c, t0c + w, padding=0)
+
+    def _page(self, direction: int) -> None:
+        """上一/下一屏：步进 0.9 屏（留 10% 上下文），到头 clamp."""
+        t0, t1 = self._visible_range()
+        w = t1 - t0
+        self._set_x_range(t0 + direction * _PAGE_STEP * w, t1 + direction * _PAGE_STEP * w)
+
+    def _go_edge(self, first: bool) -> None:
+        """最前/最末一屏：[0, w] 或 [dur-w, dur]."""
+        dur = self.rec.meta.duration_s
+        t0, t1 = self._visible_range()
+        w = min(t1 - t0, dur)
+        left = 0.0 if first else dur - w
+        self._set_x_range(left, left + w)
+
+    def _set_window_s(self, w_s: float) -> None:
+        """设置一屏时长（保持当前视口中心不变）."""
+        if not (w_s > 0) or not math.isfinite(w_s):
+            return
+        t0, t1 = self._visible_range()
+        c = (t0 + t1) / 2
+        self._set_x_range(c - w_s / 2, c + w_s / 2)
+
+    def _on_window_changed(self, text: str) -> None:
+        """一屏时长框：用户选预设/输入秒数 → 调整视口宽度.
+
+        输入到一半（"1."、空串）静默忽略；程序化回写由 ``_combo_lock`` 挡住。
+        """
+        if self._combo_lock:
+            return
+        try:
+            w = float(text.strip())
+        except ValueError:
+            return
+        if w > 0 and math.isfinite(w):
+            self._set_window_s(w)
 
     def _center_at(self, t: float, width_s: float | None = None) -> None:
         """把视图居中到 t（宽度不变或指定）."""
@@ -311,13 +508,34 @@ class SignalBrowserView(QWidget):
             target = float(earlier.max()) if len(earlier) else float(onsets.max())
         self._center_at(target)
 
+    def keyPressEvent(self, ev) -> None:  # noqa: N802 - Qt 命名
+        """键盘导航：←/→ 翻屏、Home/End 首末屏、↑/↓ 增益（需先点图区获焦点）."""
+        k = ev.key()
+        if k == Qt.Key.Key_Left:
+            self._page(-1)
+        elif k == Qt.Key.Key_Right:
+            self._page(+1)
+        elif k == Qt.Key.Key_Home:
+            self._go_edge(first=True)
+        elif k == Qt.Key.Key_End:
+            self._go_edge(first=False)
+        elif k == Qt.Key.Key_Up:
+            self._gain_slider.setValue(min(self._gain_slider.value() + 1, 20))
+        elif k == Qt.Key.Key_Down:
+            self._gain_slider.setValue(max(self._gain_slider.value() - 1, -20))
+        else:
+            super().keyPressEvent(ev)
+            return
+        ev.accept()
+
     def _on_channel_toggle(self, item: QListWidgetItem) -> None:
-        """通道勾选变化 → 显隐对应曲线并刷新（曲线保留，仅不画）."""
+        """通道勾选变化 → 显隐对应曲线与标签并刷新（曲线保留，仅不画）."""
         row = self._ch_list.row(item)
         if 0 <= row < len(self._channels):
             on = item.checkState() == Qt.CheckState.Checked
             self._channels[row]["enabled"] = on
             self._channels[row]["curve"].setVisible(on)
+            self._channels[row]["label"].setVisible(on)
             self._refresh_data()
 
     # ------------------------------------------------------------------ 坏道标记
@@ -348,7 +566,7 @@ class SignalBrowserView(QWidget):
             self._bad_names.add(name)
         for ch in self._channels:
             if ch["name"] == name:
-                color = S.BAD_PEN_COLOR if name in self._bad_names else "#7fbfff"
+                color = S.BAD_PEN_COLOR if name in self._bad_names else S.SIGNAL_PEN_COLOR
                 ch["curve"].setPen(pg.mkPen(color, width=1))
         if self.rec.raw is not None:  # 未加载时标记暂存，_on_raw_ready 统一写入
             self.rec.raw.info["bads"] = self.current_bads()

@@ -95,6 +95,17 @@ class S:
     TIME_FMT = "{t:.2f} s / {total:.1f} s"
     LOAD_FAILED_TITLE = "打开失败"
 
+    # ===== M6：浏览器窗口导航 + 浅色主题配色 =====
+    BTN_GO_FIRST = "|◀ 最前"
+    BTN_PREV_PAGE = "◀ 上一屏"
+    BTN_NEXT_PAGE = "下一屏 ▶"
+    BTN_GO_LAST = "最末 ▶|"
+    LBL_WINDOW_S = "一屏时长 (s)"
+    WINDOW_PRESETS = ("1", "2", "5", "10", "30", "60")
+    # 白底主题下的绘图配色（M6 全局换白，见 main_window 的 pg.setConfigOptions）
+    SIGNAL_PEN_COLOR = "#1f77b4"   # 波形曲线：白底高对比深蓝（旧深底浅蓝 #7fbfff 弃用）
+    PLOT_TEXT_COLOR = "#333333"    # 通道标签/事件图例等图内文字（旧 #cccccc 弃用）
+
     # ===== M2：采样率询问（CSV/TXT/HDF5 内无采样率）=====
     ASK_FS_TITLE = "设定采样率"
     ASK_FS_TEXT = (

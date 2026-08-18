@@ -5,7 +5,7 @@
 ## 功能概览（v1）
 
 - **数据管理**：EDF/EDF+、BDF、GDF、BrainVision、FIF、EEGLAB、CNT、EGI、BCI-IV .mat、NWB、Intan（rhd/rhs）、Open Ephys、Blackrock、CSV/TXT、HDF5——单文件或整目录批量导入，元数据表浏览筛选
-- **波形浏览**：多通道滚动/缩放、事件标记叠加与跳转、通道启用/排序/增益/坏道标记
+- **波形浏览**：多通道滚动浏览（一屏时长选择+翻屏按钮/滚轮平移/键盘导航+幅值标尺）、事件标记叠加与跳转、通道启用/增益/坏道标记
 - **预处理**：带通/陷波滤波、重参考、降采样、坏导联处理、时间窗裁剪、事件分段——步骤链可编排、可序列化复现
 - **特征提取**：PSD（Welch）、标准+自定义频带功率、时域统计量；raw 全量摘要或 epochs 逐段；「用当前显示窗口」一键预填时间窗
 - **批处理**：右侧面板组好的管线+特征链批量套用到工作区任意文件子集；逐文件进度/日志/错误报告（失败行双击看日志），随时取消，UI 全程响应
@@ -29,7 +29,7 @@ dataloadv          # 或 python -m dataloadv
 
 ## 验证
 
-- 单测：`pytest`（137 项，含真实羊 latin1 EDF 与真实 GDF 数据）
+- 单测：`pytest`（150 项，含真实羊 latin1 EDF 与真实 GDF 数据）
 - 端到端：`python scripts/e2e_m1.py` … `e2e_m5.py`（各里程碑真实数据验收，幂等可反复跑）
 
 环境搭建完整命令见 [HANDOFF.md](HANDOFF.md)；开发计划见 [plan.md](plan.md)，当前进度见 [STATUS.md](STATUS.md)；**说明·运行·使用·调试一册通览见 [MANUAL.md](MANUAL.md)**。

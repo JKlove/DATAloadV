@@ -95,6 +95,26 @@
       取消 4/41 有效、失败行日志可查、CSV/sidecar 一致；e2e_m1-m4 + smoke 回归全绿
 - [x] 收尾四件事：review.md → STATUS/TODO/HANDOFF → 上下文检测 → git commit
 
+## M6 浏览体验优化（✅ 2026-08-18 完成，用户实测 v1 三点反馈，验证见 review.md）
+
+> **两项用户决策**：滚轮=平移（缩放交给时长选项/右键框选/Ctrl+滚轮微调）；全局换白底（不加主题开关）。
+
+- [x] 通道标签重构：删 y 轴 setTicks（挤叠+"…"截断源头）→ 每通道 TextItem 内嵌曲线行左端
+      （半透明白底、随视口/间距/显隐联动）；左轴隐藏；y 轴锁定 setMouseEnabled(x=True, y=False)
+- [x] 滚轮/键盘：_PanViewBox 重载 wheelEvent（竖滚=平移 10% 一屏、Ctrl+滚轮=鼠标锚点 ×1.25 缩放）；
+      键盘 ←/→ 翻屏、Home/End 首末屏、↑/↓ 增益 ±1（StrongFocus + _gfx 焦点代理）
+- [x] 窗口导航：|◀ 最前 / ◀ 上一屏 / 一屏时长下拉（1/2/5/10/30/60 s + 可编辑）/ 下一屏 ▶ / 最末 ▶|；
+      翻屏 0.9 屏；_set_x_range 统一 clamp [0,dur]；时长变更保持视口中心；视口宽度回写时长框
+- [x] 幅值标尺：右上角 60px 竖线 + µV 标注（像素长度÷增益→真实幅度→_nice_number 1/2/5×10^k），
+      随增益/视口动态更新
+- [x] 浅色主题：pg.setConfigOptions(background="w")；波形 #1f77b4 / PSD #d62728,#1f77b4,#2ca02c,#9467bd
+      / 事件黄→#b8860b / 图例 #333333 / batch 状态色加深；坏道灰与网格保留
+- [x] 存量增益双 bug 修复：①乘间距不乘波形 → out_v*gain + idx*spacing；②_gain 初值 1.0（滑杆值！）
+      → 首帧隐形 1.26× → 0.0
+- [x] 验证：pytest 150 绿（+13 test_ui_browser_m6）；e2e_m1 扩 18 项 ALL OK（+5 M6 断言）；
+      e2e_m3 + smoke 回归全绿
+- [x] 收尾四件事：STATUS/TODO/HANDOFF/MANUAL/README → review.md → 上下文检测 → git commit
+
 ## 已知问题 / Backlog（v1 收官后暂缓项）
 
 - .edf.event WFDB 边车解析：M1 实测 PhysioNet EDF 内嵌注释已完整，边车为冗余副本，暂不需要；若未来遇到只有边车、无内嵌注释的数据集再补
@@ -103,3 +123,5 @@
 - **Blackrock/Open Ephys/Intan/NWB 无真实数据实测**（M5）：neo 系用桩 rawio 验证模板关键逻辑（换算/转置/选流/事件）、NWB 用 pynwb 完整写支持做真实往返；拿到真实文件后跑 `open_file()` 冒烟即可（neo 模板路径统一，风险低）
 - eeglabio / pybv 装入 dev 依赖做 EEGLAB/BrainVision 合成往返：v1 收官时评估——neo/pynwb 已覆盖 M5 验收，暂缓，等真实数据再决定
 - 2b GDF 头自带 highpass 100 > lowpass 0.5 触发 mne RuntimeWarning（每文件两条，无害）；如需清净可在读取器预处理 info（暂缓——不改数据语义，仅日志噪音）
+- **epochs_preview 仍用 y 轴 setTicks 标通道名**（M6 只重构了信号浏览器）：分段预览通道数通常 ≤25 且图形静态、无滚轮 y 缩放路径，实际不会触发重叠；若未来分段通道很多再改行内嵌标签
+- **白底对比度人工目检**：M6 换色均按白底可辨原则挑选并有测试覆盖存在性，但整体观感（如网格浓度、事件色区分度）未做截图级人工评审——用户日常使用中如有个别颜色不顺眼，改 strings_zh/各控件色值即可（均为一处常量）

@@ -75,7 +75,7 @@ class EpochsPreviewView(QWidget):
         ticks = []
         spacing = max(float(np.median(np.abs(avg).max(axis=1))) * 3.0, 1e-3)
         for i, name in enumerate(epochs.ch_names):
-            plot.plot(times, avg[i] + i * spacing, pen=pg.mkPen("#7fbfff", width=1))
+            plot.plot(times, avg[i] + i * spacing, pen=pg.mkPen(S.SIGNAL_PEN_COLOR, width=1))
             ticks.append((float(i), name))
         plot.getAxis("left").setTicks([ticks])
         plot.setYRange(-spacing, (len(ticks) + 0.5) * spacing, padding=0)

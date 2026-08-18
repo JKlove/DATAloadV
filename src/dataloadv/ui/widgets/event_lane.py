@@ -12,8 +12,9 @@ import pyqtgraph as pg
 from PySide6.QtCore import Qt, Signal
 
 from ...core.recording import EventTable
+from ..strings_zh import S
 
-# 事件码调色板（顺序固定，保证同码同色；亮色系适配深色主题）
+# 事件码调色板（顺序固定，保证同码同色；白底主题用色——黄取暗金，浅黄在白底不可辨）
 EVENT_PALETTE = [
     "#e05c5c",  # 红
     "#5cb85c",  # 绿
@@ -21,7 +22,7 @@ EVENT_PALETTE = [
     "#e0a85c",  # 橙
     "#b45ce0",  # 紫
     "#5ce0d2",  # 青
-    "#e0e05c",  # 黄
+    "#b8860b",  # 黄（暗金：旧 #e0e05c 在白底上与背景无法区分，M6 更换）
     "#e05c9e",  # 粉
 ]
 
@@ -93,7 +94,7 @@ class EventLane(pg.PlotItem):
         # 图例文本："T0×15  T1×8 …"（放条内左上）
         summary = events.codes_summary()
         legend = pg.TextItem(
-            "  ".join(f"{c}×{summary[c]}" for c in codes), color="#cccccc", anchor=(0, 1)
+            "  ".join(f"{c}×{summary[c]}" for c in codes), color=S.PLOT_TEXT_COLOR, anchor=(0, 1)
         )
         self.addItem(legend)
         legend.setPos(0, 0.98)

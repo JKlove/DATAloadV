@@ -16,8 +16,9 @@ from ..strings_zh import S
 
 logger = logging.getLogger(__name__)
 
-# 曲线配色（深底上可辨；第一条=原始=白，第二条=处理后=橙）
-_SERIES_COLORS = ("#e8e8e8", "#ff9f43", "#54a0ff", "#1dd1a1")
+# 曲线配色（白底高对比；第一条=原始=红，第二条=处理后=蓝——M6 换浅色主题时
+# 首色由近白 #e8e8e8 更换，否则白底上完全不可见）
+_SERIES_COLORS = ("#d62728", "#1f77b4", "#2ca02c", "#9467bd")
 
 
 class PsdView(QWidget):

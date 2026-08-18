@@ -1,7 +1,7 @@
 """应用入口.
 
 职责：
-- 创建 QApplication，配置高 DPI 与深色主题
+- 创建 QApplication，配置高 DPI（绘图浅色主题在 main_window 的 pg.setConfigOptions 设置）
 - 安装全局异常钩子：未捕获异常写入日志文件而不是静默崩溃
 - 实例化主窗口并进入事件循环
 

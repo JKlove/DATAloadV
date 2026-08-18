@@ -81,6 +81,24 @@ def main() -> int:
                 enabled = [c for c in v._channels if c["enabled"]]
                 got = any(c["curve"].xData is not None and len(c["curve"].xData) > 0 for c in enabled)
                 check("羊波形曲线有数据（8 通道）", got and len(enabled) == 8)
+                # M6 回归：通道标签全名内嵌 / 窗口导航视口数学 / 幅值标尺
+                labels_ok = all(
+                    ch["label"].toPlainText() == ch["name"] for ch in v._channels
+                )
+                check("M6 通道标签全名内嵌", labels_ok)
+                v._set_window_s(5.0)
+                t0w, t1w = v._visible_range()
+                check("M6 一屏时长设 5s", abs((t1w - t0w) - 5.0) < 1e-6)
+                v._page(+1)
+                t0p, _ = v._visible_range()
+                check("M6 下一屏步进 0.9 屏", abs(t0p - (t0w + 4.5)) < 1e-6)
+                v._go_edge(first=False)
+                t0e, t1e = v._visible_range()
+                dur = v.rec.meta.duration_s
+                check("M6 最末屏 [dur-w, dur]",
+                      abs(t1e - dur) < 1e-3 and abs((t1e - t0e) - 5.0) < 1e-3)
+                v._refresh_data()
+                check("M6 幅值标尺标注 µV", "µV" in v._scale_text.toPlainText())
         finally:
             QTimer.singleShot(300, _stage4)
 

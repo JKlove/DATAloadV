@@ -49,7 +49,7 @@ pip install -e "/Users/huyingbing/VSproject/intervention BCI/DataloadV[dev]"
 ```bash
 conda activate dlv
 dataloadv                                    # 启动应用（或 python -m dataloadv）
-pytest                                       # 全部单测（M5：137 passed，含 real 数据项）
+pytest                                       # 全部单测（M6：150 passed，含 real 数据项）
 pytest -m real                               # 仅真实数据冒烟（data/sheep 缺失自动跳过）
 python scripts/smoke_gui.py                  # GUI 冒烟：真窗口启动自检后自动退出
 python scripts/e2e_m1.py                     # M1 端到端：真实导入→浏览→渲染→释放（幂等，可反复跑）
@@ -119,6 +119,8 @@ src/dataloadv/
                               #   + psd_view / epochs_preview
                               #   + feature_table（特征结果 tab：长表排序浏览+CSV/HDF5/分段导出+sidecar）
                               #   + batch_view（批处理运行页：逐文件表/失败红显/双击日志对话框；M5）
+                              #   signal_browser（M6 重构：_PanViewBox 滚轮平移/通道名行内嵌 TextItem/
+                              #   幅值标尺 _nice_number/翻屏导航/键盘；绘图浅色主题在 main_window 一处）
 ```
 
 **四条硬性规则**（review 时检查）：
@@ -174,10 +176,13 @@ src/dataloadv/
 35. **Qt6 魔数全部禁用**：`0x02` 是 `ItemIsEditable` 不是 UserCheckable（运行期静默错行为：单击进入编辑而非切换勾选）；必须 `Qt.ItemDataRole.UserRole` / `Qt.ItemFlag.ItemIsUserCheckable` / `Qt.CheckState.Checked` 全枚举写法。
 36. **mne 无 `write_raw_edf`**：合成 EDF 用 `raw.export(path, fmt="edf", overwrite=True)`。同类：**stdout 重定向到文件是块缓冲**——e2e 中途崩溃时已过检查项的 print 全丢在缓冲区，脚本类 print 一律 `flush=True`。
 37. **2b E（评估）文件 769/770 事件全 0，未知类 cue 是 783**：T 文件 769:60+770:60=120 段，E 文件 783:160 段——同一分段码表跑通两类文件必须含 783（M5 e2e 实测；正文见 STATUS 实证结论 M5-#1）。
+38. **pyqtgraph ViewBox 默认滚轮同时缩放 x/y，且 y 轴 setTicks 放全部通道名不可扩展**（M6 用户反馈"通道名重叠/…"根因）：解法组合——`setMouseEnabled(x=True, y=False)` 锁 y + 子类 ViewBox 重载 `wheelEvent` 接管滚轮（不调 super）+ 通道名改曲线行内嵌 `pg.TextItem`（半透明白 fill 压波形上可读）。另：`PlotCurveItem.yData` 就是 setData 传入数组本体（shares_memory 实证），读曲线数据做断言安全。
+39. **浏览器增益两个存量 bug（M1 起，M6 修复）**：①增益只乘通道间距不乘波形（`out_v + idx*spacing*gain`——语义应为 `out_v*gain + idx*spacing`）；②`_gain` 字段存的是**滑杆刻度值**（增益=10^(x/10)）却初始化 1.0 → 首帧起隐形 1.26×。教训：存"控件原始刻度"的字段，初值必须与控件初值一致。
 
-## 当前接手要点（2026-08-18，M5 已完成，v1 收官）
+## 当前接手要点（2026-08-18，M6 已完成）
 
-- **v1 全部里程碑（M0–M5）完成并验证**：pytest 137 绿 + e2e_m1 13 / m2 17 / m3 11 / m4 18 / m5 19 项全过 + smoke_gui OK（见 review.md 各节）。后续事项见 TODO.md「Backlog」（Blackrock/OE/Intan/NWB 真实数据实测、ds3、eeglabio/pybv 等）
+- **M6 浏览体验优化完成（用户实测 v1 三点反馈驱动）**：通道标签行内嵌（y 轴 setTicks 已废弃）、幅值标尺、窗口导航（一屏时长下拉/翻屏按钮/滚轮平移/Ctrl+滚轮缩放/键盘 ←→ Home End ↑↓）、全局浅色主题、增益双 bug 修复——pytest 150 绿 + e2e_m1 18 项 + e2e_m3/smoke 回归全过（见 review.md M6 节）
+- **v1 全部里程碑（M0–M5）完成并验证**：pytest + e2e_m1–m5 + smoke_gui 全过（见 review.md 各节）。后续事项见 TODO.md「Backlog」（Blackrock/OE/Intan/NWB 真实数据实测、ds3、eeglabio/pybv 等）
 - **批处理架构（M5 关键决策）**：BatchEngine 是**纯 Python**（无 QObject——架构规则 #1 优先于 plan.md 原文"BatchEngine(QObject)"）；回调（on_progress/on_file_done）在 worker 线程执行 → UI 侧 `queue.Queue` + QTimer 150ms 事件泵（batch_dialog._drain_events）转主线程；`run()` 整体经 `run_in_thread` 丢进一个 QThread，内部 ThreadPoolExecutor 提供并发；取消 = `engine.cancel()`（threading.Event）立即返回，引擎在**步骤边界**停止（proc/features 的 cancel_check 逐步骤检查，抛 PipelineCancelled）
 - 批处理新增文件三件套已定型：管线/特征输入用 `pipeline_panel.pipeline_dicts()`/`feature_dicts()`（dict 快照，JobSpec 零转换）；结果并入 `FeatureTable.add_result()`（多文件长表 recording 列区分）；导出走 engine._export（sidecar extra.batch 记 n_files/n_workers/files_written）
 - **特征范围决策（用户 2026-08-18 确认）：四层组合**——全量默认 + epochs 逐段 + crop 步骤（显式时间窗，进 sidecar）+ 视口一键预填（不隐式绑定）；滤波类预处理仍全量（边界效应），crop 只裁数据范围

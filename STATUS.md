@@ -1,10 +1,10 @@
 # STATUS — 项目状态快照
 
-> 本文件回答"现在做到哪了"。每里程碑完成及重要提交后更新。最后更新：2026-08-18（M5 完成，v1 收官）
+> 本文件回答"现在做到哪了"。每里程碑完成及重要提交后更新。最后更新：2026-08-18（M6 浏览体验优化完成）
 
 ## 当前里程碑
 
-- **M5 批处理+扩展格式+收尾：✅ 完成（2026-08-18）**，验证全过（pytest 137 绿 + e2e_m5 19 项 ALL OK：45 个 2b GDF 批处理 45 成功 1 容错 78240 行特征 8.5s、UI 心跳全程响应、中途取消有效、sidecar 可复现，见 review.md）
+- **M6 浏览体验优化：✅ 完成（2026-08-18）**，用户实测 v1 三点反馈驱动：通道标签重构（重叠/截断根除）+ 幅值标尺 + 窗口导航（一屏时长/滚轮平移/翻屏按钮/键盘）+ 全局浅色主题 + 两个存量增益 bug 修复；验证全过（pytest 150 绿 + e2e_m1 扩 18 项 ALL OK + e2e_m3/smoke 回归，见 review.md）
 - **v1 全部里程碑（M0–M5）完成**——后续事项见 TODO.md「Backlog」
 
 ## 里程碑总览
@@ -17,6 +17,7 @@
 | M3 预处理链+预览 | ✅ 完成 | 2026-08-18 | proc 层 6 步骤+序列化、管线面板+pydantic 自动表单、预览副本 tab+分段预览、PSD 对比、坏道标记联动 |
 | M4 特征+导出 | ✅ 完成 | 2026-08-18 | crop 时间窗+3 提取器+FeatureTable 长表+特征面板（视口预填）+CSV/HDF5/FIF 导出+sidecar |
 | M5 批处理引擎+扩展格式 | ✅ 完成 | 2026-08-18 | BatchEngine(纯 Python 线程池/取消/逐文件容错)+批处理对话框(队列事件泵)+neo(Blackrock/OE/Intan)+NWB 读取器+设置+README；e2e_m5 19 项 |
+| M6 浏览体验优化 | ✅ 完成 | 2026-08-18 | 通道标签内嵌重构+幅值标尺+窗口导航(时长/滚轮平移/翻屏/键盘)+浅色主题+增益双 bug 修复；pytest 150 / e2e_m1 18 项 |
 
 ## 环境
 
@@ -25,8 +26,8 @@
 
 ## 测试
 
-- `pytest`：**137 passed**（M5 新增 15：batch 10——引擎容错/取消/导出/设置 + readers 5——NWB pynwb 真实往返/neo 桩模板；含真实羊 latin1 + 真实 GDF 测试）
-- `python scripts/e2e_m1.py`：**ALL OK（13 项）**——sheep + S001 真实导入 → 浏览 → 释放（幂等总量断言）
+- `pytest`：**150 passed**（M5 时 137 + M6 新增 13：tests/test_ui_browser_m6.py——通道标签/增益语义/幅值标尺/窗口导航/滚轮平移/_nice_number；含真实羊 latin1 + 真实 GDF 测试）
+- `python scripts/e2e_m1.py`：**ALL OK（18 项）**——sheep + S001 真实导入 → 浏览 → 释放（幂等总量断言）；M6 追加 5 项：通道标签全名内嵌/一屏时长 5s/翻屏 0.9 步进/最末屏/幅值标尺 µV
 - `python scripts/e2e_m2.py`：**ALL OK（17 项）**——4.9GB dataset 扫描 5.2s / 识别 1606 条 / 3 条已知结构报错 / 六格式（EDF/GDF 2a/GDF 2b/ds1/ds4/CSV）逐个打开均有真实曲线 / GDF 中文标签 / 六 tab 关闭释放
 - `python scripts/e2e_m3.py`：**ALL OK（11 项）**——羊 EDF 三步预览（带通+陷波+重参考）50Hz PSD 压制比 0.0001、坏道标记联动、A01T 分段预览 288 段、tab 释放
 - `python scripts/e2e_m4.py`：**ALL OK（18 项）**——羊 EDF 管线（带通+陷波+裁剪前 30s）+三特征 104 行（8 导×13 特征）、处理后 PSD 50Hz 峰已消（0.4 vs 7130 µV²/Hz）、「用当前显示窗口」预填 crop=视口 [125,145]s、CSV BOM+中文表头 104 行、sidecar 含全管线、A01T 逐段特征 288 段×25 导×2 频段=14400 行、事件码 769-772 逐段带入、分段 HDF5 形状一致、FIF 回读 288 段
@@ -72,7 +73,17 @@
 6. **Qt6 魔数全部禁用**：0x02 是 `ItemIsEditable` 不是 UserCheckable（运行期静默错行为）；必须 `Qt.ItemDataRole.UserRole` / `Qt.ItemFlag.ItemIsUserCheckable` / `Qt.CheckState.Checked` 全枚举
 7. **stdout 重定向到文件是块缓冲**——e2e 中途崩溃时已过检查项的 print 全丢在缓冲区；脚本类 print 一律 `flush=True`
 
+## M6 关键实证结论（写代码前实测，避免踩坑）
+
+1. **pyqtgraph ViewBox 默认滚轮同时缩放 x/y**——y 未锁时滚几下通道刻度挤成一团（用户"通道名重叠"截图根因之一，与 y 轴全量 setTicks 截断叠加）；必须 `setMouseEnabled(x=True, y=False)` 并在子类 `wheelEvent` 里接管滚轮（重载后不调 super，默认缩放不再发生）
+2. **y 轴 setTicks 放全部通道名不可扩展**：导联一多必然挤叠+"…"截断；曲线行内嵌 TextItem（anchor=(0,0.5) + 半透明白 fill）是任意通道数下都不重叠的解
+3. **`PlotCurveItem.yData` 就是 setData 传入数组本体**（shares_memory 实证）——增益断言可直接读曲线数据做比值；诊断中曾疑 yData 被 pyqtgraph 改写，纯 pyqtgraph 最小复现排除
+4. **浏览器增益两个存量 bug（M1 起）**：增益只乘通道间距不乘波形（`out_v + idx*spacing*gain`）；`_gain` 存滑杆刻度值却初始化 1.0 → 首帧隐形 10^0.1≈1.26× 增益（新测试断言 ×10 实得 7.94 顺藤摸出）
+5. **PSD 首色 #e8e8e8 在白底完全不可见**——深底换白底不只是背景一行，浅色系配色（波形 #7fbfff、事件黄 #e0e05c、图例 #cccccc、batch 状态色）全部要跟着换成白底可辨浓度
+
 ## 最近变更记录（新条目加在最上面）
+
+- 2026-08-18（M6 完成，用户实测反馈驱动）：signal_browser.py 重构——`_PanViewBox`（滚轮=平移/Ctrl+滚轮=锚点缩放、y 锁定）、通道名 TextItem 行内嵌（删 y 轴 setTicks）、幅值标尺（60px 固定像素 + `_nice_number` 1/2/5×10^k 换算 µV）、窗口导航（|◀/◀/一屏时长 QComboBox/▶/▶|、`_set_x_range` 统一 clamp、翻屏 0.9 屏、键盘 ←→Home End ↑↓、StrongFocus+焦点代理）；**修复增益双 bug**（乘间距不乘波形→乘波形不乘间距；`_gain` 初值 1.0→0.0）；浅色主题（main_window `background="w"` + S.SIGNAL_PEN_COLOR #1f77b4 / S.PLOT_TEXT_COLOR #333333 / PSD 色板 #d62728,#1f77b4,#2ca02c,#9467bd / 事件黄→#b8860b / batch 状态色加深）；tests/test_ui_browser_m6.py +13（150 绿）；e2e_m1 +5 项（18 项 ALL OK）+ e2e_m3/smoke 回归；MANUAL 交互表重写。
 
 - 2026-08-18（v1 收官后补充）：编写 **MANUAL.md**（说明/运行/使用/调试一册通览，README 已链接）；盘点 UI 时发现并修复 **事件跳转按钮接线反了**（signal_browser.py：`◀ 上一事件`误接 `_jump_event(+1)` 即跳更晚事件——两按钮 lambda 对调，代码内留注释；e2e_m1 直接调 `_jump_event(1)` 语义未受影响，回归 ALL OK）。
 

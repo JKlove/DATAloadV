@@ -32,12 +32,12 @@ from PySide6.QtWidgets import (
 from ...batch.jobs import BatchSummary, FileResult, FileStatus
 from ..strings_zh import S
 
-# 状态 → 前景色（失败红、成功浅绿、取消灰；表格深色底上直接用文字色区分）
+# 状态 → 前景色（失败红、成功绿、取消灰；M6 换白底主题后加深到白表格底可辨的浓度）
 _STATUS_COLOR = {
-    FileStatus.OK: QColor("#7dd97b"),
-    FileStatus.FAILED: QColor("#ff7d7d"),
-    FileStatus.CANCELLED: QColor("#9a9a9a"),
-    FileStatus.SKIPPED: QColor("#9a9a9a"),
+    FileStatus.OK: QColor("#1e8e3e"),
+    FileStatus.FAILED: QColor("#c5221f"),
+    FileStatus.CANCELLED: QColor("#666666"),
+    FileStatus.SKIPPED: QColor("#666666"),
 }
 
 
