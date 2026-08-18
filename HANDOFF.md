@@ -41,26 +41,36 @@ pip install -e "/Users/huyingbing/VSproject/intervention BCI/DataloadV[dev]"
 ```bash
 conda activate dlv
 dataloadv                                    # 启动应用（或 python -m dataloadv）
-pytest                                       # 全部单测（M0：3 passed）
+pytest                                       # 全部单测（M1：17 passed，含 5 个 real 羊数据项）
+pytest -m real                               # 仅真实数据冒烟（data/sheep 缺失自动跳过）
 python scripts/smoke_gui.py                  # GUI 冒烟：真窗口启动自检后自动退出
-pytest -m real                               # 真实数据冒烟（M1 起建立；data/sheep 缺失自动跳过）
+python scripts/e2e_m1.py                     # M1 端到端：真实导入→浏览→渲染→释放（幂等，可反复跑）
 ```
 
-## 架构导览（M0 时的骨架，后续里程碑充实）
+## 架构导览（M1 后的实际结构）
 
 ```
 src/dataloadv/
 ├── app.py / __main__.py     # 入口：QApplication、高 DPI、excepthook→日志
 ├── core/                    # 计算层核心（禁止 import Qt）
-│   ├── recording.py         # Recording 统一数据模型 + LoadedRawCache 内存 LRU（M1）
-│   └── workspace.py         # 工作区与持久化（M1）
+│   ├── recording.py         # Recording/RecordingMeta/EventTable/LoadPolicy/LoadedRawCache（M1）
+│   └── workspace.py         # Workspace + ~/.dataloadv/ JSON 持久化（M1）
 ├── io/                      # 读取器层（禁止 import Qt）——注册表模式，每格式一个 Reader
+│   ├── base.py              # BaseReader ABC：read_meta 仅头/open/load_raw/sniff/common_meta_fields
+│   ├── registry.py          # @register_reader + open_file/scan_folder（容错+进度回调）
+│   ├── sniffing.py          # 魔数嗅探（EDF 已有，M2 扩充）
+│   └── mne_readers.py       # EdfReader（latin1 自动回退）；M2 补 BDF/GDF/BV/FIF/EEGLAB/CNT/EGI
 ├── proc/                    # 预处理步骤（M3）——每步=pydantic参数+apply(ctx)，可序列化
 ├── features/                # 特征提取器（M4）
 ├── batch/                   # 批处理引擎（M5）
 ├── export/                  # 导出与溯源 sidecar（M4）
-├── workers/generic.py       # run_in_thread：后台任务→信号回调
-└── ui/                      # 全部 Qt 代码：主窗口/dock/对话框/部件；strings_zh.py 集中中文文案
+├── workers/generic.py       # run_in_thread：后台任务→信号回调（worker 挂 thread 保活，见坑 #7）
+└── ui/                      # 全部 Qt 代码
+    ├── main_window.py       # 主窗口：导入/工作区树 dock/元数据表/浏览 tab 区
+    ├── state.py             # SessionState 信号中枢（recording_opened 等）
+    ├── strings_zh.py        # 全部中文文案集中（class S）
+    ├── dialogs/import_dialog.py   # 导入控制器：worker 扫描→进度→错误表
+    └── widgets/             # workspace_tree / meta_table / signal_browser / event_lane / log_panel
 ```
 
 **四条硬性规则**（review 时检查）：
@@ -84,9 +94,15 @@ src/dataloadv/
 4. **`data/` 目录只读**：4.9GB 原始数据，应用绝不写入；用户配置在 `~/.dataloadv/`，导出去用户选择的目录。
 5. **Qt 回调里绝不能让异常挡住退出**：M0 冒烟首版在 QTimer 回调中抛 AttributeError 导致 `app.quit()` 未执行、进程悬挂。规则：自检/回调类代码把断言包 try、把 quit/cleanup 放 finally（见 scripts/smoke_gui.py）。
 6. **`mne.Annotations` 不接受 `verbose` 参数**（与多数 mne 类不同），构造时不要传。
+7. **PySide6 信号连接不持有 Python receiver 引用**：Worker 作为局部变量在 run 触发前就可能被 GC（线程空转、回调静默丢失，伴随 "QThread: Destroyed while thread is still running"）。解法：`thread._dlv_worker = worker` 保活（workers/generic.py 已内置）。
+8. **pg.PlotItem 构造期 `self.scene()` 为 None**：要绑 sigMouseClicked 等场景级事件，必须在加入 GraphicsLayoutWidget 之后——EventLane 用 `wire_click()` 延迟绑定模式，浏览器挂载后调用。
+9. **读取器收到的 path 可能是 str**（如 meta.path 从 JSON 反序列化回来）：所有 `path.name`/`path.suffix` 操作前先 `path = Path(path)` 归一（_read_edf_robust 已内置）。
+10. **锁内调 unload 的死锁模式**：LoadedRawCache 曾在持锁状态下调 `rec.unload()`→`forget()` 再拿非重入锁。规则：锁内只"选受害者摘链"，实际 unload 在锁外执行（_pick_victims_locked / _unload_victims 分离）。
+11. **e2e/测试脚本必须幂等**：工作区持久化在 `~/.dataloadv`，脚本开头 `reload_workspace("一次性名字")`、结束切回原工作区，否则二次运行全是"重复导入"。
 
-## 当前接手要点（2026-08-18，M0 已完成）
+## 当前接手要点（2026-08-18，M1 已完成）
 
-- M0 全部完成并验证（见 review.md）；下一步是 **M1**，任务拆解见 TODO.md「M1」一节
-- 已有代码量小（入口/日志/worker/主窗口骨架），先读 `plan.md` §4 核心设计再动工 Recording 模型
-- M1 关键外部事实：sheep EDF 的 latin1 问题（坑 #1）、PhysioNet .edf 配套 .event 边车文件（WFDB 布局，事件从边车读）
+- M1 全部完成并验证（pytest 17 绿 + e2e_m1 13 项全过，见 review.md）；下一步是 **M2 读取器全覆盖**，任务拆解见 TODO.md「M2」一节
+- M2 动工顺序建议：先 mne_readers.py 补 BDF/GDF/BrainVision/FIF/EEGLAB/CNT/EGI（全是 `mne.io.read_raw_*` 包装，模式照抄 EdfReader），再 event_maps.py GDF 事件码中文映射，最后 bciciv_mat.py（结构最复杂，参考坑 #2）与 table.py/hdf5.py
+- M1 三条实证结论（写代码前实测得来，M2 沿用同方法论）：① PhysioNet EDF 内嵌注释完整，边车冗余已取消；② S001 每被试 14 个 run；③ latin1 回退 mne 1.12 实测有效
+- 读取器新格式的通用套路：`RecordingMeta(**self.common_meta_fields(path, fmt), ...)` 一次构造（勿手拼 dict，会缺必填字段）；`_meta_from_raw` 用已构造的 raw 提 n_channels/freq/duration/events

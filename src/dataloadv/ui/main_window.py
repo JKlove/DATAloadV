@@ -1,11 +1,14 @@
-"""主窗口：整体布局与菜单（M0 骨架版，后续里程碑填充真实功能）.
+"""主窗口：布局、菜单与会话编排.
 
-布局约定（与 plan.md §4 一致）：
-- 左侧 Dock：工作区（M1 实现为数据树 + 元数据表）
-- 中央：QTabWidget（M1 起每个打开的记录一个浏览 tab + 全局功能 tab）
-- 右侧 Dock：处理管线编排（M3）
-- 底部 Dock：日志面板（M0 即可用）
-- 状态栏：就绪状态 + 批处理/扫描进度条（M1/M5 挂接）
+布局（plan.md §4）：
+- 左 Dock：工作区树（WorkspaceTree）
+- 中央：QTabWidget——元数据表（全局）+ 每条打开的录制一个 SignalBrowserView
+- 右 Dock：处理管线（M3 前为占位）
+- 下 Dock：日志面板
+- 状态栏：消息 + 导入进度条 + 版本号
+
+打开录制的线程模型：双击（树/表）→ ``run_in_thread(open_file)``（头+事件读取
+在 worker）→ 主线程建 SignalBrowserView tab（其内部再异步 ensure_raw 数据）。
 """
 
 from __future__ import annotations
@@ -17,15 +20,21 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QLabel,
     QMainWindow,
-    QDockWidget,
     QMessageBox,
+    QDockWidget,
     QTabWidget,
-    QWidget,
 )
 
 from .. import __version__
+from ..io.registry import open_file
+from ..workers.generic import run_in_thread
+from .dialogs.import_dialog import ImportController
+from .state import SessionState
 from .strings_zh import S
 from .widgets.log_panel import LogPanel
+from .widgets.meta_table import MetaTableView
+from .widgets.signal_browser import SignalBrowserView
+from .widgets.workspace_tree import WorkspaceTree
 
 logger = logging.getLogger(__name__)
 
@@ -36,77 +45,83 @@ class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle(S.APP_TITLE)
-        self.resize(1440, 900)  # 16:10 常见桌面尺寸，小于此值用户可自行缩放
+        self.resize(1440, 900)
 
-        # pyqtgraph 全局深色主题（与 Qt 控件配色统一；antialias 关闭是为大
-        # 数据量绘图性能，信号浏览器用包络绘制弥补视觉锯齿）
+        # pyqtgraph 全局深色主题（关闭抗锯齿换取大数据量绘制性能，
+        # 信号浏览器用峰值包络弥补视觉锯齿——见 signal_browser.py 模块说明）
         pg.setConfigOptions(background="k", foreground="w", antialias=False)
+
+        self.state = SessionState()
+        self.state.workspace_changed.connect(self._refresh_views)
+        self.state.recording_opened.connect(self._on_recording_opened)
+        self._browser_tabs: dict[str, QWidget] = {}  # rec_id -> SignalBrowserView
 
         self._build_central()
         self._build_docks()
+        # 导入控制器须先于菜单存在（菜单动作直接引用它的方法）
+        self.importer = ImportController(
+            self, lambda: self.state.workspace, self._refresh_views
+        )
         self._build_menus()
         self._build_statusbar()
+
+        self._refresh_views()
+        logger.info("主窗口就绪（工作区：%s，%d 条录制）", self.state.workspace.name, len(self.state.workspace))
 
     # ------------------------------------------------------------------ 布局
 
     def _build_central(self) -> None:
-        """中央 tab 区（M0 仅一个欢迎占位 tab）."""
+        """中央 tab 区：元数据表 + 各浏览 tab."""
         self.tabs = QTabWidget(self)
         self.tabs.setTabsClosable(True)
         self.tabs.tabCloseRequested.connect(self._on_tab_close)
         self.setCentralWidget(self.tabs)
-        self._add_welcome_tab()
+
+        self.meta_view = MetaTableView()
+        self.meta_view.open_requested.connect(self._open_recording_async)
+        self.tabs.addTab(self.meta_view, S.TAB_META_TABLE)
 
     def _build_docks(self) -> None:
-        """四个 Dock：左工作区 / 右处理 / 下日志（中央为 tab 区）."""
-        # 左：工作区（M1 替换为 WorkspaceDock）
-        self._dock_workspace = self._make_dock(S.DOCK_WORKSPACE, S.PLACEHOLDER_WORKSPACE)
-        self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self._dock_workspace)
+        """左工作区树 / 右处理占位 / 下日志."""
+        self.workspace_tree = WorkspaceTree()
+        self.workspace_tree.open_requested.connect(self._open_recording_async)
+        self._dock_workspace = QDockWidget(S.DOCK_WORKSPACE, self)
+        self._dock_workspace.setWidget(self.workspace_tree)
 
-        # 右：处理管线（M3 替换为 PipelineDock）
-        self._dock_pipeline = self._make_dock(S.DOCK_PIPELINE, S.PLACEHOLDER_PIPELINE)
-        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self._dock_pipeline)
+        self._dock_pipeline = QDockWidget(S.DOCK_PIPELINE, self)
+        placeholder = QLabel(S.PLACEHOLDER_PIPELINE)
+        placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        placeholder.setWordWrap(True)
+        self._dock_pipeline.setWidget(placeholder)
 
-        # 下：日志面板（M0 即真实可用）
         self.log_panel = LogPanel(self)
         self._dock_log = QDockWidget(S.DOCK_LOG, self)
         self._dock_log.setWidget(self.log_panel)
-        self._dock_log.setFeatures(
-            QDockWidget.DockWidgetFeature.DockWidgetClosable
-            | QDockWidget.DockWidgetFeature.DockWidgetMovable
-            | QDockWidget.DockWidgetFeature.DockWidgetFloatable
-        )
-        self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self._dock_log)
 
-    @staticmethod
-    def _make_dock(title: str, placeholder: str) -> QDockWidget:
-        """造一个带占位内容的 Dock（骨架期用，后续里程碑被真实部件替换）."""
-        dock = QDockWidget(title)
-        label = QLabel(placeholder)
-        label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        label.setWordWrap(True)
-        dock.setWidget(label)
-        return dock
+        for dock, area in (
+            (self._dock_workspace, Qt.DockWidgetArea.LeftDockWidgetArea),
+            (self._dock_pipeline, Qt.DockWidgetArea.RightDockWidgetArea),
+            (self._dock_log, Qt.DockWidgetArea.BottomDockWidgetArea),
+        ):
+            dock.setFeatures(
+                QDockWidget.DockWidgetFeature.DockWidgetClosable
+                | QDockWidget.DockWidgetFeature.DockWidgetMovable
+                | QDockWidget.DockWidgetFeature.DockWidgetFloatable
+            )
+            self.addDockWidget(area, dock)
 
     def _build_menus(self) -> None:
-        """中文菜单栏（M0 大部分动作禁用，随里程碑逐一启用）."""
+        """中文菜单（导入动作 M1 已接通）."""
         menu_file = self.menuBar().addMenu(S.MENU_FILE)
         menu_view = self.menuBar().addMenu(S.MENU_VIEW)
         self.menuBar().addMenu(S.MENU_PROCESS)
         menu_help = self.menuBar().addMenu(S.MENU_HELP)
 
-        # 文件菜单：M1 起接通导入/工作区动作
-        for label in (
-            S.ACT_NEW_WORKSPACE,
-            S.ACT_OPEN_WORKSPACE,
-            S.ACT_IMPORT_FILES,
-            S.ACT_IMPORT_FOLDER,
-            S.ACT_EXPORT,
-        ):
-            act = menu_file.addAction(label)
-            act.setEnabled(False)  # 骨架期禁用；对应里程碑实现时启用并连接槽
+        act_import_files = menu_file.addAction(S.ACT_IMPORT_FILES, self.importer.import_files)
+        act_import_folder = menu_file.addAction(S.ACT_IMPORT_FOLDER, self.importer.import_folder)
+        menu_file.addSeparator()
+        menu_file.addAction(S.ACT_EXIT, self.close)
 
-        # 查看菜单：Dock 开关
         for title, dock in (
             (S.DOCK_WORKSPACE, self._dock_workspace),
             (S.DOCK_PIPELINE, self._dock_pipeline),
@@ -114,36 +129,73 @@ class MainWindow(QMainWindow):
         ):
             menu_view.addAction(dock.toggleViewAction())
 
-        menu_file.addSeparator()
-        menu_file.addAction(S.ACT_EXIT, self.close)
         menu_help.addAction(S.ACT_ABOUT, self._show_about)
+        self._import_actions = (act_import_files, act_import_folder)
 
     def _build_statusbar(self) -> None:
-        """状态栏：就绪文案 + 版本号."""
         self.statusBar().showMessage(S.STATUS_READY)
         self.statusBar().addPermanentWidget(QLabel(S.STATUS_VERSION_FMT.format(version=__version__)))
 
-    # ------------------------------------------------------------------ 槽
+    # ------------------------------------------------------------------ 数据流
+
+    def _refresh_views(self) -> None:
+        """工作区变化后刷新树与元数据表."""
+        ws = self.state.workspace
+        self.workspace_tree.refresh(ws)
+        self.meta_view.refresh(ws.all_metas())
+
+    def _open_recording_async(self, meta_path: str) -> None:
+        """后台打开录制（去重：已在开的 tab 直接置前）."""
+        for rec in self.state.open_recordings.values():
+            if rec.meta.path == meta_path:
+                self._focus_browser_tab(rec)
+                return
+        self.statusBar().showMessage(S.STATUS_OPENING.format(name=meta_path.rsplit("/", 1)[-1]))
+        run_in_thread(
+            open_file,
+            path=meta_path,
+            on_done=self._on_opened,
+            on_error=lambda m: QMessageBox.critical(self, S.LOAD_FAILED_TITLE, m),
+        )
+
+    def _on_opened(self, rec) -> None:
+        """worker 返回 Recording（主线程）：登记 → recording_opened 信号开 tab."""
+        self.state.attach_open(rec)
+        self.statusBar().showMessage(S.STATUS_READY)
+
+    def _on_recording_opened(self, rec) -> None:
+        """建浏览 tab（SessionState.recording_opened 的唯一消费者）."""
+        view = SignalBrowserView(rec)
+        self._browser_tabs[rec.meta.rec_id] = view
+        self.tabs.addTab(view, S.BROWSER_TITLE_FMT.format(name=rec.meta.filename))
+        self.tabs.setCurrentWidget(view)
+
+    def _focus_browser_tab(self, rec) -> None:
+        """把某录制的浏览 tab 置前."""
+        widget = self._browser_tabs.get(rec.meta.rec_id)
+        if widget is not None:
+            self.tabs.setCurrentWidget(widget)
 
     def _on_tab_close(self, index: int) -> None:
-        """关闭中央 tab；全部关闭后恢复欢迎占位 tab，防止中央区变空."""
+        """关 tab：元数据表常驻不可关；浏览 tab 释放数据."""
         widget = self.tabs.widget(index)
-        if widget is not None and hasattr(widget, "teardown"):
-            widget.teardown()  # 浏览 tab 关闭时释放数据/断开日志（M1 起有意义）
+        if widget is self.meta_view:
+            return
+        if hasattr(widget, "rec"):  # SignalBrowserView
+            widget.teardown()
+            self.state.close_recording(widget.rec)
+            self._browser_tabs.pop(widget.rec.meta.rec_id, None)
         self.tabs.removeTab(index)
-        if self.tabs.count() == 0:
-            self._add_welcome_tab()
 
-    def _add_welcome_tab(self) -> None:
-        """添加欢迎占位 tab（M0 骨架；有真实 tab 时不显示）."""
-        welcome = QLabel(S.PLACEHOLDER_TAB_WELCOME)
-        welcome.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.tabs.addTab(welcome, "欢迎")
+    # ------------------------------------------------------------------ 其他
 
     def _show_about(self) -> None:
         QMessageBox.about(self, S.ACT_ABOUT, S.ABOUT_TEXT)
 
     def closeEvent(self, event) -> None:  # noqa: N802 - Qt 命名约定
-        """窗口关闭前断开日志 Handler."""
+        """关闭前释放所有打开的数据并保存工作区."""
+        for rec in list(self.state.open_recordings.values()):
+            rec.unload()
+        self.state.workspace.save()
         self.log_panel.teardown()
         super().closeEvent(event)

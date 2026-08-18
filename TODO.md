@@ -12,17 +12,17 @@
 - [x] 验证：GUI 冒烟 SMOKE OK；pytest 3 passed
 - [x] 治理收尾四件事：review.md → STATUS/TODO/HANDOFF → 上下文检查 → git commit
 
-## M1 工作区 + EDF + 信号浏览器（下一个，进行中）
+## M1 工作区 + EDF + 信号浏览器（✅ 2026-08-18 完成，验证见 review.md）
 
-- [ ] core/recording.py：RecordingMeta / EventTable / Recording / LoadPolicy / LoadedRawCache
-- [ ] core/workspace.py：Workspace + JSON 持久化（~/.dataloadv/）
-- [ ] io/base.py + io/registry.py + io/sniffing.py：读取器 ABC + 注册表 + 魔数嗅探
-- [ ] io/mne_readers.py 的 EdfReader（latin1 回退 + .edf.event 边车解析）
-- [ ] ui/dialogs/import_dialog.py：导入文件/文件夹（扫描 worker + 错误表）
-- [ ] ui/widgets/workspace_tree.py 工作区树 + meta_table.py 元数据表
-- [ ] ui/widgets/signal_browser.py 信号浏览器（窗口化读取 + 峰值抽取包络绘制）+ event_lane.py 事件条
-- [ ] tests：conftest synthetic_raw + EDF 读取测试（real 标记用 data/sheep）
-- [ ] 验证：导入 sheep 3 文件 + PhysioNet S001，浏览/缩放/跳转事件流畅
+- [x] core/recording.py：RecordingMeta / EventTable / Recording / LoadPolicy / LoadedRawCache
+- [x] core/workspace.py：Workspace + JSON 持久化（~/.dataloadv/）
+- [x] io/base.py + io/registry.py + io/sniffing.py：读取器 ABC + 注册表 + 魔数嗅探
+- [x] io/mne_readers.py 的 EdfReader（latin1 回退；.edf.event 边车解析经实测取消——EDF 内嵌注释已完整）
+- [x] ui/dialogs/import_dialog.py：导入文件/文件夹（扫描 worker + 错误表）
+- [x] ui/widgets/workspace_tree.py 工作区树 + meta_table.py 元数据表
+- [x] ui/widgets/signal_browser.py 信号浏览器（窗口化读取 + 峰值抽取包络绘制）+ event_lane.py 事件条
+- [x] tests：conftest synthetic_raw + EDF 读取测试（real 标记用 data/sheep）
+- [x] 验证：导入 sheep 3 文件 + PhysioNet S001 → E2E 13 项全过（scripts/e2e_m1.py ALL OK）
 
 ## M2 读取器全覆盖
 
@@ -56,4 +56,4 @@
 
 ## 已知问题 / Backlog（暂缓项）
 
-- （暂无）
+- .edf.event WFDB 边车解析：M1 实测 PhysioNet EDF 内嵌注释已完整，边车为冗余副本，暂不需要；若未来遇到只有边车、无内嵌注释的数据集再补

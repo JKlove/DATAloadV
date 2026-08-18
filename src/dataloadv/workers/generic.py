@@ -88,6 +88,10 @@ def run_in_thread(
     if on_error is not None:
         worker.failed.connect(on_error)
 
+    # 关键保活：PySide6 的信号连接不持有 Python 侧 receiver 引用——
+    # worker 若只作为局部变量会在 run 触发前被 GC（线程空转、回调丢失，
+    # M1 e2e 实测踩坑）。挂到 thread 属性上随线程同生共死。
+    thread._dlv_worker = worker  # noqa: SLF001 - 保活约定，见注释
     _keepalive.append(thread)
     thread.start()
     return thread
