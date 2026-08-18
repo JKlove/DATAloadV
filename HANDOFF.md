@@ -22,11 +22,16 @@ conda install -y -c conda-forge "numpy=1.26.4" "scipy>=1.10" "pandas>=2.0" \
 # 3. MNE 及个别 conda 缺失的包 —— pip 补装（用户确认 MNE 用 pip）
 pip install "mne==1.12.0" edfio
 
-# 4. 本包可编辑安装（含 dev 依赖）
+# 4. M5 扩展格式依赖 —— 分渠道（2026-08-18 实测：conda search 证明 neo 不在
+#    conda-forge → pip 例外；pynwb 在 conda-forge 且 dry-run 干净 → conda）
+conda install -y -c conda-forge "pynwb>=3.0"
+pip install "neo>=0.13"
+
+# 5. 本包可编辑安装（含 dev 依赖）
 pip install -e "/Users/huyingbing/VSproject/intervention BCI/DataloadV[dev]"
 ```
 
-**实际安装后的版本**（2026-08-18 M0 安装实测，与 STATUS.md 保持同步）：
+**实际安装后的版本**（2026-08-18 M0 安装实测 + M5 追加，与 STATUS.md 保持同步）：
 
 | 包 | 版本 | 来源 |
 |---|---|---|
@@ -35,22 +40,26 @@ pip install -e "/Users/huyingbing/VSproject/intervention BCI/DataloadV[dev]"
 | PySide6 / pyqtgraph | 6.11.0 / 0.14.0 | conda-forge |
 | mne / edfio | 1.12.0 / 0.4.16 | pip |
 | pydantic / h5py | 2.13.4 / 3.16.0 | conda-forge |
+| neo / pynwb（M5，可选） | 0.14.5 / 4.1.0 | pip / conda-forge |
+
+> neo/pynwb 是**可选依赖**（import-guard）：缺失时应用照常运行，只是 NWB/Blackrock/OE/Intan 格式不可用。
 
 ## 运行与测试
 
 ```bash
 conda activate dlv
 dataloadv                                    # 启动应用（或 python -m dataloadv）
-pytest                                       # 全部单测（M4：122 passed，含 real 数据项）
+pytest                                       # 全部单测（M5：137 passed，含 real 数据项）
 pytest -m real                               # 仅真实数据冒烟（data/sheep 缺失自动跳过）
 python scripts/smoke_gui.py                  # GUI 冒烟：真窗口启动自检后自动退出
 python scripts/e2e_m1.py                     # M1 端到端：真实导入→浏览→渲染→释放（幂等，可反复跑）
 python scripts/e2e_m2.py                     # M2 端到端：4.9GB 扫描+六格式打开（幂等，可反复跑）
 python scripts/e2e_m3.py                     # M3 端到端：预览/PSD 压制/分段/tab 释放（幂等，可反复跑）
 python scripts/e2e_m4.py                     # M4 端到端：特征计算/视口预填/导出/分段回读（幂等，可反复跑）
+python scripts/e2e_m5.py                     # M5 端到端：45 文件批处理+取消+扩展格式（幂等，可反复跑）
 ```
 
-## 架构导览（M4 后的实际结构）
+## 架构导览（M5 后的实际结构，v1 收官）
 
 ```
 src/dataloadv/
@@ -58,7 +67,8 @@ src/dataloadv/
 ├── core/                    # 计算层核心（禁止 import Qt）
 │   ├── recording.py         # Recording/RecordingMeta/EventTable/LoadPolicy/LoadedRawCache（M1）
 │   ├── workspace.py         # Workspace + ~/.dataloadv/ JSON 持久化（M1）
-│   └── fs_store.py          # FsStore：CSV/HDF5 采样率询问记忆（~/.dataloadv/table_fs.json）（M2）
+│   ├── fs_store.py          # FsStore：CSV/HDF5 采样率询问记忆（~/.dataloadv/table_fs.json）（M2）
+│   └── app_settings.py      # AppSettings：n_workers/cache_gb/export_dir（临时文件+rename 原子写；apply() 热生效）（M5）
 ├── io/                      # 读取器层（禁止 import Qt）——注册表模式，每格式一个 Reader
 │   ├── base.py              # BaseReader ABC：read_meta 仅头/open/load_raw/sniff/common_meta_fields/filename_entities
 │   ├── registry.py          # @register_reader + open_file/scan_folder（容错+进度回调+.mff 目录候选）
@@ -67,10 +77,14 @@ src/dataloadv/
 │   ├── bciciv_mat.py        # BCI-IV ds1/ds4 专用 + 未知 mat 拒绝猜测（多候选让位链）
 │   ├── event_maps.py        # GDF 官方事件码→中文标签（16 码，desc_2a/2b.pdf 原文核实）
 │   ├── table.py             # CSV/TXT：分隔符嗅探+数值性验证+FS_UNSET_NOTE 询问标记
-│   └── hdf5.py              # 通用 HDF5：零数据 IO 定位 2-D 信号集，歧义拒绝
+│   ├── hdf5.py              # 通用 HDF5：零数据 IO 定位 2-D 信号集，歧义拒绝
+│   ├── neo_reader.py        # _NeoRawReader 模板（structured array 头/选点数最多流/逐列单位换算）
+│   │                        #   + Blackrock(.nev/.ns*)/OpenEphys(.continuous→目录)/Intan(.rhd/.rhs)（M5，可选）
+│   └── nwb_reader.py        # NWB：acquisition/processing 找 ElectricalSeries；trials/epochs→EventTable（M5，可选）
 ├── proc/                    # 预处理层（M3 建，M4 加 crop；禁止 import Qt）——每步=pydantic参数+apply(ctx)
 │   ├── context.py           # ProcessingContext：raw/epochs/stage/events/history/logs + from_recording（副本隔离）
 │   ├── base.py              # ProcStep ABC + STEP_REGISTRY + register_step + step_to/from_dict + apply_pipeline
+│   │                        #   （M5 加 cancel_check 参数 + PipelineCancelled——逐步骤取消检查）
 │   ├── filters.py           # bandpass（raw+epochs）/ notch（仅 raw——mne Epochs 无 notch_filter）
 │   ├── referencing.py       # reref：平均/自定义参考（mne 1.12 返回副本，必须写回 ctx！）
 │   ├── resample.py          # resample：降采样（升采样拒绝）
@@ -79,10 +93,13 @@ src/dataloadv/
 │   ├── crop.py              # crop：时间窗裁剪（M4；raw 绝对时间/epochs 相对事件锚点；事件表不动）
 │   └── preview.py           # PreviewReader + make_preview_recording：处理副本包装成可浏览 Recording
 ├── features/                # 特征提取层（M4；禁止 import Qt）——与 proc 层完全同构的注册表
-│   ├── base.py              # FeatureExtractor ABC + FEATURE_REGISTRY + apply_features + 通道选择（DATA_CH_TYPES 白名单）
+│   ├── base.py              # FeatureExtractor ABC + FEATURE_REGISTRY + apply_features（M5 加 cancel_check）+ 通道选择
 │   ├── spectral.py          # mean_welch/array_welch（scipy 广播）+ BandPowerFeature（δθαβγ+自定义+相对/对数）+ WelchPsdFeature（仅 raw）
 │   └── timedomain.py        # TimeDomainStatsFeature：rms/var/mav/ptp/iqr/zc_rate/kurt/skew 8 统计量纯 numpy
-├── batch/                   # 批处理层（M5 引擎；results 为 M4）
+├── batch/                   # 批处理层（M4 results + M5 引擎；禁止 import Qt——引擎是纯 Python）
+│   ├── jobs.py              # JobSpec/PipelineSpec（dict 快照+resolved_* 启动前校验）/FileResult/FileStatus/BatchSummary（M5）
+│   ├── engine.py            # BatchEngine：ThreadPoolExecutor(默认2) + threading.Event 取消 + 逐文件容错日志
+│   │                        #   + LoadedRawCache pin + _export（CSV/H5+sidecar extra.batch）（M5）
 │   └── results.py           # FeatureTable：长表 7 列 + COLUMNS_ZH 中文表头 + to_wide(dropna=False) + summary_zh
 ├── export/                  # 导出层（M4，禁止 import Qt）
 │   ├── features_io.py       # CSV（UTF-8 BOM+中文表头；曲线另存宽表按频率轴分组）/ HDF5（/features + /psd/<i>）
@@ -90,15 +107,18 @@ src/dataloadv/
 │   └── provenance.py        # <名>.pipeline.json：app/pipeline/features/recordings/library_versions/extra
 ├── workers/generic.py       # run_in_thread：后台任务→_MainRelay 主线程回调（见坑 #7/#13）
 └── ui/                      # 全部 Qt 代码
-    ├── main_window.py       # 主窗口：导入/工作区树/元数据表/浏览/特征 tab/采样率询问
+    ├── main_window.py       # 主窗口：导入/浏览/特征/批处理结果 tab、设置、采样率询问
     ├── state.py             # SessionState 信号中枢（recording_opened 等）
-    ├── strings_zh.py        # 全部中文文案集中（class S；M4 段 FEAT_*）
+    ├── strings_zh.py        # 全部中文文案集中（class S；M5 段 BATCH_*/SET_*）
     ├── dialogs/import_dialog.py   # 导入控制器：worker 扫描→进度→错误表
+    ├── dialogs/batch_dialog.py    # 批处理两页对话框：选择(过滤/全选/导出组)↔运行；queue.Queue+QTimer 事件泵（M5）
+    ├── dialogs/settings_dialog.py # 设置：线程数/缓存 GB/默认导出目录（M5）
     └── widgets/             # workspace_tree / meta_table / signal_browser / event_lane / log_panel
-    │                         #   + params_form（pydantic 自动表单，步骤/特征共用——step_id 别名零改动）
-    │                         #   + pipeline_panel（步骤链+特征链+预览+PSD+「用当前显示窗口」预填）
-    │                         #   + psd_view / epochs_preview
-    │                         #   + feature_table（特征结果 tab：长表排序浏览+CSV/HDF5/分段导出+sidecar）
+                              #   + params_form（pydantic 自动表单，步骤/特征共用——step_id 别名零改动）
+                              #   + pipeline_panel（步骤链+特征链+预览+PSD+「用当前显示窗口」预填）
+                              #   + psd_view / epochs_preview
+                              #   + feature_table（特征结果 tab：长表排序浏览+CSV/HDF5/分段导出+sidecar）
+                              #   + batch_view（批处理运行页：逐文件表/失败红显/双击日志对话框；M5）
 ```
 
 **四条硬性规则**（review 时检查）：
@@ -149,17 +169,20 @@ src/dataloadv/
 30. **Qt6 无 `Qt.ItemDataRole.SortRole`**：自定义排序角色用 UserRole + `setSortRole(UserRole)`；且数值列 data() 的 UserRole 分支必须返回 float——否则代理按字符串排序（"10" < "2" 乱序）。
 31. **e2e patch QMessageBox 必须逐模块进行**：`from PySide6.QtWidgets import QMessageBox` 是各模块的独立引用，只 patch main_window 的不影响 pipeline_panel/feature_table；漏 patch 的模块真弹模态框 → offscreen 事件循环永久阻塞（CPU 0% 假死，坑 #14 的 M4 变体）。
 32. **通道平均 PSD 的谱峰取决于各通道幅度²**：羊数据 30µV 工频 > 2×20µV α 的合成功率，平均曲线峰在 50Hz——断言 α 主导要用单通道指定，不能用通道平均。
+33. **neo.rawio 0.14 的 header 是 numpy structured array**：`header['signal_channels']` 行取值用**字段名**（row['name']/row['units']/row['stream_id']），不是下标也不是 dict；`rescale_signal_raw_to_float` 得到的是**通道单位**浮点，到伏特要自己按 units 查表（neo_reader._UNITS_TO_V）；Blackrock 传全名失败时回退去扩展名基名；OpenEphysRawIO 收**目录**（.continuous 文件取 parent）；IntanRawIO 收文件。
+34. **pynwb 4.x 三处接口坑**：`add_electrode` 的 location 必填非空（""被拒）；电极表默认**无 label 列**需 `add_electrode_column("label", ...)`；`DynamicTableRegion.colnames` 是 **None**（不能判列存在），取列直接 `region["label"][:]`（try/except 包住）——M5 测试三轮才探明。
+35. **Qt6 魔数全部禁用**：`0x02` 是 `ItemIsEditable` 不是 UserCheckable（运行期静默错行为：单击进入编辑而非切换勾选）；必须 `Qt.ItemDataRole.UserRole` / `Qt.ItemFlag.ItemIsUserCheckable` / `Qt.CheckState.Checked` 全枚举写法。
+36. **mne 无 `write_raw_edf`**：合成 EDF 用 `raw.export(path, fmt="edf", overwrite=True)`。同类：**stdout 重定向到文件是块缓冲**——e2e 中途崩溃时已过检查项的 print 全丢在缓冲区，脚本类 print 一律 `flush=True`。
+37. **2b E（评估）文件 769/770 事件全 0，未知类 cue 是 783**：T 文件 769:60+770:60=120 段，E 文件 783:160 段——同一分段码表跑通两类文件必须含 783（M5 e2e 实测；正文见 STATUS 实证结论 M5-#1）。
 
-## 当前接手要点（2026-08-18，M4 已完成）
+## 当前接手要点（2026-08-18，M5 已完成，v1 收官）
 
-- M4 全部完成并验证（pytest 122 绿 + e2e_m1 13 + e2e_m2 17 + e2e_m3 11 + e2e_m4 18 项全过，见 review.md）；下一步是 **M5 批处理+扩展格式+收尾**，任务拆解见 TODO.md「M5」一节
-- **M5 动工顺序建议**：先 `batch/engine.py`（BatchEngine(QObject) + 2 线程池 + `threading.Event` 取消 + 逐文件日志捕获 → 信号 `progress/file_done/finished` 队列回主线程），再 `ui/widgets/batch_view.py`（逐文件进度/结果表，错误红行可点开日志）。**积木全部现成**：
-  - 单文件处理直接照抄 `pipeline_panel.start_features()` 的 worker 函数体（from_recording → apply_pipeline → apply_features → FeatureTable.add_result），批处理就是把它逐文件跑一遍
-  - 管线/特征配置输入直接用 `pipeline_panel.pipeline_dicts()` / `feature_dicts()`（已是 step_to_dict/feature_to_dict 的可序列化列表，作 JobSpec 输入零转换）
-  - 结果累积直接用 `FeatureTable.add_result()`（多文件并入同一长表，recording 列自然区分）
+- **v1 全部里程碑（M0–M5）完成并验证**：pytest 137 绿 + e2e_m1 13 / m2 17 / m3 11 / m4 18 / m5 19 项全过 + smoke_gui OK（见 review.md 各节）。后续事项见 TODO.md「Backlog」（Blackrock/OE/Intan/NWB 真实数据实测、ds3、eeglabio/pybv 等）
+- **批处理架构（M5 关键决策）**：BatchEngine 是**纯 Python**（无 QObject——架构规则 #1 优先于 plan.md 原文"BatchEngine(QObject)"）；回调（on_progress/on_file_done）在 worker 线程执行 → UI 侧 `queue.Queue` + QTimer 150ms 事件泵（batch_dialog._drain_events）转主线程；`run()` 整体经 `run_in_thread` 丢进一个 QThread，内部 ThreadPoolExecutor 提供并发；取消 = `engine.cancel()`（threading.Event）立即返回，引擎在**步骤边界**停止（proc/features 的 cancel_check 逐步骤检查，抛 PipelineCancelled）
+- 批处理新增文件三件套已定型：管线/特征输入用 `pipeline_panel.pipeline_dicts()`/`feature_dicts()`（dict 快照，JobSpec 零转换）；结果并入 `FeatureTable.add_result()`（多文件长表 recording 列区分）；导出走 engine._export（sidecar extra.batch 记 n_files/n_workers/files_written）
 - **特征范围决策（用户 2026-08-18 确认）：四层组合**——全量默认 + epochs 逐段 + crop 步骤（显式时间窗，进 sidecar）+ 视口一键预填（不隐式绑定）；滤波类预处理仍全量（边界效应），crop 只裁数据范围
-- M3/M4 关键设计（M5 沿用）：**ProcStep/FeatureExtractor 同构注册表**——pydantic 参数模型 + `apply(ctx)`；STEP_REGISTRY/FEATURE_REGISTRY 注册后 params_form 零 UI 代码自动出表单（FeatureExtractor 的 `step_id` property 别名是零改动复用的关键）；`apply_pipeline`/`apply_features` 统一入口（阶段检查/计时/history/中文日志）。**新步骤/特征三件套：参数模型 + 类 + strings_zh 文案**
+- **ProcStep/FeatureExtractor 同构注册表**：pydantic 参数模型 + `apply(ctx)`；注册后 params_form 零 UI 代码自动出表单（FeatureExtractor 的 `step_id` property 别名是零改动复用的关键）。**新步骤/特征三件套：参数模型 + 类 + strings_zh 文案**
 - 预览机制：`ProcessingContext.from_recording` 强制 PRELOAD + `raw.copy()`（原始逐位不变，pytest 有断言）；处理副本经 `make_preview_recording` 包装成不注册、不入工作区的 Recording → 复用全部浏览器机制
-- 读取器新格式的通用套路（M2）：`_MneRawReader` 模板基类，只声明 `_fmt`/`_read_fn`（**staticmethod 包住**，坑 #12）/`_extra`；`RecordingMeta(**self.common_meta_fields(path, fmt), ...)` 一次构造；预处理前记得坑 #3（mne 滤波要 preload=True）；neo/pynwb/Intan 用 import-guard（缺失时应用照常运行，只是该格式不可用）
-- 真实数据路径速查：羊 EDF `data/sheep/*.edf`；PhysioNet `data/dataset/files/S001/`；2a GDF `data/dataset/BCICIV_2a_gdf/A01T.gdf`；2b GDF `data/dataset/BCICIV_2b_gdf/B0101T.gdf`（M5 批处理验收用整个 2b 目录）；ds1 mat `data/dataset/BCICIV_1_mat/BCICIV_calib_ds1a.mat`；ds4 mat `data/dataset/BCICIV_4_mat/sub1_comp.mat`
+- 读取器新格式套路：mne 系用 `_MneRawReader` 模板基类，只声明 `_fmt`/`_read_fn`（**staticmethod 包住**，坑 #12）/`_extra`；neo 系用 `_NeoRawReader` 模板（坑 #33）；NWB 单独实现（坑 #34）；`RecordingMeta(**self.common_meta_fields(path, fmt), ...)` 一次构造；neo/pynwb 均为 import-guard 可选依赖（缺失时应用照常运行）
+- 真实数据路径速查：羊 EDF `data/sheep/*.edf`；PhysioNet `data/dataset/files/S001/`；2a GDF `data/dataset/BCICIV_2a_gdf/A01T.gdf`；2b GDF `data/dataset/BCICIV_2b_gdf/`（M5 批处理验收用整个目录 45 文件）；ds1 mat `data/dataset/BCICIV_1_mat/BCICIV_calib_ds1a.mat`；ds4 mat `data/dataset/BCICIV_4_mat/sub1_comp.mat`
 - **数据集详细信息（来源/结构/参数/事件码表/已知坑）全部在根目录 `DATA_NOTES.md`**（2026-08-18 按用户要求建立），改读取器前先读它；新数据/新实证发现要回写它

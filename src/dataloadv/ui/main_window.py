@@ -129,6 +129,8 @@ class MainWindow(QMainWindow):
         act_import_files = menu_file.addAction(S.ACT_IMPORT_FILES, self.importer.import_files)
         act_import_folder = menu_file.addAction(S.ACT_IMPORT_FOLDER, self.importer.import_folder)
         menu_file.addSeparator()
+        menu_file.addAction(S.SETTINGS_ACT, self._open_settings)
+        menu_file.addSeparator()
         menu_file.addAction(S.ACT_EXIT, self.close)
 
         for title, dock in (
@@ -147,6 +149,8 @@ class MainWindow(QMainWindow):
         menu_proc.addSeparator()
         menu_proc.addAction(S.FEAT_BTN_VIEWPORT, self.pipeline_panel.use_viewport_window)
         menu_proc.addAction(S.FEAT_BTN_RUN, self.pipeline_panel.start_features)
+        menu_proc.addSeparator()
+        menu_proc.addAction(S.BATCH_MENU_ACT, self._open_batch_dialog)
 
     def _build_statusbar(self) -> None:
         self.statusBar().showMessage(S.STATUS_READY)
@@ -272,6 +276,42 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(view, S.FEAT_TAB_FMT.format(name=name))
         self.tabs.setCurrentWidget(view)
         logger.info("特征结果 tab 已建立：%s（%s）", name, payload["table"].summary_zh())
+
+    # ------------------------------------------------------------------ 批处理 / 设置（M5）
+
+    def _open_batch_dialog(self) -> None:
+        """打开批处理对话框（管线取面板当前链；结果经信号开特征结果 tab）."""
+        from .dialogs.batch_dialog import BatchDialog
+
+        dlg = BatchDialog(
+            lambda: self.state.workspace.all_metas(),
+            self.pipeline_panel.pipeline_dicts,
+            self.pipeline_panel.feature_dicts,
+            self,
+        )
+        dlg.batch_finished.connect(self._on_batch_finished)
+        dlg.exec()
+
+    def _on_batch_finished(self, payload: dict) -> None:
+        """批处理结束且有产出（主线程）：开特征结果 tab（跨文件长表）."""
+        from .widgets.feature_table import FeatureTableView
+
+        job = payload["job"]
+        view = FeatureTableView(
+            payload["table"], None,  # 批处理无单一 ctx（分段导出不适用）
+            pipeline_dicts=job.pipeline.steps,
+            feature_dicts=job.pipeline.features,
+        )
+        self.tabs.addTab(view, S.BATCH_TAB_FMT.format(name=job.name))
+        self.tabs.setCurrentWidget(view)
+        logger.info("批处理结果 tab 已建立：%s（%s）",
+                    job.name, payload["table"].summary_zh())
+
+    def _open_settings(self) -> None:
+        """打开设置对话框（保存即应用）."""
+        from .dialogs.settings_dialog import SettingsDialog
+
+        SettingsDialog(self).exec()
 
     # ------------------------------------------------------------------ 其他
 

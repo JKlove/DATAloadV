@@ -32,6 +32,14 @@ class StepError(Exception):
     """
 
 
+class PipelineCancelled(StepError):
+    """管线被外部取消（批处理引擎的 threading.Event 经 ``cancel_check`` 传入）.
+
+    继承 StepError：调用方已有的错误处理路径自然兼容；引擎额外识别本类型，
+    把文件结局记为 cancelled 而非 failed。
+    """
+
+
 class ProcStep(ABC):
     """一个预处理步骤.
 
@@ -105,13 +113,22 @@ def params_summary(params: BaseModel, max_len: int = 60) -> str:
     return s if len(s) <= max_len else s[: max_len - 1] + "…"
 
 
-def apply_pipeline(ctx: "ProcessingContext", steps: list[tuple[str, BaseModel]]) -> "ProcessingContext":
+def apply_pipeline(
+    ctx: "ProcessingContext",
+    steps: list[tuple[str, BaseModel]],
+    cancel_check=None,
+) -> "ProcessingContext":
     """按序执行整条管线，逐步记录 history 与中文日志.
 
     :param steps: [(step_id, params), ...]——UI 面板 / 批处理引擎共用入口
+    :param cancel_check: 可选取消探针 ``() -> bool``（批处理引擎传
+        threading.Event.is_set）；每步**之前**检查，为真抛 PipelineCancelled
     :raises StepError: 首个失败步骤即终止（ctx 中 history 已含此前成功步骤）
+    :raises PipelineCancelled: cancel_check 为真（StepError 子类）
     """
     for i, (step_id, params) in enumerate(steps, 1):
+        if cancel_check is not None and cancel_check():
+            raise PipelineCancelled("批处理已取消")
         step = STEP_REGISTRY.get(step_id)
         if step is None:
             raise StepError(f"未知处理步骤「{step_id}」")

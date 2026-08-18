@@ -234,3 +234,73 @@
 - data/ 只读 ✅（全部导出走 QFileDialog 用户路径 + tempfile）；配置 ~/.dataloadv ✅
 
 **收尾四件事**：治理文件已更新（STATUS：M4 完成态 + 122 绿 + e2e_m4 18 项数字 + 实证结论 8 条 + 变更记录；TODO：M4 全勾含四层决策原文、M5 置下一个；HANDOFF：坑清单 24→32 条、架构树 M4 版、接手要点改 M5）→ review.md 本节 ✅ → 上下文检测：本会话自压缩摘要重启后连续完成整个 M4（约 20 个文件创建/修改 + 4 轮 e2e 调试），占用已高，全部关键状态均已落盘治理文件——**建议用户执行 /compact 后再开 M5** → git commit `M4: 特征+导出——crop时间窗+3提取器+FeatureTable长表+特征面板(视口预填)+CSV/HDF5/FIF导出+sidecar`
+
+## M5 — 批处理 + 扩展格式 + 收尾（2026-08-18 完成，v1 收官）
+
+### 做了什么
+
+**批处理引擎（batch 层，纯 Python——架构规则 #1 优先于 plan.md 原文的 BatchEngine(QObject)）**
+- `batch/jobs.py`：PipelineSpec（steps/features 的 dict 快照 + `resolved_steps()/resolved_features()` 启动前校验 + summary_zh）；JobSpec（paths/pipeline/n_workers 1-8 默认 2/导出三参）；FileStatus 枚举 + FileResult（path/recording/status/duration_s/n_values/error/**log 逐文件日志**）；BatchSummary（n_ok/n_failed/n_cancelled/n_values + summary_zh）
+- `batch/engine.py`：`run()` 阻塞整体（resolved 校验 → ThreadPoolExecutor 默认 2 线程 → 汇总 → _export）；`_process_one()` 单文件全链：open_file(PRELOAD) → FS_UNSET_NOTE 检查（中文"请先在浏览 tab 打开设定采样率"）→ from_recording → **LoadedRawCache.pin**（防多 worker 并发整载时 LRU 互逐）→ apply_pipeline/apply_features（cancel_check=取消事件）→ 锁内 add_result → unpin+unload；单文件失败记 FileResult(failed, 中文 error, log) **继续下一文件**；回调（on_progress/on_file_done）在 worker 线程执行、`_safe_call` 兜底
+- `proc/base.py` + `features/base.py`：新增第三参 `cancel_check`（逐步骤/逐特征检查，为真抛新 `PipelineCancelled(StepError)`——取消不落 error 字段、有独立状态）
+- `core/app_settings.py`：AppSettings（n_workers/cache_gb/export_dir）pydantic + 临时文件 rename **原子写** + `apply()` 热生效（直接写 LoadedRawCache.instance().byte_budget）+ 损坏文件容错回默认
+
+**UI（全部只编排不计算）**
+- `ui/widgets/batch_view.py`：BatchProgressView（逐文件表/进度条/取消按钮；状态着色——成功绿/失败红/取消灰；失败行 tooltip=错误原因；**双击任意行弹 FileLogDialog** 看该文件逐行日志含【错误】行）；cancel_requested 信号只转发
+- `ui/dialogs/batch_dialog.py`：两页（选择：过滤框+可勾选清单+全选/全不选+管线摘要+导出组 CSV/H5/文件名/目录/线程 SpinBox ↔ 运行页）；**线程模型：引擎回调 worker 线程 → 只塞 queue.Queue → 主线程 QTimer 150ms 事件泵（单轮上限 200）→ 喂视图**——UI 全程响应；运行前五重校验（无文件/管线非法/特征空/无导出目录）全中文 QMessageBox；closeEvent 运行中=请求取消
+- `ui/dialogs/settings_dialog.py`：三字段表单（workers/cache 附当前生效值/export_dir+浏览）→ save+apply
+- 主窗口：文件菜单「设置…」、处理菜单「批处理…」、`_on_batch_finished` 开 FeatureTableView 结果 tab（题"批处理 · {name}"，pipeline_dicts/feature_dicts 注入保证 sidecar 同源）
+
+**扩展格式（import-guard 可选依赖）**
+- `io/neo_reader.py`：_NeoRawReader 模板（`requires_extra="neo"`；make_rawio→parse_header；header 是 **numpy structured array** 按**字段名**取行；`_stream_index` 选点数最多的流；`_stream_channels` 按 stream_id 过滤；read_meta 零数据 IO；load_raw 整载+逐列单位换算（_UNITS_TO_V，rescale 后是通道单位浮点）+ (n_times,n_ch)→转置；extract_events 失败降级空表）+ BlackrockReader（.nev/.ns1-.ns6，全名失败回退基名）+ OpenEphysReader（.continuous→parent 目录）+ IntanReader（.rhd/.rhs）
+- `io/nwb_reader.py`：`requires_extra="pynwb"`；`_find_series`（acquisition→processing 找 ElectricalSeries，无→中文拒绝）；read_meta 零数据 IO（shape 是 HDF5 属性）；load_raw（data×conversion+offset→伏特；(n_times,n_ch)/(n_ch,n_times) 双向 _orient 长轴为时间）；事件 trials 优先→epochs→空；通道名 `region["label"][:]`（colnames 是 None 不可判）
+
+**README 重写**：v1 功能全览（数据管理/波形浏览/预处理/特征/批处理/导出/设置六块）、快速开始+典型流程五步、验证口径（pytest 137 + e2e_m1–m5）、技术栈加 neo/pynwb（可选）。
+
+### 验证
+
+| 验证项 | 结果 |
+|---|---|
+| pytest 全量 | ✅ **137 passed**（M4 的 122 + M5 新增 15：batch 10 + readers 5） |
+| **验收 1：45 个 2b GDF 批处理全程 UI 响应** | ✅ e2e_m5：45 真实 + 1 损坏（patch 注入）→ **45 成功 1 失败不杀整批**，78240 行特征，8.5s（2 worker）；UI 心跳计时器 86 次 ≈9s **全程响应**（事件循环未被占住） |
+| **验收 2：中途取消有效** | ✅ 第二批不导出、等首个文件完成后取消 → 整批 cancelled、成功 4/取消 41/失败 0（未开始文件全为「已取消」，绝无跑完） |
+| **验收 3：错误可查** | ✅ 失败行红显「失败」+ tooltip=中文原因；FileLogDialog 含【错误】行与完整逐文件日志 |
+| 分段/特征正确性 | ✅ 每文件 ≥1440 值（T=120 段×6 导×2 频段；E 文件 783:160 段）；长表覆盖 45 录制；summary.n_values=逐文件之和 |
+| CSV/sidecar 导出 | ✅ CSV BOM+中文表头 78240 行与特征表一致；sidecar 含 epoching+bandpower(params.bands=α,β)+45 文件+extra.batch(n_files=46/n_workers=2/files_written) |
+| 批处理结果 tab | ✅ 主窗口开「批处理 · e2e_m5_features」，长表可排序浏览 |
+| 扩展格式注册 | ✅ blackrock/openephys/intan/nwb 四读取器注册并接管扩展名 |
+| NWB 真实往返（pytest） | ✅ pynwb 写出（Subject/ElectricalSeries 4 导 250Hz 20µV α/trials）→ read_meta（0 IO）/load_raw（幅值一致）/open（事件+被试）全链 |
+| neo 模板逻辑（pytest 桩） | ✅ structured array 头、选点数最多流、uV/V 逐列换算、(2,4) 转置、事件时间戳→秒 |
+| 设置 | ✅ 往返持久化+apply 热生效+损坏文件容错（pytest） |
+| 回归 | ✅ e2e_m1 13 / e2e_m2 17 / e2e_m3 11 / e2e_m4 18 项 + smoke_gui 全绿 |
+
+### 计划偏离（实证/规则驱动）
+
+1. **BatchEngine 纯 Python 非 QObject**：plan.md 原文写 BatchEngine(QObject)+信号，但硬性架构规则 #1 禁止 batch 层 import Qt——规则优先。改纯 Python 引擎（回调在 worker 线程执行）+ UI 侧 queue.Queue + QTimer 150ms 事件泵转主线程，同时满足规则与"队列连接回主线程"的 plan 意图（e2e 心跳 86 次证明 UI 响应不受损）
+2. **Intan 用 neo.rawio.IntanRawIO 而非 vendored read_intan.py**：plan 说 vendored（1000+ 行第三方代码）；neo 依赖已在场（Blackrock/OE 同源），依赖统一、零维护面——弃 vendored
+3. **e2e 分段码含 783**：原按 plan 验收思路 769/770，实测 2b E（评估）文件这两码全 0（未知类 cue 是 783）——同一码表必须含 783 才能跑通 45 文件（T=120/E=160 段）；记 STATUS 实证结论 M5-#1
+4. **README 无截图**：headless 开发环境无截图条件，改为文字典型流程五步（plan 说 M5 补截图，验收不受影响）
+5. **neo 用 pip、pynwb 用 conda**：conda search 实证 neo 不在 conda-forge → pip 例外（用户 conda 优先原则的边界案例）；pynwb dry-run 干净 → conda——安装命令已记 HANDOFF §环境搭建
+
+### 发现的问题与修正（全部有测试或 e2e 复现）
+
+1. **mne 无 `write_raw_edf`**（引擎冒烟 AttributeError）→ 查 tests/test_readers_edf.py 惯例改 `raw.export(path, fmt="edf", overwrite=True)`
+2. **engine.py 重命名 `_finish`→`_stamp` 漏改调用点**：顶部取消分支仍调旧名，AttributeError 被意外异常分支吞掉转 failed——单测 test_engine_cancel_after_first_file 抓到 → 改 `_stamp(result_for(path, CANCELLED, log=logs), t0)`
+3. **jobs.py 初版 n_values 占位写错**（`n_new - sum(1 for _ in ())` 无意义表达式）→ 重写为直接 `len(result.scalars)`、删多余 `_count_scalar_rows` 与无用参数
+4. **batch_view `_results` 未初始化** → __init__ 补 `self._results: dict = {}`
+5. **batch_dialog 信号未声明 + Qt 魔数**：`batch_finished` 忘声明（运行期 AttributeError）；`0x0100`/`|0x02` 魔数——**0x02 是 ItemIsEditable 不是 UserCheckable**（勾选框点击进编辑的静默错行为）→ 全枚举 `Qt.ItemDataRole.UserRole`/`Qt.ItemFlag.ItemIsUserCheckable`/`Qt.CheckState.*`
+6. **neo_reader 初版两处结构错**：load_raw 返回 (raw, events) 元组破坏 Recording.ensure_raw 契约；header 行类型靠猜 → 查 baserawio 源码确认 structured array + 字段名访问，整文件重写（open() 单独走 make_rawio+extract_events 不触信号数据）
+7. **pynwb 4.x 测试三轮**：add_electrode location 必填（""被拒）→ "皮层"；电极表默认无 label 列 → add_electrode_column；`region.colnames` 是 None 抛 TypeError 被吞 → 探测后改 try/except 直取 `region["label"][:]`
+8. **桩 rawio 流/通道不配对**（n_streams=1 时流 id 挂错）→ 桩改 `picked_sid = streams[-1][1]` 让通道挂将被选中的流；转置断言 d[1,0] 写错（应为 ch_V 首样本 1.0）；桩测试路径需 `path.touch()`（common_meta_fields 要 stat）
+9. **e2e 迷你预跑抓到真接线缺失**：_new_dialog 没连 `win._on_batch_finished` → 批处理结果 tab 不开 → 补连线（同菜单路径）
+10. **e2e 第一轮崩溃丢输出**：`dlg._btn_cancel` 属性名错（按钮在 BatchProgressView 上）+ stdout 块缓冲把已过检查项全吞 → 改 `dlg._progress._btn_cancel` + check() 一律 `flush=True`
+11. **e2e sidecar 断言写错**：`bands=["alpha","beta"]` 是**一个**特征（双频段）非两个特征——断言改为语义更强的 feature 链 + params.bands + extra.batch.n_files 校验
+
+### 架构规则自查
+
+- batch/proc/features/export/io/core 无 Qt import ✅（grep 复核，仅 docstring 提及"禁止 import"字样）；BatchEngine 纯 Python ✅
+- UI 只编排不计算 ✅（引擎在 worker 线程；事件泵只搬运事件；取消按钮只调 engine.cancel() 立即返回）
+- 跨线程只传纯 Python/mne 对象 ✅（queue.Queue 事件是 tuple/FileResult——pydantic 纯 Python）
+- data/ 只读 ✅（导出去用户目录/TMP；设置写 ~/.dataloadv，e2e 用 SETTINGS_PATH 指向 TMP 防污染）
+
+**收尾四件事**：治理文件已更新（STATUS：M5 完成态 + 137 绿 + e2e_m5 19 项数字 + 实证结论 7 条 + 变更记录；TODO：M5 全勾含架构决策原文、backlog 补 Blackrock/OE/Intan/NWB 实测项；HANDOFF：环境加 neo pip/pynwb conda 分渠道命令、版本表、架构树 M5 版、坑清单 32→37 条、接手要点改 v1 收官）→ review.md 本节 ✅ → 上下文检测：本会话自压缩重启后完成整个 M5（约 14 个文件创建 + 4 个修改 + 3 轮 e2e 调试），占用已高，全部关键状态均已落盘治理文件——**建议用户执行 /compact** → git commit `M5: 批处理+扩展格式+设置——BatchEngine纯Python线程池/取消/逐文件日志+对话框(队列事件泵)+neo(Blackrock/OE/Intan)+NWB+README；v1 收官`

@@ -128,15 +128,24 @@ def feature_from_dict(d: dict) -> tuple[str, BaseModel]:
 
 
 def apply_features(
-    ctx: "ProcessingContext", features: list[tuple[str, BaseModel]]
+    ctx: "ProcessingContext",
+    features: list[tuple[str, BaseModel]],
+    cancel_check=None,
 ) -> ExtractorResult:
     """按序执行全部特征提取器，合并产出（管线执行完毕后调用）.
 
     :param features: [(feature_id, params), ...]——UI 面板 / 批处理引擎共用入口
+    :param cancel_check: 可选取消探针（同 proc.apply_pipeline；每步之前检查）
     :raises FeatureError: 首个失败即终止（中文信息）
+    :raises PipelineCancelled: cancel_check 为真（借 proc 的取消类型，
+        引擎统一识别为 cancelled 而非 failed）
     """
     out = ExtractorResult()
     for i, (feature_id, params) in enumerate(features, 1):
+        if cancel_check is not None and cancel_check():
+            from ..proc.base import PipelineCancelled
+
+            raise PipelineCancelled("批处理已取消")
         fx = FEATURE_REGISTRY.get(feature_id)
         if fx is None:
             raise FeatureError(f"未知特征提取器「{feature_id}」")

@@ -71,16 +71,35 @@
       （288×25×2——mne 读 2a GDF 全 25 通道标 eeg，EOG 不自动排除，见 STATUS 实证结论 #2）
 - [x] 收尾四件事：review.md → STATUS/TODO/HANDOFF → 上下文检测 → git commit
 
-## M5 批处理 + 扩展格式 + 收尾
+## M5 批处理 + 扩展格式 + 收尾（✅ 2026-08-18 完成，v1 收官，验证见 review.md）
 
-- [ ] batch/engine.py（2 线程池/取消/逐文件日志）+ ui/widgets/batch_view.py
-- [ ] neo_reader.py（Blackrock/Open Ephys）+ nwb_reader.py + intan.py（vendored）
-- [ ] 设置对话框（线程数/内存预算/默认导出目录）+ README 截图
-- [ ] 验证：45 个 2b GDF 批处理全程 UI 响应、可取消、错误可查
+> **架构决策（与 plan.md 原文偏离，规则优先）**：plan 写 BatchEngine(QObject)，但硬性规则 #1 禁止
+> batch 层 import Qt → 实现为**纯 Python 引擎**（回调在 worker 线程执行）+ UI 侧 queue.Queue +
+> QTimer 150ms 事件泵转主线程——同时满足规则与"队列连接回主线程"的意图。
+> Intan 同理弃 vendored read_intan.py（1000+ 行第三方代码），改用 neo.rawio.IntanRawIO。
 
-## 已知问题 / Backlog（暂缓项）
+- [x] batch/jobs.py：JobSpec/PipelineSpec（steps/features dict 列表 + resolved_* 启动前校验 + summary_zh）
+      /FileStatus/FileResult（含逐文件日志）/BatchSummary（n_ok/n_failed/n_cancelled/n_values）
+- [x] batch/engine.py：BatchEngine 纯 Python——ThreadPoolExecutor（默认 2）+ threading.Event 取消
+      （逐步骤检查）+ 单文件失败不杀整批 + LoadedRawCache.pin 防多 worker 并发互逐 + 导出
+      （CSV/H5 + sidecar extra.batch）；proc/base.py、features/base.py 加 cancel_check 参数
+      （新 PipelineCancelled(StepError)）
+- [x] UI：batch_view.py（逐文件进度表/失败红显/双击日志对话框）+ batch_dialog.py（两页选择↔运行，
+      事件泵）+ settings_dialog.py（线程数/缓存 GB/导出目录）+ core/app_settings.py（原子写+热生效）
+      + 主窗口接线（文件菜单设置、处理菜单批处理、批处理结果 tab）
+- [x] io/neo_reader.py（_NeoRawReader 模板：structured array 头/选点数最多流/逐列单位换算/事件表）
+      + Blackrock/OE/Intan 三读取器；io/nwb_reader.py（ElectricalSeries 双形状支持/trials→事件）
+- [x] README 重写（v1 功能全览/快速开始/典型流程五步/验证口径；截图以 headless 条件改为文字流程）
+- [x] 验证：pytest 137 绿（+15：batch 10 + readers 5——NWB pynwb 真实往返）；e2e_m5 19 项 ALL OK
+      ——45 个 2b GDF（含 1 损坏）：45 成功 1 容错、78240 行 8.5s、UI 心跳 86 次全程响应、
+      取消 4/41 有效、失败行日志可查、CSV/sidecar 一致；e2e_m1-m4 + smoke 回归全绿
+- [x] 收尾四件事：review.md → STATUS/TODO/HANDOFF → 上下文检测 → git commit
+
+## 已知问题 / Backlog（v1 收官后暂缓项）
 
 - .edf.event WFDB 边车解析：M1 实测 PhysioNet EDF 内嵌注释已完整，边车为冗余副本，暂不需要；若未来遇到只有边车、无内嵌注释的数据集再补
-- **ds3 分段 MEG 读取**（data/dataset 里的 S1/S2.mat，BCI-IV 数据集 3）：数据是分段结构（非连续），与当前连续 raw 模型不匹配；M2 已识别并明确拒绝（提示记入 backlog）。若 M3 分段模型落地后需求明确再实现
+- **ds3 分段 MEG 读取**（data/dataset 里的 S1/S2.mat，BCI-IV 数据集 3）：数据是分段结构（非连续），与当前连续 raw 模型不匹配；M2 已识别并明确拒绝（提示记入 backlog）。若未来分段数据需求明确再实现
 - **BDF/CNT/EGI/BrainVision/EEGLAB 无真实数据实测**：M2 只有模板基类 + FIF 合成往返测试保证；拿到真实文件后跑 `open_file()` 冒烟即可（读取器走同一模板路径，风险低）
-- eeglabio / pybv 装入 dev 依赖：可对 EEGLAB/BrainVision 做合成写出→读回往返测试（暂缓，等真实数据或 M5 收尾时决定）
+- **Blackrock/Open Ephys/Intan/NWB 无真实数据实测**（M5）：neo 系用桩 rawio 验证模板关键逻辑（换算/转置/选流/事件）、NWB 用 pynwb 完整写支持做真实往返；拿到真实文件后跑 `open_file()` 冒烟即可（neo 模板路径统一，风险低）
+- eeglabio / pybv 装入 dev 依赖做 EEGLAB/BrainVision 合成往返：v1 收官时评估——neo/pynwb 已覆盖 M5 验收，暂缓，等真实数据再决定
+- 2b GDF 头自带 highpass 100 > lowpass 0.5 触发 mne RuntimeWarning（每文件两条，无害）；如需清净可在读取器预处理 info（暂缓——不改数据语义，仅日志噪音）
