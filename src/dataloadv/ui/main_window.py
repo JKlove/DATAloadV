@@ -96,8 +96,10 @@ class MainWindow(QMainWindow):
         self._dock_workspace.setWidget(self.workspace_tree)
 
         # M3：处理管线面板（预览结果经 preview_ready 回主窗口开 tab）
+        # M4：特征计算结果经 features_ready 开特征结果 tab
         self.pipeline_panel = PipelinePanel(self._get_active_browser, self)
         self.pipeline_panel.preview_ready.connect(self._on_preview_ready)
+        self.pipeline_panel.features_ready.connect(self._on_features_ready)
         self._dock_pipeline = QDockWidget(S.DOCK_PIPELINE, self)
         self._dock_pipeline.setWidget(self.pipeline_panel)
 
@@ -139,9 +141,12 @@ class MainWindow(QMainWindow):
         menu_help.addAction(S.ACT_ABOUT, self._show_about)
         self._import_actions = (act_import_files, act_import_folder)
 
-        # 处理菜单：与右 Dock 面板按钮同一动作（M3）
+        # 处理菜单：与右 Dock 面板按钮同一动作（M3 预览/PSD；M4 视口预填/特征）
         menu_proc.addAction(S.PIPE_BTN_PREVIEW, self.pipeline_panel.start_preview)
         menu_proc.addAction(S.PIPE_BTN_PSD, self.pipeline_panel.start_psd)
+        menu_proc.addSeparator()
+        menu_proc.addAction(S.FEAT_BTN_VIEWPORT, self.pipeline_panel.use_viewport_window)
+        menu_proc.addAction(S.FEAT_BTN_RUN, self.pipeline_panel.start_features)
 
     def _build_statusbar(self) -> None:
         self.statusBar().showMessage(S.STATUS_READY)
@@ -250,6 +255,23 @@ class MainWindow(QMainWindow):
             self.tabs.addTab(view, S.PIPE_EPOCHS_TAB_FMT.format(name=name))
         self.tabs.setCurrentWidget(view)
         logger.info("预览 tab 已建立：%s（阶段 %s，%d 步）", name, ctx.stage, len(ctx.history))
+
+    # ------------------------------------------------------------------ 特征（M4）
+
+    def _on_features_ready(self, payload: dict) -> None:
+        """特征计算完成（主线程）：开特征结果 tab（表格 + 导出按钮）."""
+        from .widgets.feature_table import FeatureTableView
+
+        browser = self._get_active_browser()
+        name = browser.rec.meta.filename if browser is not None else "数据"
+        view = FeatureTableView(
+            payload["table"], payload["ctx"],
+            pipeline_dicts=payload.get("pipeline_dicts"),
+            feature_dicts=payload.get("feature_dicts"),
+        )
+        self.tabs.addTab(view, S.FEAT_TAB_FMT.format(name=name))
+        self.tabs.setCurrentWidget(view)
+        logger.info("特征结果 tab 已建立：%s（%s）", name, payload["table"].summary_zh())
 
     # ------------------------------------------------------------------ 其他
 

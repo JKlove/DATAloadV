@@ -1,13 +1,17 @@
-"""处理管线面板（右 Dock）：步骤编排 + 参数编辑 + 当前文件预览 + PSD 对比.
+"""处理管线面板（右 Dock）：步骤编排 + 特征编排 + 预览 + PSD 对比 + 特征计算.
 
 数据流（架构规则 #2：UI 不做计算）：
-- 步骤链只是 [(step_id, params模型)] 列表，**不持有数据**
+- 步骤链/特征链只是 [(id, params模型)] 列表，**不持有数据**
 - 「预览当前文件」：``run_in_thread`` 里 from_recording（副本）→ apply_pipeline
   → 主线程回调发 ``preview_ready`` 信号 → 主窗口开预览 tab
 - 「对比 PSD」：worker 里算原始/处理后两条 Welch 平均谱 → 主线程画 PsdView
+- 「计算特征」（M4）：worker 里 副本 →（可选管线）→ apply_features →
+  FeatureTable → 主线程发 ``features_ready`` → 主窗口开 FeatureTableView tab
 
-与浏览器的联动：添加「坏导联处理」步骤时，参数默认带入当前浏览 tab 已标记
-的坏道（右键标记），也可在表单里手改。
+与浏览器的联动：
+- 添加「坏导联处理」步骤时，参数默认带入当前浏览 tab 已标记的坏道（右键标记）
+- 「用当前显示窗口」按钮：把浏览器视口起止**预填**进 crop 步骤参数——可见
+  可改、不隐式绑定视口（四层决策第④层：保证管线记录可复现）
 """
 
 from __future__ import annotations
@@ -16,12 +20,12 @@ import logging
 from typing import Callable, Optional
 
 import numpy as np
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
+    QFrame,
     QHBoxLayout,
     QLabel,
     QListWidget,
-    QListWidgetItem,
     QMenu,
     QMessageBox,
     QPushButton,
@@ -31,7 +35,13 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ...batch import FeatureTable
 from ...core.recording import LoadPolicy
+from ...features import (
+    FEATURE_REGISTRY,
+    apply_features,
+    feature_to_dict,
+)
 from ...features.spectral import mean_welch
 from ...proc import (
     STEP_REGISTRY,
@@ -52,21 +62,27 @@ _PSD_MAX_SECONDS = 120.0
 
 
 class PipelinePanel(QWidget):
-    """处理管线编排面板.
+    """处理管线编排面板（步骤 + 特征）.
 
     :param get_active_browser: 返回当前激活的浏览 tab（无则 None）——主窗口注入
     :signal preview_ready(object): 预览完成（携带 ProcessingContext），主窗口开 tab
+    :signal features_ready(object): 特征计算完成（携带
+        {"table", "ctx", "feature_dicts"}），主窗口开特征结果 tab
     """
 
     preview_ready = Signal(object)
+    features_ready = Signal(object)
 
     def __init__(self, get_active_browser: Callable[[], Optional[SignalBrowserView]],
                  parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._get_active = get_active_browser
-        self._steps: list[dict] = []  # [{"step": id, "params": 模型}]
+        self._steps: list[dict] = []    # [{"step": id, "params": 模型}]
+        self._features: list[dict] = []  # [{"feature": id, "params": 模型}]
         self._last_ctx: Optional[ProcessingContext] = None  # 最近一次预览结果（PSD 对比用）
         self._form: Optional[ParamsForm] = None
+        self._form_kind: Optional[str] = None  # 当前表单属于 "step" | "feature"
+        self._selected_row: Optional[int] = None
         self._psd_view = None  # PsdView 独立窗口（重复点按复用）
         self._build_ui()
 
@@ -78,8 +94,8 @@ class PipelinePanel(QWidget):
 
         lay.addWidget(QLabel(S.PIPE_LBL_STEPS))
         self._list = QListWidget()
-        self._list.setMaximumHeight(140)
-        self._list.currentRowChanged.connect(self._on_select)
+        self._list.setMaximumHeight(110)
+        self._list.currentRowChanged.connect(self._on_select_step)
         lay.addWidget(self._list)
 
         row = QHBoxLayout()
@@ -99,19 +115,47 @@ class PipelinePanel(QWidget):
         row.insertWidget(0, self._btn_add)
         lay.addLayout(row)
 
+        # ---------------- M4：特征区（与步骤区共用下方参数表单） ----------------
+        line = QFrame()
+        line.setFrameShape(QFrame.Shape.HLine)
+        line.setFrameShadow(QFrame.Shadow.Sunken)
+        lay.addWidget(line)
+        lay.addWidget(QLabel(S.FEAT_LBL_LIST))
+        self._feat_list = QListWidget()
+        self._feat_list.setMaximumHeight(80)
+        self._feat_list.currentRowChanged.connect(self._on_select_feature)
+        lay.addWidget(self._feat_list)
+
+        feat_row = QHBoxLayout()
+        self._btn_feat_add = QToolButton()
+        self._btn_feat_add.setText(S.FEAT_BTN_ADD)
+        self._btn_feat_add.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        self._btn_feat_add.setMenu(self._build_feat_menu())
+        self._btn_viewport = QPushButton(S.FEAT_BTN_VIEWPORT)
+        self._btn_viewport.clicked.connect(self.use_viewport_window)
+        self._btn_feat_remove = QPushButton(S.FEAT_BTN_REMOVE)
+        self._btn_feat_remove.clicked.connect(self._remove_feature)
+        feat_row.addWidget(self._btn_feat_add)
+        feat_row.addWidget(self._btn_viewport)
+        feat_row.addWidget(self._btn_feat_remove)
+        lay.addLayout(feat_row)
+
         lay.addWidget(QLabel(S.PIPE_LBL_PARAMS))
         self._form_host = QScrollArea()
         self._form_host.setWidgetResizable(True)
-        self._form_host.setWidget(QLabel(S.PIPE_EMPTY_HINT))
+        self._form_host.setWidget(QLabel(S.FEAT_EMPTY_HINT))
         lay.addWidget(self._form_host, 1)
 
         actions = QHBoxLayout()
         self._btn_preview = QPushButton(S.PIPE_BTN_PREVIEW)
         self._btn_psd = QPushButton(S.PIPE_BTN_PSD)
+        self._btn_run_feat = QPushButton(S.FEAT_BTN_RUN)
         self._btn_preview.clicked.connect(self.start_preview)
         self._btn_psd.clicked.connect(self.start_psd)
+        self._btn_run_feat.clicked.connect(self.start_features)
         actions.addWidget(self._btn_preview)
         actions.addWidget(self._btn_psd)
+        actions.addWidget(self._btn_run_feat)
         lay.addLayout(actions)
 
     def _build_add_menu(self) -> QMenu:
@@ -119,6 +163,13 @@ class PipelinePanel(QWidget):
         menu = QMenu(self)
         for step in STEP_REGISTRY.values():
             menu.addAction(step.label_zh, lambda s=step.step_id: self._add_step(s))
+        return menu
+
+    def _build_feat_menu(self) -> QMenu:
+        """「添加特征」菜单：按注册顺序列出全部特征提取器."""
+        menu = QMenu(self)
+        for fx in FEATURE_REGISTRY.values():
+            menu.addAction(fx.label_zh, lambda f=fx.feature_id: self.add_feature(f))
         return menu
 
     # ------------------------------------------------------------------ 步骤链编辑
@@ -147,7 +198,7 @@ class PipelinePanel(QWidget):
         if 0 <= row < len(self._steps):
             self._steps.pop(row)
             self._list.takeItem(row)
-            self._show_form_for(max(0, min(row, len(self._steps) - 1)))
+            self._show_form("step", max(0, min(row, len(self._steps) - 1)))
 
     def _move_step(self, delta: int) -> None:
         row = self._list.currentRow()
@@ -162,7 +213,7 @@ class PipelinePanel(QWidget):
     def _clear_steps(self) -> None:
         self._steps.clear()
         self._list.clear()
-        self._show_form_for(-1)
+        self._show_form(None, -1)
 
     def _label(self, step_id: str) -> str:
         step = STEP_REGISTRY[step_id]
@@ -174,64 +225,137 @@ class PipelinePanel(QWidget):
                 return entry["params"]
         return STEP_REGISTRY[step_id].default_params()
 
-    def _on_select(self, row: int) -> None:
-        """选中变化前先把当前表单值写回条目（用户点了别的步骤=编辑结束）.
+    # ------------------------------------------------------------------ 特征链编辑（M4）
 
-        行号守卫：清空/删除步骤会让列表触发 currentRowChanged，此时旧行号
-        可能越界（e2e 实测 IndexError）——越界即跳过回写。
-        """
-        if (self._form is not None and self._selected_row is not None
-                and 0 <= self._selected_row < len(self._steps)):
-            try:
-                self._steps[self._selected_row]["params"] = self._form.collect()
-            except ValueError:
-                pass  # 半填的值不回写（预览时统一校验并提示）
-        self._show_form_for(row)
+    def add_feature(self, feature_id: str, **overrides) -> None:
+        """添加特征提取器（overrides 先于表单合入，理由同 add_step）."""
+        fx = FEATURE_REGISTRY[feature_id]
+        self._features.append({"feature": feature_id, "params": fx.make_params(overrides)})
+        self._select_feature_row(len(self._features) - 1)
 
-    _selected_row: Optional[int] = None
+    def _remove_feature(self) -> None:
+        row = self._feat_list.currentRow()
+        if 0 <= row < len(self._features):
+            self._features.pop(row)
+            self._feat_list.takeItem(row)
+            self._show_form("feature", max(0, min(row, len(self._features) - 1)))
 
-    def _show_form_for(self, row: int) -> None:
-        """为第 row 步骤重建参数表单；row<0 显示空提示."""
-        self._selected_row = row if 0 <= row < len(self._steps) else None
-        self._form = None
-        if self._selected_row is None:
-            self._form_host.setWidget(QLabel(S.PIPE_EMPTY_HINT))
+    def _feature_label(self, feature_id: str) -> str:
+        fx = FEATURE_REGISTRY[feature_id]
+        entry = next((e for e in self._features if e["feature"] == feature_id), None)
+        summary = params_summary(entry["params"]) if entry else "默认参数"
+        return f"{fx.label_zh}（{summary}）"
+
+    def feature_dicts(self) -> list[dict]:
+        """当前特征链 → 可 JSON 序列化 dict 列表（sidecar/M5 批处理复用）."""
+        return [feature_to_dict(e["feature"], e["params"]) for e in self._features]
+
+    # ------------------------------------------------------------------ 表单（步骤/特征共用）
+
+    def _on_select_step(self, row: int) -> None:
+        """步骤列表选中变化：互斥（清特征选择）+ 回写旧表单."""
+        if row >= 0:
+            self._feat_list.setCurrentRow(-1)
+        self._write_back_form()
+        self._show_form("step" if 0 <= row < len(self._steps) else None, row)
+
+    def _on_select_feature(self, row: int) -> None:
+        if row >= 0:
+            self._list.setCurrentRow(-1)
+        self._write_back_form()
+        self._show_form("feature" if 0 <= row < len(self._features) else None, row)
+
+    def _select_step_row(self, row: int) -> None:
+        """刷新步骤行文字并选中（更新已有条目场景——不添加新行）."""
+        item = self._list.item(row)
+        if item is not None:
+            item.setText(self._label(self._steps[row]["step"]))
+        self._list.setCurrentRow(row)
+
+    def _select_feature_row(self, row: int) -> None:
+        """添加特征行并选中（add_feature 专用——append 语义）."""
+        self._feat_list.addItem(self._feature_label(self._features[row]["feature"]))
+        self._feat_list.setCurrentRow(row)
+
+    def _write_back_form(self) -> None:
+        """切换选择前把当前表单值写回其条目（半填的值不回写，预览时统一校验）."""
+        if self._form is None or self._form_kind is None or self._selected_row is None:
             return
-        entry = self._steps[row]
-        step = STEP_REGISTRY[entry["step"]]
-        self._form = ParamsForm(step, entry["params"])
+        chain = self._steps if self._form_kind == "step" else self._features
+        if not (0 <= self._selected_row < len(chain)):
+            return
+        try:
+            chain[self._selected_row]["params"] = self._form.collect()
+        except ValueError:
+            pass
+
+    def _show_form(self, kind: Optional[str], row: int) -> None:
+        """为选中条目重建参数表单；kind=None 显示空提示.
+
+        步骤与特征共用一个表单区——两者的参数模型/表单接口完全同构。
+        """
+        self._form = None
+        self._form_kind = kind
+        chain = self._steps if kind == "step" else self._features if kind == "feature" else None
+        if chain is None or not (0 <= row < len(chain)):
+            self._selected_row = None
+            self._form_host.setWidget(QLabel(S.FEAT_EMPTY_HINT))
+            return
+        self._selected_row = row
+        entry = chain[row]
+        owner = (STEP_REGISTRY[entry["step"]] if kind == "step"
+                 else FEATURE_REGISTRY[entry["feature"]])
+        self._form = ParamsForm(owner, entry["params"])
         # 表单编辑 → 实时写回条目 + 刷新列表行文字（try 容忍半填状态）
-        self._form.edited.connect(lambda: self._live_collect(row))
+        self._form.edited.connect(lambda: self._live_collect())
         self._form_host.setWidget(self._form)
 
-    def _live_collect(self, row: int) -> None:
+    def _live_collect(self) -> None:
+        if self._form is None or self._form_kind is None or self._selected_row is None:
+            return
+        chain = self._steps if self._form_kind == "step" else self._features
+        key = "step" if self._form_kind == "step" else "feature"
+        lst = self._list if self._form_kind == "step" else self._feat_list
         try:
-            self._steps[row]["params"] = self._form.collect()
-            self._list.item(row).setText(self._label(self._steps[row]["step"]))
+            chain[self._selected_row]["params"] = self._form.collect()
+            item = lst.item(self._selected_row)
+            if item is not None:
+                item.setText(self._label(chain[self._selected_row][key])
+                             if key == "step"
+                             else self._feature_label(chain[self._selected_row][key]))
         except ValueError:
-            pass  # 半填状态（如刚清空文本框）不回写，等下次编辑或预览时校验
+            pass  # 半填状态（如刚清空文本框）不回写，等下次编辑或运行时校验
 
-    # ------------------------------------------------------------------ 预览
+    # ------------------------------------------------------------------ 收集
 
     def collect_pipeline(self) -> list[dict]:
-        """收集步骤链（预览/导出前统一校验；非法直接弹窗）."""
+        """收集步骤链（预览前统一校验；空链/非法直接抛 ValueError 中文）."""
+        self._write_back_form()
         if not self._steps:
             raise ValueError(S.PIPE_MSG_NO_STEPS)
-        if self._form is not None and self._selected_row is not None:
-            self._steps[self._selected_row]["params"] = self._form.collect()  # 强校验
         return self._steps
+
+    def collect_features(self) -> list[dict]:
+        """收集特征链（计算特征前统一校验）."""
+        self._write_back_form()
+        if not self._features:
+            raise ValueError(S.FEAT_MSG_NO_FEATURES)
+        return self._features
 
     def pipeline_dicts(self) -> list[dict]:
         """当前管线 → 可 JSON 序列化 dict 列表（M5 批处理/导出 sidecar 复用）."""
+        self._write_back_form()
         return [step_to_dict(e["step"], e["params"]) for e in self._steps]
 
     def _active_recording(self):
         browser = self._get_active()
         if browser is None:
-            raise ValueError(S.PIPE_MSG_NO_ACTIVE)
+            raise ValueError(S.FEAT_MSG_NO_ACTIVE)
         if not browser._loaded_once:  # noqa: SLF001 - 面板与浏览器同包内协作
             raise ValueError(S.PIPE_MSG_NOT_LOADED)
         return browser.rec
+
+    # ------------------------------------------------------------------ 预览（M3）
 
     def start_preview(self) -> None:
         """预览当前 tab：worker 里副本+整条管线，主线程回调开 tab."""
@@ -262,7 +386,7 @@ class PipelinePanel(QWidget):
         self._last_ctx = ctx  # 「对比 PSD」用它
         self.preview_ready.emit(ctx)
 
-    # ------------------------------------------------------------------ PSD 对比
+    # ------------------------------------------------------------------ PSD 对比（M3）
 
     def start_psd(self) -> None:
         """原始 vs 最近预览 的 Welch 平均谱对比（无预览时只画原始）."""
@@ -297,6 +421,78 @@ class PipelinePanel(QWidget):
         self._psd_view.set_series(series)
         self._psd_view.show()
         self._psd_view.raise_()
+
+    # ------------------------------------------------------------------ 视口预填（M4 第④层）
+
+    def use_viewport_window(self) -> None:
+        """把当前浏览 tab 的视口起止**预填**进 crop 步骤（无则新增）.
+
+        不隐式绑定视口：值进参数表单，用户可见可改——管线记录始终可复现。
+        """
+        browser = self._get_active()
+        if browser is None:
+            QMessageBox.information(self, S.FEAT_BTN_VIEWPORT, S.FEAT_MSG_NO_ACTIVE)
+            return
+        if not browser._loaded_once:  # noqa: SLF001 - 同包协作
+            QMessageBox.information(self, S.FEAT_BTN_VIEWPORT, S.FEAT_MSG_VIEWPORT_NO_DATA)
+            return
+        t0, t1 = browser._visible_range()  # noqa: SLF001 - 同包协作
+        duration = browser.rec.meta.duration_s
+        t0, t1 = max(0.0, round(t0, 2)), min(duration, round(t1, 2))
+        if t1 - t0 < 1.0:
+            QMessageBox.warning(
+                self, S.FEAT_BTN_VIEWPORT,
+                f"当前显示窗口过短（{t1 - t0:.2f} s），不适合做特征计算——请先缩小缩放")
+            return
+        # 找最后一个 crop 步骤：就地更新其参数（保持用户已有步骤顺序）
+        for row in range(len(self._steps) - 1, -1, -1):
+            if self._steps[row]["step"] == "crop":
+                self._steps[row]["params"] = STEP_REGISTRY["crop"].make_params(
+                    {"tmin": t0, "tmax": t1})
+                self._select_step_row(row)  # 选中并刷新该行文字（表单同步显示新值）
+                break
+        else:
+            self.add_step("crop", tmin=t0, tmax=t1)
+        self.window().statusBar().showMessage(
+            S.FEAT_MSG_VIEWPORT_APPLIED.format(t0=t0, t1=t1), 5000)
+
+    # ------------------------------------------------------------------ 特征计算（M4）
+
+    def start_features(self) -> None:
+        """管线（可选）+ 特征 → FeatureTable：worker 全链路，主线程开 tab."""
+        try:
+            steps = [(e["step"], e["params"]) for e in self.collect_pipeline()] \
+                if self._steps else []
+            feats = [(e["feature"], e["params"]) for e in self.collect_features()]
+            rec = self._active_recording()
+        except ValueError as e:
+            QMessageBox.warning(self, S.PIPE_PREVIEW_FAIL_TITLE, str(e))
+            return
+        self._btn_run_feat.setEnabled(False)
+        self.window().statusBar().showMessage(S.FEAT_MSG_RUNNING)
+
+        def job(rec=rec, steps=steps, feats=feats):
+            ctx = ProcessingContext.from_recording(rec)
+            if steps:
+                apply_pipeline(ctx, steps)
+            result = apply_features(ctx, feats)
+            table = FeatureTable()
+            table.add_result(result, rec.meta.filename, rec.meta.subject or "")
+            return {"table": table, "ctx": ctx, "feature_dicts": [
+                feature_to_dict(f, p) for f, p in feats]}
+
+        run_in_thread(
+            job,
+            on_done=self._on_features_done,
+            on_error=lambda m: (self._btn_run_feat.setEnabled(True),
+                                QMessageBox.critical(self, S.PIPE_PREVIEW_FAIL_TITLE, m)),
+        )
+
+    def _on_features_done(self, payload: dict) -> None:
+        self._btn_run_feat.setEnabled(True)
+        self.window().statusBar().showMessage(S.STATUS_READY)
+        payload["pipeline_dicts"] = payload["ctx"].history  # sidecar 记实际执行的步骤
+        self.features_ready.emit(payload)
 
 
 def _psd_job(rec, ctx: Optional[ProcessingContext]):

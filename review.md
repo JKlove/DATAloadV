@@ -177,3 +177,60 @@
 - 副本隔离：预览全程在 raw.copy() 上，原始 Recording 逐位不动（pytest 断言）✅
 
 **收尾四件事**：治理文件已更新（STATUS：M3 完成态+72 绿+实证结论 7 条+变更记录；TODO：M3 全勾、M4 置下一个；HANDOFF：坑清单 17→24 条、架构树 M3 版、接手要点改 M4）→ review.md 本节 ✅ → 上下文检查：本窗口自压缩摘要重启后连续完成 M2 收尾+DATA_NOTES 建立+整个 M3（proc/features/UI/测试/e2e），上下文占用已高，全部关键状态均已落盘治理文件——**建议用户执行 /compact 后再开 M4** → git commit `M3: ...`
+
+---
+
+## M4 — 特征 + 导出（2026-08-18 完成）
+
+**做了什么**（按 TODO.md M4 节，特征范围=用户确认的"四层组合"）：
+
+1. **proc/crop.py** 时间窗裁剪步骤（第③层）：CropParams（tmin≥0 / tmax=None=到结尾 / validator tmax>tmin）；raw 分支**绝对时间**（预检查越界给中文错；事件表不动——first_samp 机制保证绝对样本号仍成立）、epochs 分支**相对事件锚点**（无重叠预检查给"分段数为 0"中文错——mne 会先抛英文错，见问题 5）；applies_to={"raw","epochs"}
+2. **features/base.py** FeatureExtractor ABC + FEATURE_REGISTRY + apply_features + 通道选择（DATA_CH_TYPES 白名单 {"eeg","ecog","seeg","meg","dbs"}；空=数据通道排除坏道；白名单空集回退非 misc）——与 proc/base.py **完全同构**（step_id property 别名使 ParamsForm 零改动复用）
+3. **三提取器**：spectral.py 扩展 array_welch（scipy welch nperseg 沿 -1 轴广播，[ch,t]/[ep,ch,t] 一次算全部）+ BandPowerFeature（δθαβγ 标准频段 + "名字：起-止"自定义；trapz 积分 ×1e12→µV²；relative 除总功率 / log10 加后缀）+ WelchPsdFeature（曲线，**仅 raw 阶段**）；timedomain.py TimeDomainStatsFeature（rms_uv/var_uv2/mav_uv/ptp_uv/iqr_uv/zc_rate/kurtosis/skewness 8 统计量；过零带阈值滞回；µV 基准名字带单位）
+4. **batch/results.py** FeatureTable：长表 COLUMNS 7 列（recording/subject/epoch_index/event_code/channel/feature/value）+ COLUMNS_ZH 中文表头 + to_wide（pivot_table **dropna=False**）+ summary_zh；epoch_index 惰性转 Int64
+5. **UI**：pipeline_panel 加特征区（特征列表 + 添加特征菜单 + 「用当前显示窗口」预填按钮 + 「计算特征」按钮；步骤/特征互斥选择共用表单区，_write_back_form 切换前回写）；use_viewport_window 读 browser._visible_range → clamp [0,duration] round 2 → 更新最后一个 crop 或 add_step（第④层：**预填可改、不隐式绑定视口**）；feature_table.py 特征结果 tab（QAbstractTableModel + UserRole 数值排序代理 + CSV/HDF5/分段导出按钮 + sidecar + teardown）；main_window features_ready 接线开 tab、处理菜单 4 动作
+6. **export/ 三模块**：features_io（CSV UTF-8 BOM + 中文表头；曲线宽表 <stem>_psd[N].csv 按频率轴分组；HDF5 /features 每列数据集 + /psd/<i>/{freqs,psd}）+ epochs_io（HDF5 /epochs/data f4 + times + event_codes + attrs；FIF mne 无损；均带回读）+ provenance（<名>.pipeline.json：app/created/pipeline/features/recordings/library_versions/extra）
+7. **测试**：tests +50 = 122 绿（crop 6 / 三提取器 20 / FeatureTable+序列化 6 / 导出往返 12 / UI 11）；**e2e_m4 18 项 ALL OK**（四轮调试后，逐模块 patch + 轮询上限规约化）
+
+**验证表**
+
+| 验证项 | 结果 |
+|---|---|
+| pytest 全量 | ✅ **122 passed**（M3 的 72 + M4 新增 50） |
+| **验收 1：单文件特征 CSV Excel 可开（BOM+中文表头）** | ✅ BOM `EF BB BF` + 表头「录制,被试,段序号,事件码,通道,特征,数值」+ 104 行 = 8 通道 × 13 特征（e2e 阶段 1/3） |
+| **验收 2：epochs HDF5 回读形状一致** | ✅ A01T (288, 25, 2501) 往返一致；FIF 回读 288 段（e2e 阶段 4） |
+| **验收 3：sidecar 合法且含管线** | ✅ features.pipeline.json 含 bandpass,notch,crop + 3 特征 + 文件清单 + 库版本 |
+| 处理后 PSD 50Hz 峰消除（复用 M3 口径） | ✅ 50Hz 0.4 vs 10Hz 7130 µV²/Hz（陷波+带通后） |
+| 「用当前显示窗口」预填 crop=视口 | ✅ [125,145]s（视口中点 20s 宽，非全长） |
+| A01T 逐段特征 | ✅ 288 段 × 25 通道 × 2 频段 = **14400 行**；事件码 {769,770,771,772} 逐段带入 |
+| 长表↔宽表互转 | ✅ to_wide 文件级+段级行共存（dropna=False） |
+| 序列化往返（step/feature to/from_dict） | ✅ pytest 全等断言 |
+| e2e_m1/m2/m3 + smoke_gui 回归 | ✅ ALL OK / ALL OK / ALL OK / SMOKE OK |
+
+**计划偏离（实证驱动）**
+1. **WelchPsdFeature 仅 raw 阶段**（applies_to={"raw"}）：计划未预见 epochs 曲线量爆炸（288 段 × 25 通道 = 7200 条曲线无浏览价值）；段级频谱用 BandPower 标量表达——M4 e2e 采纳此边界
+2. **导出按钮集成在 FeatureTableView 而非独立 ExportDialog**：计划列了 dialogs/export，实现时发现导出与结果 tab 上下文强耦合（sidecar 要当次管线快照），独立对话框反而要回传状态——按钮+菜单三动作更直接
+3. **2a GDF 25 通道（22 EEG+3 EOG）全部标 eeg**：类型白名单无法自动排除 EOG，默认全取（14400 行而非 12672）——排除 EOG 须在特征参数 channels 显式写 22 通道名（实证结论记 STATUS #2）；这是数据集元数据缺陷而非代码缺陷
+4. **crop 在 epochs 阶段的语义是相对事件锚点**（mne Epochs.crop 行为），与 raw 的绝对时间不同——docstring 明确区分，UI 参数标题注明"相对事件"
+
+**发现的问题与修正（全部有测试或 e2e 复现）**
+1. **scipy.signal.welch 参数名 nperseg**（无下划线）→ TypeError 后改用（mne 风格是 n_per_seg，惯性坑）
+2. **spectral.py 两处笔误**：错误类型注解 ExtractorResultR、description 内嵌英文双引号语法错 → 修正
+3. **Epochs.crop 窗外先抛英文错**（"tmin must be less than..."）→ crop.py 加无重叠预检查（中文"分段数为 0…相对事件锚点"）放在 mne 调用**之前**
+4. **pivot_table 默认 dropna=True 丢文件级行**：wide (0,5) 空 → to_wide 传 dropna=False
+5. **Qt6 无 SortRole**：AttributeError → UserRole + setSortRole；且 DisplayRole 字符串排序 "10"<"2" 乱序 → data() UserRole 分支数值列返回 float；headerData/proxy.sort 枚举须显式（Qt.Orientation.Horizontal / Qt.SortOrder.AscendingOrder，PySide6 不接受 int 位置参数）
+6. **e2e 第一轮卡死（CPU 0%）**：只 patch 了 main_window 的 QMessageBox，pipeline_panel/feature_table 的 from-import 独立引用未 patch → 真弹模态框阻塞 offscreen 事件循环 → **逐模块 patch（mw/ft_mod/pp_mod）+ 所有轮询加 tries 上限**（防永久挂死）——规约已写入 HANDOFF 坑 #31
+7. **e2e getSaveFileName patch lambda 返回 bug**：条件表达式 True 分支返回字符串非 tuple → 改 def 返回 tuple
+8. **e2e 阶段 2 IndexError**：羊"卧"文件 events 为空（onset[0] 越界）→ _center_at(duration/2) 中点定位替代事件定位
+9. **e2e 阶段 4 取错特征 tab**：views[0] 取到阶段 1 羊的 tab → views[-1] 取最新 + recording_names() 校验含 "A01T"
+10. **A01T 行数 14400 ≠ 预期 12672**：`Counter({'eeg': 25})` 实测——25 通道全标 eeg（偏离 3）→ 断言改 288×25×2 并记实证结论
+11. **test_relative_powers_sum_to_one 和=0.99937**：标准频段 1-45Hz vs 分析带 0.5-45Hz 缺口 + 边界点 trapz 各半 → 容差 abs=5e-3 并注释原因
+12. **test_mean_curve_peak_at_10hz 失败**：通道平均峰在 50.05Hz（30µV 工频 > 2×20µV α 合成功率）→ 改单通道指定测 α 峰（坑 #32）
+13. **pipeline_panel 重写引入 _select_step_row 重复 addItem** → 拆分：add_step 内联 addItem+setCurrentRow；_select_step_row 只刷新文字+选中（viewport 更新场景）；_move_step 用 setCurrentRow
+
+**架构规则自查**
+- proc/features/batch/export 无 Qt import ✅（features/export 仅 numpy/scipy/pandas/h5py/mne/pydantic）；UI 新控件只编排不计算——特征计算/导出全部 run_in_thread worker（_MainRelay 保护）✅
+- 跨线程只传纯 Python/mne 对象 ✅（features_ready 信号传 FeatureTable + ProcessingContext + dict 列表）
+- data/ 只读 ✅（全部导出走 QFileDialog 用户路径 + tempfile）；配置 ~/.dataloadv ✅
+
+**收尾四件事**：治理文件已更新（STATUS：M4 完成态 + 122 绿 + e2e_m4 18 项数字 + 实证结论 8 条 + 变更记录；TODO：M4 全勾含四层决策原文、M5 置下一个；HANDOFF：坑清单 24→32 条、架构树 M4 版、接手要点改 M5）→ review.md 本节 ✅ → 上下文检测：本会话自压缩摘要重启后连续完成整个 M4（约 20 个文件创建/修改 + 4 轮 e2e 调试），占用已高，全部关键状态均已落盘治理文件——**建议用户执行 /compact 后再开 M5** → git commit `M4: 特征+导出——crop时间窗+3提取器+FeatureTable长表+特征面板(视口预填)+CSV/HDF5/FIF导出+sidecar`

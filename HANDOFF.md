@@ -41,15 +41,16 @@ pip install -e "/Users/huyingbing/VSproject/intervention BCI/DataloadV[dev]"
 ```bash
 conda activate dlv
 dataloadv                                    # 启动应用（或 python -m dataloadv）
-pytest                                       # 全部单测（M3：72 passed，含 5 个 real 数据项）
+pytest                                       # 全部单测（M4：122 passed，含 real 数据项）
 pytest -m real                               # 仅真实数据冒烟（data/sheep 缺失自动跳过）
 python scripts/smoke_gui.py                  # GUI 冒烟：真窗口启动自检后自动退出
 python scripts/e2e_m1.py                     # M1 端到端：真实导入→浏览→渲染→释放（幂等，可反复跑）
 python scripts/e2e_m2.py                     # M2 端到端：4.9GB 扫描+六格式打开（幂等，可反复跑）
 python scripts/e2e_m3.py                     # M3 端到端：预览/PSD 压制/分段/tab 释放（幂等，可反复跑）
+python scripts/e2e_m4.py                     # M4 端到端：特征计算/视口预填/导出/分段回读（幂等，可反复跑）
 ```
 
-## 架构导览（M3 后的实际结构）
+## 架构导览（M4 后的实际结构）
 
 ```
 src/dataloadv/
@@ -67,7 +68,7 @@ src/dataloadv/
 │   ├── event_maps.py        # GDF 官方事件码→中文标签（16 码，desc_2a/2b.pdf 原文核实）
 │   ├── table.py             # CSV/TXT：分隔符嗅探+数值性验证+FS_UNSET_NOTE 询问标记
 │   └── hdf5.py              # 通用 HDF5：零数据 IO 定位 2-D 信号集，歧义拒绝
-├── proc/                    # 预处理层（M3，禁止 import Qt）——每步=pydantic参数+apply(ctx)
+├── proc/                    # 预处理层（M3 建，M4 加 crop；禁止 import Qt）——每步=pydantic参数+apply(ctx)
 │   ├── context.py           # ProcessingContext：raw/epochs/stage/events/history/logs + from_recording（副本隔离）
 │   ├── base.py              # ProcStep ABC + STEP_REGISTRY + register_step + step_to/from_dict + apply_pipeline
 │   ├── filters.py           # bandpass（raw+epochs）/ notch（仅 raw——mne Epochs 无 notch_filter）
@@ -75,20 +76,29 @@ src/dataloadv/
 │   ├── resample.py          # resample：降采样（升采样拒绝）
 │   ├── bads.py              # bads：标记（幂等）/插值；默认值带入浏览器右键标记
 │   ├── epoching.py          # epoching：事件分段（raw→epochs 阶段翻转；reject_uv 阈值丢弃）
+│   ├── crop.py              # crop：时间窗裁剪（M4；raw 绝对时间/epochs 相对事件锚点；事件表不动）
 │   └── preview.py           # PreviewReader + make_preview_recording：处理副本包装成可浏览 Recording
-├── features/                # 特征提取层（M3 起步，M4 扩展）
-│   └── spectral.py          # mean_welch：跨通道平均 Welch PSD（PSD 视图与 M4 特征共用）
-├── batch/                   # 批处理引擎（M5）
-├── export/                  # 导出与溯源 sidecar（M4）
+├── features/                # 特征提取层（M4；禁止 import Qt）——与 proc 层完全同构的注册表
+│   ├── base.py              # FeatureExtractor ABC + FEATURE_REGISTRY + apply_features + 通道选择（DATA_CH_TYPES 白名单）
+│   ├── spectral.py          # mean_welch/array_welch（scipy 广播）+ BandPowerFeature（δθαβγ+自定义+相对/对数）+ WelchPsdFeature（仅 raw）
+│   └── timedomain.py        # TimeDomainStatsFeature：rms/var/mav/ptp/iqr/zc_rate/kurt/skew 8 统计量纯 numpy
+├── batch/                   # 批处理层（M5 引擎；results 为 M4）
+│   └── results.py           # FeatureTable：长表 7 列 + COLUMNS_ZH 中文表头 + to_wide(dropna=False) + summary_zh
+├── export/                  # 导出层（M4，禁止 import Qt）
+│   ├── features_io.py       # CSV（UTF-8 BOM+中文表头；曲线另存宽表按频率轴分组）/ HDF5（/features + /psd/<i>）
+│   ├── epochs_io.py         # epochs → HDF5（/epochs/data f4+times+event_codes+attrs）/ FIF（mne 无损）+ 回读
+│   └── provenance.py        # <名>.pipeline.json：app/pipeline/features/recordings/library_versions/extra
 ├── workers/generic.py       # run_in_thread：后台任务→_MainRelay 主线程回调（见坑 #7/#13）
 └── ui/                      # 全部 Qt 代码
-    ├── main_window.py       # 主窗口：导入/工作区树/元数据表/浏览 tab/采样率询问
+    ├── main_window.py       # 主窗口：导入/工作区树/元数据表/浏览/特征 tab/采样率询问
     ├── state.py             # SessionState 信号中枢（recording_opened 等）
-    ├── strings_zh.py        # 全部中文文案集中（class S）
+    ├── strings_zh.py        # 全部中文文案集中（class S；M4 段 FEAT_*）
     ├── dialogs/import_dialog.py   # 导入控制器：worker 扫描→进度→错误表
     └── widgets/             # workspace_tree / meta_table / signal_browser / event_lane / log_panel
-    │                         #   + params_form（pydantic 自动表单）/ pipeline_panel（步骤链+预览+PSD）
-    │                         #   + psd_view（原始 vs 处理后对比）/ epochs_preview（分段跨段平均视图）
+    │                         #   + params_form（pydantic 自动表单，步骤/特征共用——step_id 别名零改动）
+    │                         #   + pipeline_panel（步骤链+特征链+预览+PSD+「用当前显示窗口」预填）
+    │                         #   + psd_view / epochs_preview
+    │                         #   + feature_table（特征结果 tab：长表排序浏览+CSV/HDF5/分段导出+sidecar）
 ```
 
 **四条硬性规则**（review 时检查）：
@@ -131,14 +141,25 @@ src/dataloadv/
 22. **pydantic 步骤参数默认值必须可构造**：空列表/非空类校验放模型 validator 会让 `default_params()` 直接 ValidationError（表单往返测试暴露）——此类校验移到 apply() 执行期给中文 StepError。
 23. **QListWidget 清空触发 currentRowChanged(-1)**：清空/删除步骤行时 `list.clear()` 会用过期行号调 `_on_select`——槽函数必须做行号边界守卫。
 24. **tmin=0 时 baseline (None, 0) 只含一个样本**，mne 拒绝（"Baseline interval is only one sample"）：epoching 内自动转 (0.0, 0.0)。
+25. **`raw.crop` 会同步更新内部 first_samp**（M4 实测）：裁剪后 EventTable 绝对秒 onset 与 epoching 的绝对样本号依然成立——crop 步骤**不需要改事件表**；e2e 验证 crop[5,25] 后窗口内事件保留、窗外自然丢弃。
+26. **mne 读 BCI-IV 2a GDF 时 25 通道（22 EEG + 3 EOG）全部标为 `eeg`**：特征层按类型白名单无法排除 EOG——默认取全部 25 数据通道；要排除 EOG 须在特征参数 channels 里显式写 22 个通道名。
+27. **`scipy.signal.welch` 参数名是 `nperseg`（无下划线）**，不是 mne 风格的 `n_per_seg`——TypeError 才发现。
+28. **pandas `pivot_table` 默认 `dropna=True` 会把组键含 NA 的行整组丢掉**：文件级特征行（epoch_index=None）在宽表里全部消失——`to_wide()` 必须传 `dropna=False`。
+29. **`mne.Epochs.crop` 窗完全在段外时先抛英文错**（"tmin must be less than..."）：中文预检查（无重叠→"分段数为 0"）必须放在 crop 调用之前；同类思路适用于一切 mne 参数校验前置。
+30. **Qt6 无 `Qt.ItemDataRole.SortRole`**：自定义排序角色用 UserRole + `setSortRole(UserRole)`；且数值列 data() 的 UserRole 分支必须返回 float——否则代理按字符串排序（"10" < "2" 乱序）。
+31. **e2e patch QMessageBox 必须逐模块进行**：`from PySide6.QtWidgets import QMessageBox` 是各模块的独立引用，只 patch main_window 的不影响 pipeline_panel/feature_table；漏 patch 的模块真弹模态框 → offscreen 事件循环永久阻塞（CPU 0% 假死，坑 #14 的 M4 变体）。
+32. **通道平均 PSD 的谱峰取决于各通道幅度²**：羊数据 30µV 工频 > 2×20µV α 的合成功率，平均曲线峰在 50Hz——断言 α 主导要用单通道指定，不能用通道平均。
 
-## 当前接手要点（2026-08-18，M3 已完成）
+## 当前接手要点（2026-08-18，M4 已完成）
 
-- M3 全部完成并验证（pytest 72 绿 + e2e_m1 13 + e2e_m2 17 + e2e_m3 11 项全过，见 review.md）；下一步是 **M4 特征+导出**，任务拆解见 TODO.md「M4」一节
+- M4 全部完成并验证（pytest 122 绿 + e2e_m1 13 + e2e_m2 17 + e2e_m3 11 + e2e_m4 18 项全过，见 review.md）；下一步是 **M5 批处理+扩展格式+收尾**，任务拆解见 TODO.md「M5」一节
+- **M5 动工顺序建议**：先 `batch/engine.py`（BatchEngine(QObject) + 2 线程池 + `threading.Event` 取消 + 逐文件日志捕获 → 信号 `progress/file_done/finished` 队列回主线程），再 `ui/widgets/batch_view.py`（逐文件进度/结果表，错误红行可点开日志）。**积木全部现成**：
+  - 单文件处理直接照抄 `pipeline_panel.start_features()` 的 worker 函数体（from_recording → apply_pipeline → apply_features → FeatureTable.add_result），批处理就是把它逐文件跑一遍
+  - 管线/特征配置输入直接用 `pipeline_panel.pipeline_dicts()` / `feature_dicts()`（已是 step_to_dict/feature_to_dict 的可序列化列表，作 JobSpec 输入零转换）
+  - 结果累积直接用 `FeatureTable.add_result()`（多文件并入同一长表，recording 列自然区分）
 - **特征范围决策（用户 2026-08-18 确认）：四层组合**——全量默认 + epochs 逐段 + crop 步骤（显式时间窗，进 sidecar）+ 视口一键预填（不隐式绑定）；滤波类预处理仍全量（边界效应），crop 只裁数据范围
-- M4 动工顺序建议：先 features/base.py（FeatureExtractor ABC + registry，照抄 proc/base.py 的注册表模式）+ 三个提取器（WelchPsd/BandPower 复用 features/spectral.py 的 mean_welch；TimeDomainStats 纯 numpy），再 FeatureTable（长表 DataFrame：recording/epoch_index/event_code/channel/feature/value）+ feature_table.py 视图，最后 export/（features_io CSV UTF-8 BOM/HDF5 + epochs_io + provenance——管线 JSON 直接用 `pipeline_panel.pipeline_dicts()`，即 step_to_dict 列表）
-- M3 关键设计（M4/M5 沿用）：**ProcStep 模式**——每步骤 = pydantic 参数模型（Field(title=中文) + json_schema_extra 的 unit/min/max/decimals）+ `apply(ctx)->ctx`；`applies_to` 声明可用阶段；STEP_REGISTRY 注册后 params_form 零 UI 代码自动出表单；`apply_pipeline(ctx, [(step_id, params)])` 统一入口（阶段检查/计时/history/中文日志）。**新步骤三件套：参数模型 + Step 类 + strings_zh 文案**
+- M3/M4 关键设计（M5 沿用）：**ProcStep/FeatureExtractor 同构注册表**——pydantic 参数模型 + `apply(ctx)`；STEP_REGISTRY/FEATURE_REGISTRY 注册后 params_form 零 UI 代码自动出表单（FeatureExtractor 的 `step_id` property 别名是零改动复用的关键）；`apply_pipeline`/`apply_features` 统一入口（阶段检查/计时/history/中文日志）。**新步骤/特征三件套：参数模型 + 类 + strings_zh 文案**
 - 预览机制：`ProcessingContext.from_recording` 强制 PRELOAD + `raw.copy()`（原始逐位不变，pytest 有断言）；处理副本经 `make_preview_recording` 包装成不注册、不入工作区的 Recording → 复用全部浏览器机制
-- 读取器新格式的通用套路（M2）：`_MneRawReader` 模板基类，只声明 `_fmt`/`_read_fn`（**staticmethod 包住**，坑 #12）/`_extra`；`RecordingMeta(**self.common_meta_fields(path, fmt), ...)` 一次构造；预处理前记得坑 #3（mne 滤波要 preload=True）
-- 真实数据路径速查：羊 EDF `data/sheep/*.edf`；PhysioNet `data/dataset/files/S001/`；2a GDF `data/dataset/BCICIV_2a_gdf/A01T.gdf`；2b GDF `data/dataset/BCICIV_2b_gdf/B0101T.gdf`；ds1 mat `data/dataset/BCICIV_1_mat/BCICIV_calib_ds1a.mat`；ds4 mat `data/dataset/BCICIV_4_mat/sub1_comp.mat`
+- 读取器新格式的通用套路（M2）：`_MneRawReader` 模板基类，只声明 `_fmt`/`_read_fn`（**staticmethod 包住**，坑 #12）/`_extra`；`RecordingMeta(**self.common_meta_fields(path, fmt), ...)` 一次构造；预处理前记得坑 #3（mne 滤波要 preload=True）；neo/pynwb/Intan 用 import-guard（缺失时应用照常运行，只是该格式不可用）
+- 真实数据路径速查：羊 EDF `data/sheep/*.edf`；PhysioNet `data/dataset/files/S001/`；2a GDF `data/dataset/BCICIV_2a_gdf/A01T.gdf`；2b GDF `data/dataset/BCICIV_2b_gdf/B0101T.gdf`（M5 批处理验收用整个 2b 目录）；ds1 mat `data/dataset/BCICIV_1_mat/BCICIV_calib_ds1a.mat`；ds4 mat `data/dataset/BCICIV_4_mat/sub1_comp.mat`
 - **数据集详细信息（来源/结构/参数/事件码表/已知坑）全部在根目录 `DATA_NOTES.md`**（2026-08-18 按用户要求建立），改读取器前先读它；新数据/新实证发现要回写它

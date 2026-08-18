@@ -22,7 +22,7 @@ from .base import (
 from .context import ProcessingContext
 
 # 步骤模块 import 触发注册（顺序即 UI"添加步骤"菜单的展示顺序）
-from . import filters, referencing, resample, bads, epoching  # noqa: F401,E402
+from . import filters, referencing, resample, bads, epoching, crop  # noqa: F401,E402
 
 __all__ = [
     "STEP_REGISTRY",

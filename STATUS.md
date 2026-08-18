@@ -1,11 +1,11 @@
 # STATUS — 项目状态快照
 
-> 本文件回答"现在做到哪了"。每里程碑完成及重要提交后更新。最后更新：2026-08-18（M3 完成）
+> 本文件回答"现在做到哪了"。每里程碑完成及重要提交后更新。最后更新：2026-08-18（M4 完成）
 
 ## 当前里程碑
 
-- **M3 预处理链+预览：✅ 完成（2026-08-18）**，验证全过（pytest 72 绿 + e2e_m3 11 项：羊 50Hz 压至 0.0001、A01T 288 段，见 review.md）
-- **下一个：M4 特征+导出**（任务拆解见 TODO.md）
+- **M4 特征+导出：✅ 完成（2026-08-18）**，验证全过（pytest 122 绿 + e2e_m4 18 项：羊 8 通道×13 特征 CSV 中文表头、A01T 288 段×22 导×2 频段、HDF5/FIF 回读一致，见 review.md）
+- **下一个：M5 批处理+扩展格式+收尾**（任务拆解见 TODO.md）
 
 ## 里程碑总览
 
@@ -15,7 +15,7 @@
 | M1 工作区+EDF+信号浏览器 | ✅ 完成 | 2026-08-18 | Recording/Workspace/EdfReader(latin1)/导入/工作区树/元数据表/信号浏览器/事件条；E2E 全过 |
 | M2 读取器全覆盖 | ✅ 完成 | 2026-08-18 | 8 格式 mne 模板家族 + ds1/ds4 mat + CSV/TXT + HDF5 + GDF 官方码表中文标签；4.9GB 扫描 5.9s/1606 条 |
 | M3 预处理链+预览 | ✅ 完成 | 2026-08-18 | proc 层 6 步骤+序列化、管线面板+pydantic 自动表单、预览副本 tab+分段预览、PSD 对比、坏道标记联动 |
-| M4 特征+导出 | ⬜ 未开始 | — | 3 个特征提取器、导出、JSON sidecar |
+| M4 特征+导出 | ✅ 完成 | 2026-08-18 | crop 时间窗+3 提取器+FeatureTable 长表+特征面板（视口预填）+CSV/HDF5/FIF 导出+sidecar |
 | M5 批处理引擎+扩展格式 | ⬜ 未开始 | — | BatchEngine、neo/pynwb/Intan、设置、README |
 
 ## 环境
@@ -25,10 +25,11 @@
 
 ## 测试
 
-- `pytest`：**72 passed**（M3 新增 29：6 步骤全覆盖+管线+序列化+真实 A01T 288 段+表单往返不变量；含 3 个真实羊 latin1 + 2 个真实 GDF 测试）
+- `pytest`：**122 passed**（M4 新增 50：crop 6 + 三提取器 20 + FeatureTable/序列化 6 + 导出往返 12 + UI 表单往返/面板/视图 11；含真实羊 latin1 + 真实 GDF 测试）
 - `python scripts/e2e_m1.py`：**ALL OK（13 项）**——sheep + S001 真实导入 → 浏览 → 释放（幂等总量断言）
 - `python scripts/e2e_m2.py`：**ALL OK（17 项）**——4.9GB dataset 扫描 5.2s / 识别 1606 条 / 3 条已知结构报错 / 六格式（EDF/GDF 2a/GDF 2b/ds1/ds4/CSV）逐个打开均有真实曲线 / GDF 中文标签 / 六 tab 关闭释放
 - `python scripts/e2e_m3.py`：**ALL OK（11 项）**——羊 EDF 三步预览（带通+陷波+重参考）50Hz PSD 压制比 0.0001、坏道标记联动、A01T 分段预览 288 段、tab 释放
+- `python scripts/e2e_m4.py`：**ALL OK（18 项）**——羊 EDF 管线（带通+陷波+裁剪前 30s）+三特征 104 行（8 导×13 特征）、处理后 PSD 50Hz 峰已消（0.4 vs 7130 µV²/Hz）、「用当前显示窗口」预填 crop=视口 [125,145]s、CSV BOM+中文表头 104 行、sidecar 含全管线、A01T 逐段特征 288 段×25 导×2 频段=14400 行、事件码 769-772 逐段带入、分段 HDF5 形状一致、FIF 回读 288 段
 - `python scripts/smoke_gui.py`：SMOKE OK
 
 ## M2 关键实证结论（写代码前实测，避免踩坑）
@@ -49,7 +50,20 @@
 6. **pydantic 步骤参数默认值必须可构造**——空列表类校验（如坏道非空）不能放模型 validator（default_params() 会失败），要放 apply() 执行期
 7. **tmin=0 时 baseline (None, 0) 只有一个样本**，mne 拒绝——epoching 内自动转 (0.0, 0.0)
 
+## M4 关键实证结论（写代码前实测，避免踩坑）
+
+1. **`raw.crop` 会同步更新内部 first_samp**——裁剪后 EventTable 的绝对秒 onset 与分段步骤的绝对样本号**依然成立**（e2e 验证：crop[5,25] 后 20s 事件保留、30s 事件自然丢弃）；crop 步骤不需要改事件表
+2. **mne 读 BCI-IV 2a GDF 时 25 通道（22 EEG + 3 EOG）全部标为 `eeg` 类型**——特征层的类型白名单无法自动排除 EOG；默认取全部 25 数据通道（e2e A01T = 288×25×2 = 14400 行），要排除 EOG 需在特征参数 channels 里显式指定 22 个通道名
+3. **`scipy.signal.welch` 参数名是 `nperseg`（无下划线）**——不是 mne 风格的 `n_per_seg`
+4. **pandas `pivot_table` 默认 `dropna=True` 会把组键含 NA 的行整组丢掉**——文件级特征行（epoch_index=None）在宽表里全部消失；`to_wide()` 必须传 `dropna=False`
+5. **`mne.Epochs.crop` 窗完全在段窗外时先抛英文错**（"tmin must be less than..."）——中文预检查（无重叠→"分段数为 0"）要放在 crop 调用之前
+6. **Qt6 无 `Qt.ItemDataRole.SortRole`**——自定义排序角色用 UserRole 惯例 + `setSortRole`；且必须让数值列返回 float，否则代理按字符串排序（"10" < "2" 乱序）
+7. **e2e patch QMessageBox 必须逐模块进行**——`from PySide6.QtWidgets import QMessageBox` 是各模块的独立引用，只 patch main_window 的不影响 pipeline_panel/feature_table；漏 patch 的模块真弹模态框 → offscreen 事件循环永久阻塞（CPU 0% 假死）
+8. **通道平均 PSD 的谱峰取决于各通道幅度²**——羊数据 30µV 工频 > 2×20µV α 的合成功率，平均曲线峰在 50Hz；断言 α 主导要用纯 α 通道（单通道指定）
+
 ## 最近变更记录（新条目加在最上面）
+
+- 2026-08-18（M4 完成）：proc/crop.py（时间窗裁剪，四层决策第③层；raw 绝对时间/epochs 相对事件锚点）；features/base.py（FeatureExtractor ABC + FEATURE_REGISTRY + apply_features，与 proc 层同构）+ spectral.py 扩展（array_welch 数组版 + BandPowerFeature 频带功率 δθαβγ+自定义+相对/对数 + WelchPsdFeature PSD 曲线仅 raw）+ timedomain.py（8 统计量纯 numpy）；batch/results.py FeatureTable（长表 COLUMNS 7 列 + 中文表头映射 + to_wide dropna=False）；export/ 三模块（features_io CSV BOM 中文表头+曲线宽表分轴分组/HDF5、epochs_io HDF5 结构化+FIF、provenance .pipeline.json sidecar）；UI（pipeline_panel 特征区+视口预填+features_ready、feature_table.py 特征结果 tab 数值排序、主窗口处理菜单 4 动作）；tests +50（122 绿）；e2e_m4（18 项：羊 104 行/50Hz 峰消除、A01T 14400 行、HDF5/FIF 回读一致）。
 
 - 2026-08-18（M3 完成）：proc/（context/base/filters/referencing/resample/bads/epoching/preview——6 步骤 + STEP_REGISTRY + apply_pipeline 阶段检查 + 预览副本包装）；features/spectral.py mean_welch；UI（params_form pydantic 自动表单/pipeline_panel/psd_view/epochs_preview）；signal_browser 坏道右键标记+灰显+bads_changed 联动；主窗口处理菜单+预览 tab 接线；tests +29（72 绿）；e2e_m3（11 项：羊 50Hz 压制比 0.0001、A01T 288 段）。
 

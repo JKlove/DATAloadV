@@ -45,7 +45,7 @@
 - [x] e2e_m3 11 项 ALL OK：羊 50Hz 压制比 0.0001；A01T 分段 = 288（全 GUI 路径）
 - [x] 收尾四件事：review.md → STATUS/TODO/HANDOFF → 上下文检测 → git commit
 
-## M4 特征 + 导出（下一个里程碑）
+## M4 特征 + 导出（✅ 2026-08-18 完成，验证见 review.md）
 
 > **特征范围决策（用户 2026-08-18 确认）：四层组合**——① 全量默认（文件级摘要/批处理基线）；
 > ② epochs 逐段（每段一行长表，BCI 事件锁时分析）；③ proc 链加 `crop` 步骤实现显式任意时间窗
@@ -53,15 +53,23 @@
 > （不隐式绑定视口，保证可复现）。注意：预处理滤波类步骤仍全量做（边界效应/滤波器状态），
 > crop 是裁剪数据范围而非按视口滤波。
 
-- [ ] proc/crop.py：时间窗裁剪步骤（tmin/tmax 秒，raw+epochs 皆可；序）
-- [ ] features/base.py（FeatureExtractor ABC + registry，照 proc/base 模式）+ 三个提取器
-      （WelchPsd/BandPower 复用 mean_welch；TimeDomainStats 纯 numpy）——raw 作用于处理上下文全量，
-      epochs 逐段
-- [ ] batch/results.py FeatureTable（长表：recording/epoch_index/event_code/channel/feature/value）
-      + ui/widgets/feature_table.py
-- [ ] 特征入口"用当前显示窗口"预填按钮（读活动浏览器视口起止 → 填 crop/特征时间窗参数）
-- [ ] export/：features_io（CSV BOM / HDF5）+ epochs_io（HDF5/FIF）+ provenance JSON sidecar
-- [ ] 验证：CSV Excel 可开中文表头；HDF5 回读形状一致
+- [x] proc/crop.py：时间窗裁剪步骤（tmin/tmax 秒，raw+epochs 皆可；raw 绝对时间/epochs 相对事件锚点；
+      事件表不动——first_samp 机制保证绝对样本号仍成立，e2e 验证窗外事件自然丢弃）
+- [x] features/base.py（FeatureExtractor ABC + FEATURE_REGISTRY，与 proc/base 同构；step_id 别名
+      使 ParamsForm 零改动复用）+ 三提取器：BandPowerFeature（δθαβγ+自定义 频段:起-止、相对/对数，
+      scipy welch 数组广播一次算全部段）/ WelchPsdFeature（曲线仅 raw 阶段）/ TimeDomainStatsFeature
+      （8 统计量纯 numpy，过零带阈值滞回）
+- [x] batch/results.py FeatureTable（长表 7 列 + 中文表头映射 + to_wide——**dropna=False** 否则文件级行
+      整组丢失）+ ui/widgets/feature_table.py（UserRole 数值排序 + 三个导出按钮 + teardown）
+- [x] 特征面板：管线面板特征区（与步骤区共用参数表单、互斥选择）+「用当前显示窗口」预填按钮
+      （视口→最后一个 crop 步骤或新增；clamp 数据范围；可继续手改）
+- [x] export/：features_io（CSV UTF-8 BOM 中文表头 + 曲线宽表按频率轴分组）+ epochs_io（HDF5
+      /epochs/data|times|event_codes + attrs；FIF mne 无损）+ provenance.py（.pipeline.json：
+      步骤+特征+文件清单+库版本）
+- [x] 验证：pytest 122 绿（+50）；e2e_m4 18 项 ALL OK——CSV Excel 可开中文表头（录制,被试,段序号,
+      事件码,通道,特征,数值）；HDF5 回读形状一致；FIF 回读 288 段；A01T 逐段 14400 行
+      （288×25×2——mne 读 2a GDF 全 25 通道标 eeg，EOG 不自动排除，见 STATUS 实证结论 #2）
+- [x] 收尾四件事：review.md → STATUS/TODO/HANDOFF → 上下文检测 → git commit
 
 ## M5 批处理 + 扩展格式 + 收尾
 

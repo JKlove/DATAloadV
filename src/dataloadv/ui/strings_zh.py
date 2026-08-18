@@ -138,3 +138,27 @@ class S:
     MENU_UNMARK_BAD = "取消坏道标记"
     BAD_PEN_COLOR = "#8a8a8a"  # 坏道曲线灰显色
 
+    # ===== M4：特征提取 + 导出 =====
+    FEAT_LBL_LIST = "特征提取（管线执行后逐个计算）"
+    FEAT_BTN_ADD = "添加特征"
+    FEAT_BTN_REMOVE = "删除"
+    FEAT_BTN_VIEWPORT = "用当前显示窗口"
+    FEAT_BTN_RUN = "计算特征"
+    FEAT_EMPTY_HINT = "管线步骤（可选）执行完后，按此处的特征逐个计算。\n特征作用于处理后的数据：raw=全量摘要，epochs=逐段。"
+    FEAT_MSG_NO_FEATURES = "尚未添加任何特征提取器"
+    FEAT_MSG_NO_ACTIVE = "请先打开一个浏览 tab（特征作用于当前 tab 的数据）"
+    FEAT_MSG_RUNNING = "正在计算特征…"
+    FEAT_MSG_VIEWPORT_APPLIED = "已把当前显示窗口 [{t0:.1f}, {t1:.1f}] s 填入时间窗裁剪步骤（可再修改）"
+    FEAT_MSG_VIEWPORT_NO_DATA = "当前 tab 数据尚未加载完成，无法读取显示窗口"
+    FEAT_TAB_FMT = "特征 · {name}"
+    FEAT_EXPORT_CSV = "导出 CSV"
+    FEAT_EXPORT_H5 = "导出 HDF5"
+    FEAT_EXPORT_EPOCHS = "导出分段…"
+    FEAT_EXPORT_DONE_TITLE = "导出完成"
+    FEAT_EXPORT_DONE_FMT = "已写出 {n} 个文件：\n{files}"
+    FEAT_EXPORT_FAIL_TITLE = "导出失败"
+    FEAT_TABLE_EMPTY = "（无特征结果）"
+    FEAT_EPOCHS_FMT_HINT = "分段数据：{fmt}"
+    FEAT_EXPORT_EPOCHS_H5 = "HDF5（跨工具）"
+    FEAT_EXPORT_EPOCHS_FIF = "FIF（mne 无损）"
+
