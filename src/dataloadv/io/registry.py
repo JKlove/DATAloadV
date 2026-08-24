@@ -4,8 +4,12 @@
 插件发现，少一层魔法；新增格式仍只是"继承 BaseReader + 装饰"两步。
 
 解析顺序（open_file / scan_folder 共用）：
-1. 扩展名精确匹配（快路径，覆盖 99% 场景）
-2. 无匹配或读取失败 → sniffing.sniff_format 魔数嗅探再试一轮
+1. 魔数嗅探（sniffing.sniff_format）：嗅探出可唯一定位读取器的格式
+   （EDF/BDF/GDF/BrainVision）时**以内容为准**派发——扩展名不符记
+   warning 但不拦（2026-08-24 实证：data/sheep 系列全是 BDF 内容的
+   .edf 文件，按扩展名读 EDF 会把 24-bit 样本按 16-bit 解码，样本数
+   虚增 1.5×、数值全部错位）；
+2. 嗅探不出（无魔数格式或家族签名 "hdf5"）→ 扩展名精确匹配（快路径）
 3. 仍无 → ScanError（中文、可操作）
 """
 
@@ -17,10 +21,15 @@ from pathlib import Path
 
 from ..core.recording import LoadPolicy, Recording, RecordingMeta
 from .base import BaseReader, ScanError
+from .sniffing import sniff_format
 
 logger = logging.getLogger(__name__)
 
 READER_REGISTRY: dict[str, BaseReader] = {}
+
+# 魔数可唯一定位读取器的格式才参与"内容优先"派发；"hdf5" 是家族签名
+# （NWB/Intan rhs/通用 HDF5 同头），细分仍靠扩展名，不参与提升。
+_CONTENT_FIRST = frozenset({"edf", "bdf", "gdf", "brainvision"})
 
 # .event 边车等无读取器接管的配套文件：扫描时不报错、不进列表（skipped 计数）
 
@@ -48,13 +57,40 @@ def _readers_for(path: Path) -> list[BaseReader]:
     return [r for r in READER_REGISTRY.values() if ext in r.extensions]
 
 
+def _dispatch_readers(path: Path) -> tuple[list[BaseReader], bool]:
+    """内容优先的读取器派发（open_file 的候选来源）.
+
+    魔数嗅探能唯一定位读取器（_CONTENT_FIRST）时以内容为准——扩展名说
+    .edf 但文件头是 \xffBIOSEMI 就派 BDF 读取器，且**不让扩展名候选兜底**
+    （内容明确时按扩展名再试只会把 24-bit 样本错位解码成伪数据）。
+    嗅探不出（无魔数格式/家族签名）时回退扩展名匹配。
+
+    :returns: (候选读取器列表, 内容与扩展名是否冲突)——冲突时调用方记
+        warning，UI 日志面板可见"按什么格式读了"
+    """
+    sniffed = sniff_format(path)
+    if sniffed in _CONTENT_FIRST:
+        reader = READER_REGISTRY.get(sniffed)
+        if reader is not None:
+            mismatch = path.suffix.lower() not in reader.extensions
+            return [reader], mismatch
+    return _readers_for(path), False
+
+
 def open_file(path: str | Path, policy: LoadPolicy = LoadPolicy.HEADER_ONLY) -> Recording:
     """打开单个数据文件为 Recording.
 
-    :raises ScanError: 无读取器可接 / 所有候选都失败（附最后一次原因）
+    派发见 _dispatch_readers（魔数内容优先，扩展名兜底）。
+
+    :raises ScanError: 无读取器可接 / 候选读取失败（附最后一次原因）
     """
     path = Path(path)
-    candidates = _readers_for(path)
+    candidates, mismatch = _dispatch_readers(path)
+    if mismatch:
+        logger.warning(
+            "文件头魔数与扩展名 %s 不符，按 %s 读取（以内容为准）：%s",
+            path.suffix or "(无扩展名)", candidates[0].reader_id.upper(), path.name,
+        )
     last_err: Exception | None = None
     for reader in candidates:
         try:

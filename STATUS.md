@@ -1,11 +1,11 @@
 # STATUS — 项目状态快照
 
-> 本文件回答"现在做到哪了"。每里程碑完成及重要提交后更新。最后更新：2026-08-18（M6 浏览体验优化完成）
+> 本文件回答"现在做到哪了"。每里程碑完成及重要提交后更新。最后更新：2026-08-24（M6.5 读取派发魔数校验完成）
 
 ## 当前里程碑
 
-- **M6 浏览体验优化：✅ 完成（2026-08-18）**，用户实测 v1 三点反馈驱动：通道标签重构（重叠/截断根除）+ 幅值标尺 + 窗口导航（一屏时长/滚轮平移/翻屏按钮/键盘）+ 全局浅色主题 + 两个存量增益 bug 修复；验证全过（pytest 150 绿 + e2e_m1 扩 18 项 ALL OK + e2e_m3/smoke 回归，见 review.md）
-- **v1 全部里程碑（M0–M5）完成**——后续事项见 TODO.md「Backlog」
+- **M6.5 读取派发魔数校验：✅ 完成（2026-08-24）**，用户发现羊数据实为 BDF 驱动：open_file 改**魔数内容优先派发**（扩展名不符 warning 但以内容为准、不给扩展名候选兜底）+ mne 扩展名硬检查绕过（**file-like 对象重读公共入口**，用户指定方案；读后剥离 mne 内部残留句柄防 deepcopy 炸）+ sniff EDF 分支 off-by-one 修复 + workspace 重导入刷新 meta——**纠正了 M1 以来羊数据按 EDF 错误解码（时长虚增 1.5×、数值全错位）的数据正确性 bug**；同日核查羊标注通道：**全为纯 ASCII TAL 空注释，满足 UTF-8**（"羊需要 latin1"系 M1 误解码副产品，回退机制保留给真 latin1 文件）；验证全过（pytest 157 绿 + e2e_m1 扩 19 项 + m2–m5/smoke 回归，见 review.md）
+- **v1 全部里程碑（M0–M5）+ M6 浏览体验优化完成**——后续事项见 TODO.md「Backlog」
 
 ## 里程碑总览
 
@@ -18,6 +18,7 @@
 | M4 特征+导出 | ✅ 完成 | 2026-08-18 | crop 时间窗+3 提取器+FeatureTable 长表+特征面板（视口预填）+CSV/HDF5/FIF 导出+sidecar |
 | M5 批处理引擎+扩展格式 | ✅ 完成 | 2026-08-18 | BatchEngine(纯 Python 线程池/取消/逐文件容错)+批处理对话框(队列事件泵)+neo(Blackrock/OE/Intan)+NWB 读取器+设置+README；e2e_m5 19 项 |
 | M6 浏览体验优化 | ✅ 完成 | 2026-08-18 | 通道标签内嵌重构+幅值标尺+窗口导航(时长/滚轮平移/翻屏/键盘)+浅色主题+增益双 bug 修复；pytest 150 / e2e_m1 18 项 |
+| M6.5 读取派发魔数校验 | ✅ 完成 | 2026-08-24 | 魔数内容优先派发+mne 扩展名检查绕过（file-like）+sniff off-by-one+重导入刷新；纠正羊数据 BDF 错解码（1.5× 时长/数值错位）；标注通道核查全 ASCII；pytest 157 / e2e_m1 19 项 |
 
 ## 环境
 
@@ -26,8 +27,8 @@
 
 ## 测试
 
-- `pytest`：**150 passed**（M5 时 137 + M6 新增 13：tests/test_ui_browser_m6.py——通道标签/增益语义/幅值标尺/窗口导航/滚轮平移/_nice_number；含真实羊 latin1 + 真实 GDF 测试）
-- `python scripts/e2e_m1.py`：**ALL OK（18 项）**——sheep + S001 真实导入 → 浏览 → 释放（幂等总量断言）；M6 追加 5 项：通道标签全名内嵌/一屏时长 5s/翻屏 0.9 步进/最末屏/幅值标尺 µV
+- `pytest`：**157 passed**（M6 时 150 + M6.5 净增 7：魔数表/反向误标/内容优先不兜底/latin1 回归/重导入刷新/组合回退/file-like raw 可 copy；羊测试重写为 BDF 误标断言——format=BDF+真实时长 180/182/222 s；含真实 GDF 测试）
+- `python scripts/e2e_m1.py`：**ALL OK（19 项）**——sheep + S001 真实导入 → 浏览 → 释放（幂等总量断言）；M6 追加 5 项 + M6.5 追加 1 项（羊数据按 BDF 解码：魔数优先于扩展名）
 - `python scripts/e2e_m2.py`：**ALL OK（17 项）**——4.9GB dataset 扫描 5.2s / 识别 1606 条 / 3 条已知结构报错 / 六格式（EDF/GDF 2a/GDF 2b/ds1/ds4/CSV）逐个打开均有真实曲线 / GDF 中文标签 / 六 tab 关闭释放
 - `python scripts/e2e_m3.py`：**ALL OK（11 项）**——羊 EDF 三步预览（带通+陷波+重参考）50Hz PSD 压制比 0.0001、坏道标记联动、A01T 分段预览 288 段、tab 释放
 - `python scripts/e2e_m4.py`：**ALL OK（18 项）**——羊 EDF 管线（带通+陷波+裁剪前 30s）+三特征 104 行（8 导×13 特征）、处理后 PSD 50Hz 峰已消（0.4 vs 7130 µV²/Hz）、「用当前显示窗口」预填 crop=视口 [125,145]s、CSV BOM+中文表头 104 行、sidecar 含全管线、A01T 逐段特征 288 段×25 导×2 频段=14400 行、事件码 769-772 逐段带入、分段 HDF5 形状一致、FIF 回读 288 段
@@ -81,7 +82,19 @@
 4. **浏览器增益两个存量 bug（M1 起）**：增益只乘通道间距不乘波形（`out_v + idx*spacing*gain`）；`_gain` 存滑杆刻度值却初始化 1.0 → 首帧隐形 10^0.1≈1.26× 增益（新测试断言 ×10 实得 7.94 顺藤摸出）
 5. **PSD 首色 #e8e8e8 在白底完全不可见**——深底换白底不只是背景一行，浅色系配色（波形 #7fbfff、事件黄 #e0e05c、图例 #cccccc、batch 状态色）全部要跟着换成白底可辨浓度
 
+## M6.5 关键实证结论（写代码前实测，避免踩坑）
+
+1. **sheep 系列 6 个 .edf 内容全是 BDF**（`\xffBIOSEMI` 头）——按 EDF 读把 24-bit 样本按 16-bit 解码：**样本数虚增 1.5×（180s→270s）、数值全部错位**；data/ 全量普查仅此 6 处不符，其余数据集扩展名与内容一致
+2. **mne 公共入口（read_raw_edf/bdf/gdf）的 `_check_args` 按扩展名硬拒绝**（"Only BDF files are supported, got edf"）——mne 内部同样信扩展名；但 **file-like 对象完全绕过该检查**（仅要求 preload=True；read_raw_bdf 自 MNE 1.10 官方支持，edf/gdf 同路径，1.12 实测）——扩展名不符时传文件对象重读公共入口（不直接实例化 Raw* 构造器，用户指定）。file-like 读后须 `_detach_file_handles` 剥离 mne 内部两处句柄残留（`_raw_extras[*]["blob"]` + `_init_kwargs["input_fname"]`），否则 raw.copy()/deepcopy 抛 cannot pickle（e2e_m3 预览链路实测）
+3. **sniff EDF 分支曾有 off-by-one**（M2 潜伏）：版本域是字节 0–7 共 8 字节，旧代码查 `head[1:9]` 把患者域首字节卷进来——真 EDF（患者域不以空格/B 开头）嗅探漏判返回 None；此前无人察觉因 .edf 走扩展名快路径从不嗅探
+4. **内容嗅探必须"唯一定位"才可参与派发**：hdf5 签名是家族级（NWB/Intan rhs/通用 HDF5 同头），盲目提升通用读取器会抢 NWB 的活——只对 EDF/BDF/GDF/BrainVision 做内容优先
+5. **魔数明确时不给扩展名候选兜底**：BDF 内容让 EDF 读取器"再试一次"只会静默产出错位数据——宁可读失败报错，不可错读成功
+6. **羊 6 个 BDF 的标注通道（BDF Annotations）全为纯 ASCII**（2026-08-24 逐字节核查）：内容是标准 TAL `+N\x14\x14\x00`——每秒一条**空文本**注释，满足 UTF-8；utf8 默认编码读取零报错、零事件（空注释无意义事件是数据本身属性）。"羊需要 latin1"确系 M1 按 EDF 误解码 BDF 的副产品，机制保留给真 latin1 老文件（合成回归测试锁定）
+7. **EDF/BDF 头部手工解析布局**：固定头 256B 内记录数@236、每记录秒@244、ns@252；信号子头**字段主序**（所有 label ns×16B 连续，samples 区在 `256+ns*216`），数据区起点=headerbytes 字段（自校验）——不是"每通道 256B 块"（两次踩坑后实证，HANDOFF 坑 #44）
+
 ## 最近变更记录（新条目加在最上面）
+
+- 2026-08-24（M6.5 完成，用户发现羊数据实为 BDF 驱动）：io/registry.py 新 `_dispatch_readers` **魔数内容优先派发**（EDF/BDF/GDF/BrainVision 嗅探定位读取器，扩展名不符记 warning、不兜底）+ io/mne_readers.py 通用 `_read_mne_robust`（mne `_check_args` 扩展名硬拒绝时 **file-like 对象重读公共入口**绕过——用户指定方案，不直接实例化 Raw*；读后 `_detach_file_handles` 剥离 mne 内部两处句柄残留防 deepcopy 炸；latin1 回退保留；模板基类加 `_robust` 声明）+ io/sniffing.py 修 EDF 分支 off-by-one（`head[:8]` 严格 8 字节版本域；删无引用的 `is_edf`）+ core/workspace.py `add_metas` 重复导入刷新 meta（rec_id 稳定、内容以新扫描为准）；**纠正 M1 以来羊数据按 EDF 错误解码的数据正确性 bug**（真实时长：sheep 180/182/222s、sheep2 1000/1075s、sheep3 301s）；**同日两项用户问题闭环**：①羊标注通道逐字节核查——全纯 ASCII TAL 空注释、满足 UTF-8（"羊需要 latin1"为误解码副产品，无需改码）；②读取方式改 file-like+read_raw_bdf（含 deepcopy 残留句柄坑修复，e2e_m3 预览链路回归验证）；tests 重写羊断言+净增 6（157 绿）；e2e_m1 +1 项（19 项 ALL OK）+ m2–m5/smoke 回归；DATA_NOTES 羊三目录重写 + MANUAL/README 同步。
 
 - 2026-08-18（M6 完成，用户实测反馈驱动）：signal_browser.py 重构——`_PanViewBox`（滚轮=平移/Ctrl+滚轮=锚点缩放、y 锁定）、通道名 TextItem 行内嵌（删 y 轴 setTicks）、幅值标尺（60px 固定像素 + `_nice_number` 1/2/5×10^k 换算 µV）、窗口导航（|◀/◀/一屏时长 QComboBox/▶/▶|、`_set_x_range` 统一 clamp、翻屏 0.9 屏、键盘 ←→Home End ↑↓、StrongFocus+焦点代理）；**修复增益双 bug**（乘间距不乘波形→乘波形不乘间距；`_gain` 初值 1.0→0.0）；浅色主题（main_window `background="w"` + S.SIGNAL_PEN_COLOR #1f77b4 / S.PLOT_TEXT_COLOR #333333 / PSD 色板 #d62728,#1f77b4,#2ca02c,#9467bd / 事件黄→#b8860b / batch 状态色加深）；tests/test_ui_browser_m6.py +13（150 绿）；e2e_m1 +5 项（18 项 ALL OK）+ e2e_m3/smoke 回归；MANUAL 交互表重写。
 

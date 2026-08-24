@@ -1,14 +1,15 @@
 # DATA_NOTES — 本地数据集说明
 
 > `data/` 目录全部数据的信息说明：来源、结构、关键参数、事件编码、已知坑、以及本项目（DataloadV）对它的读取行为。
-> 该目录**全程只读**。本文档随新数据/新实证发现更新。最后更新：2026-08-18（M2 完成时全部核实）
+> 该目录**全程只读**。本文档随新数据/新实证发现更新。最后更新：2026-08-24（羊系列实为 BDF 全部核实 + sheep3 新增）
 
 ## 目录总览
 
 | 目录 | 内容 | 规模 | 状态 |
 |---|---|---|---|
-| `data/sheep/` | 羊在体实验 EDF（3 种姿态） | 3 文件 | ✅ M1 起支持 |
-| `data/sheep2/` | 羊实验 EDF 第二批 | 2 文件 | ✅（同为 EDF 路径） |
+| `data/sheep/` | 羊在体实验（**BDF 内容的 .edf**，3 种姿态） | 3 文件 | ✅ M6.5 起按 BDF 正确读取 |
+| `data/sheep2/` | 羊实验第二批（**BDF 内容的 .edf**） | 2 文件 | ✅（同上） |
+| `data/sheep3/` | 羊实验第三批·术中（**BDF 内容的 .edf**） | 1 文件 | ✅ 2026-08-24 新增 |
 | `data/dataset/files/` | PhysioNet eegmmidb（运动想象） | 109 被试 × 14 run，3060 文件，3.4GB | ✅ M1 起支持 |
 | `data/dataset/BCICIV_2a_gdf/` | BCI Competition IV 2a | 9 被试 × (T/E)，18 文件，575MB | ✅ M2 起支持 |
 | `data/dataset/BCICIV_2b_gdf/` | BCI Competition IV 2b | 45 文件，271MB | ✅ M2 起支持 |
@@ -19,14 +20,37 @@
 
 ---
 
-## 1. `sheep/` — 羊在体电生理实验
+## 1. `sheep/` + `sheep2/` + `sheep3/` — 羊在体电生理实验（**BDF 内容的 .edf**）
 
-- **文件**：`data(DGDJ-卧-接地-2)-HKY.edf`、`data(DGDJ-站-接地-4)-HKY.edf`、`data(DGDJ-走动-接地-3)-HKY.edf`
-- **命名含义**：DGDJ = 电极记号；`卧/站/走动` = 姿态；`接地` = 接地条件；数字 = 实验序号；HKY = 实验者标记
-- **参数**（头解析实测）：8 导 / 250 Hz / 时长约 270 s（各文件不同）/ 无事件标注
-- **已知坑**：文件名与内嵌注释含**非 UTF-8 字节（latin1 区）**——mne 默认编码直接 UnicodeDecodeError。
-  本项目 `EdfReader` 内置 latin1 自动回退（解法源自 pipelineMotor `formats.py` 的 EdfLatin1Adapter）
-- **sheep2/**：`data2.edf`、`data3.edf`（8 导 / 250 Hz / 1500 s / 无事件），同走 EDF 读取路径
+- **文件与真实时长**（BDF 正确解码实测，2026-08-24）：
+
+| 文件 | 通道 | 采样率 | 时长 | 事件 |
+|---|---|---|---|---|
+| `sheep/data(DGDJ-卧-接地-2)-HKY.edf` | 8 | 250 Hz | 180 s | 无 |
+| `sheep/data(DGDJ-站-接地-4)-HKY.edf` | 8 | 250 Hz | 182 s | 无 |
+| `sheep/data(DGDJ-走动-接地-3)-HKY.edf` | 8 | 250 Hz | 222 s | 无 |
+| `sheep2/data2.edf` | 8 | 250 Hz | 1000 s | 无 |
+| `sheep2/data3.edf` | 8 | 250 Hz | 1075 s | 无 |
+| `sheep3/data(ZJDJ-术中-羊20260713).edf` | 8 | 250 Hz | 301 s | 无 |
+
+- **命名含义**：DGDJ = 电极记号；`卧/站/走动` = 姿态；`接地` = 接地条件；数字 = 实验序号；HKY = 实验者标记；
+  ZJDJ（sheep3）= 另一电极记号，`术中` = 术中记录，羊20260713 = 日期
+- **重大实锤（2026-08-24，用户发现）**：6 个 `.edf` 文件**内容全是 BDF**（文件头前 8 字节
+  `\xffBIOSEMI`，BioSemi 24-bit 格式）——扩展名是错的。此前 M1–M6 按 EDF 路径读取，把 24-bit
+  样本按 16-bit 解码：**样本数虚增 1.5×（如 180 s 读成 270 s）、全部数值错位**，当时的波形/
+  PSD/滤波/特征都是伪数据。M6.5 起 `registry.open_file` 按魔数"内容优先"派发（`\xffBIOSEMI`
+  → BdfReader），warning 提示扩展名不符
+- **latin1 坑的再认识**：此前记录的"非 UTF-8 注释需 latin1 回退"发生在**错误的 EDF 解码路径**上；
+  按 BDF 正确读取后羊文件不再触发编码错误。latin1 回退机制仍保留在 `_read_mne_robust`
+  （对真 EDF 的非 UTF-8 注释仍有意义）
+- **标注通道核查定论（2026-08-24，用户提问驱动逐字节验证）**：6 个文件的 "BDF Annotations"
+  通道（BDF+C 格式第 9 个信号）**内容全为纯 ASCII**——标准 TAL 时间戳 `+0\x14\x14\x00`、
+  `+1\x14\x14\x00`…（每秒一条**空文本**注释，去零后 20K–122K 字节，高位字节集为空）。
+  满足 UTF-8、默认 utf8 编码零报错；**零事件是数据本身的属性**（空注释无语义），不是读取 bug。
+  "羊需要 latin1"确系误解码副产品（错位字节被当注释文本做 UTF-8 校验才报 invalid byte）
+- **文件头速查（手工解析实证）**：固定头 256B——记录数@236、每记录秒@244、ns@252；
+  ns=9（8×CH + BDF Annotations）；信号子头**字段主序**（label 每通道 16B 连续排、
+  samples 区在 `256+ns*216`），数据区起点 = headerbytes 字段值（如 2560，可自校验）
 
 ## 2. `dataset/files/` — PhysioNet eegmmidb（EEG Motor Movement/Imagery）
 
@@ -95,7 +119,8 @@
 
 | 数据 | 读取器（reader_id） | 备注 |
 |---|---|---|
-| sheep / sheep2 / PhysioNet | `edf` | latin1 回退仅羊文件需要，其余同路径 |
+| sheep / sheep2 / sheep3 | `bdf` | **.edf 扩展名实为 BDF**——魔数内容优先派发（M6.5） |
+| PhysioNet | `edf` | 标准 EDF，扩展名与内容一致 |
 | 2a / 2b | `gdf` | 事件自动套用上表中文标签 |
 | ds1 calib/eval | `bciciv_ds1` | eval 无事件（notes 说明） |
 | ds4 | `bciciv_ds4` | 头解析纯 whosmat（<1s），加载跳过 test_data |

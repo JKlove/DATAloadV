@@ -72,10 +72,17 @@ def main() -> int:
         try:
             sheep_views = [w for w in win._browser_tabs.values() if "卧" in w.rec.meta.filename]
             ok = bool(sheep_views)
-            check("羊 EDF 浏览 tab 建立（latin1）", ok)
+            check("羊 EDF（实为 BDF）浏览 tab 建立", ok)
             if ok:
                 v = sheep_views[0]
                 check("羊数据已加载", v._loaded_once)
+                # 2026-08-24：sheep 系列 .edf 实为 BDF（\xffBIOSEMI 头），按魔数
+                # 内容优先派发——格式与时长必须是 BDF 正确解码值（EDF 错读会 270s）
+                check(
+                    "羊数据按 BDF 解码（魔数优先于扩展名）",
+                    v.rec.meta.format == "BDF" and abs(v.rec.meta.duration_s - 180.0) < 0.5,
+                    f"(format={v.rec.meta.format}, dur={v.rec.meta.duration_s})",
+                )
                 # 强制同步刷新一帧并检查曲线拿到真实数据
                 v._refresh_data()
                 enabled = [c for c in v._channels if c["enabled"]]

@@ -366,3 +366,58 @@
 - data/ 只读 ✅（测试用 tmp_path FIF 往返；e2e 沿用真实数据只读）
 
 **收尾四件事**：STATUS（M6 完成态/150 绿/e2e_m1 18 项/实证结论/变更记录）→ TODO（M6 小节全勾 + backlog 两项）→ HANDOFF（坑 #38/#39、接手要点）→ MANUAL（§2.2/§2.3/§3.1/§3.5/§3.7/§5.3 白底与交互表重写）→ README（浏览行/验证口径）→ review.md 本节 → 上下文检测 → git commit
+
+---
+
+## M6.5 — 读取派发魔数校验（2026-08-24 完成，用户发现羊数据实为 BDF）
+
+### 背景与根因
+
+用户更新 sheep3 数据时发现：`data/sheep`、`sheep2`、`sheep3` 共 6 个 `.edf` 文件**内容全是
+BDF**（文件头 `\xffBIOSEMI`，BioSemi 24-bit）。此前 open_file 只按扩展名派发 → EdfReader →
+`read_raw_edf` 把 24-bit 样本按 16-bit 解码：
+
+- **样本数虚增 1.5×**（卧文件 180 s 读成 270 s——45000×3 字节按 2 字节切 = 67500"样本"）
+- **全部数值错位**（字节流错切片，±4096 µV 的伪范围）——M1–M6 所有羊数据的波形/PSD/滤波/特征
+  均为伪数据
+- 诊断途中实锤 `read_raw_bdf` 也打不开这些文件：mne 公共入口 `_check_args` **按扩展名硬拒绝**
+  （"Only BDF files are supported, got edf"）——mne 内部同样信扩展名
+- data/ 全量魔数普查：仅这 6 处内容/扩展名不符，其余数据集全部一致
+
+### 改动（6 文件 + 治理）
+
+| 文件 | 改动 |
+|---|---|
+| `io/sniffing.py` | **修 EDF 分支 off-by-one**：版本域是字节 0–7 共 8 字节，旧代码查 `head[1:9]` 把患者域首字节卷进来——真 EDF（患者域不以空格/B 开头）嗅探漏判返回 None（反向冒烟时暴露：真 EDF 改 .bdf 后缀仍被 BdfReader 错读）。改为严格 `head[:8] == b"0"+7空格`；删除无引用且语义错误的 `is_edf`（".edf 直接信扩展名"正是本 bug 的假设） |
+| `io/registry.py` | 新 `_dispatch_readers`：**魔数内容优先派发**——嗅探出 EDF/BDF/GDF/BrainVision（可唯一定位读取器）时以内容为准，扩展名不符记 warning；**且不让扩展名候选兜底**（内容明确时按扩展名再试只会错位解码）。"hdf5" 是家族签名（NWB/Intan/通用同头）不参与，细分仍靠扩展名 |
+| `io/mne_readers.py` | `_read_edf_robust` → 通用 `_read_mne_robust`：①扩展名不符被 `_check_args` 拒时**file-like 对象重读同一公共入口**绕过（用户指定方案：read_raw_bdf 自 MNE 1.10 官方支持 file-like、edf/gdf 同路径实测可用，不直接实例化 Raw* 构造器；file-like 强制 preload=True，仅误标文件承担整载）；②latin1 回退保留（file-like 路径上撞 invalid byte 时 seek(0) 回卷重读）。配套 `_detach_file_handles`：读后剥离 mne 内部两处句柄残留（`_raw_extras[*]["blob"]` + `_init_kwargs["input_fname"]`，init_kwargs 回填真实路径）——否则 `raw.copy()`/deepcopy 抛 "cannot pickle '_io.BufferedReader'"（e2e_m3 预览链路第一个撞上，pytest 156 绿没拦住——单测没覆盖误标文件 raw 的 copy 路径，已补回归测试）。模板基类加 `_robust` 声明，EDF/BDF/GDF 三读取器统一走它 |
+| `core/workspace.py` | `add_metas` 重复导入时**保留 rec_id、用新扫描结果刷新内容**（此前保留旧条目——重导入无法修正旧 meta；rec_id 绑定文件而非某次扫描） |
+| `tests/test_readers_edf.py` | 羊测试重写为 `test_sheep_mislabeled_bdf`（format=BDF + 三文件真实时长 180/182/222 s）；新增魔数表/反向误标（真 EDF 存 .bdf）/内容优先不兜底/latin1 回归/**组合回退（错扩展名+非 UTF-8 注释叠加）**/**file-like raw 可 copy（deepcopy 回归）**六测 |
+| `tests/test_workspace.py` | 新增重导入刷新测试（rec_id 稳定 + 内容更新） |
+| `scripts/e2e_m1.py` | 羊段加"按 BDF 解码"断言（format=BDF、dur=180）→ 19 项 |
+
+### 用户追加两问（同日闭环）
+
+1. **羊标注通道是否非 UTF-8**：逐字节核查 6 个羊 BDF 的 "BDF Annotations" 通道——**全为纯 ASCII**（高位字节集为空），内容是标准 TAL 时间戳 `+0/+1/+2…\x14\x14\x00`（每秒一条**空文本**注释）；满足 UTF-8，默认 utf8 编码零报错。**"羊需要 latin1"确系 M1 按 EDF 误解码 BDF 的副产品**（错位字节被当注释文本），无需改码——latin1 回退机制保留给真 latin1 老文件（合成回归测试锁定）。零事件（e2e_m2 断言）是空注释的数据属性，非读取 bug。
+   核查顺带实证 EDF/BDF 头布局（三次偏移猜错后）：记录数@236/每记录秒@244/ns@252，信号子头**字段主序**（samples 区在 `256+ns*216`），非每通道 256B 块——HANDOFF 坑 #44。
+2. **读取方式改 file-like + read_raw_bdf**（用户建议）：如上表——弃 Raw* 直接构造，改 file-like 走公共入口；代价 preload=True 仅误标文件承担；连带发现并修复 deepcopy 残留句柄坑。
+
+### 验证
+
+| 项 | 结果 |
+|---|---|
+| pytest | ✅ 157 绿（150 + 净增 7：魔数表/反向误标/不兜底/latin1 回归/重导入刷新/组合回退/file-like raw 可 copy；羊参数化重写不增减） |
+| e2e_m1 | ✅ 19 项 ALL OK（新断言 format=BDF, dur=180.0） |
+| e2e_m2/m3/m4/m5 + smoke | ✅ 全部 ALL OK / SMOKE OK（羊文件作为预览/管线输入自动走 BDF 路径；m3 曾因 deepcopy 坑挂死，修复后 ALL OK——288 分段/50Hz 压制 0.0137 全对） |
+| 双向误标 | ✅ 假 EDF→BDF 读取正确；真 EDF 改 .bdf 后缀→EDF 读取正确（file-like 绕过路径） |
+| 标注通道编码 | ✅ 6 羊文件标注通道 UTF-8 判定全过（纯 ASCII）；utf8 默认编码读取零报错零事件 |
+| PhysioNet 回归 | ✅ 64 导/30 事件不变（标准 EDF 扩展名与内容一致，不受影响） |
+
+### 架构规则自查
+
+- 计算层六包无 Qt import ✅（改动全在 io/、core/workspace、tests/、scripts/）
+- UI 只编排不计算 ✅（未动 UI 层）
+- 跨线程只传纯 Python/mne 对象 ✅（未新增线程路径）
+- data/ 只读 ✅（对照实验复制到 /tmp 改名，原始 6 文件未动一字节）
+
+**收尾四件事**：STATUS（157 绿/e2e_m1 19 项/实证结论/变更记录）→ TODO（M6.5 小节全勾）→ HANDOFF（坑 #40–#44、pytest 157）→ DATA_NOTES（羊三目录 BDF 实锤 + 真实时长表 + latin1 坑再认识 + 标注通道核查结论）→ MANUAL/README → review.md 本节 → 上下文检测 → git commit（用户指令后）

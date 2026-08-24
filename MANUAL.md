@@ -5,8 +5,8 @@
 > [STATUS.md](STATUS.md)，待办见 [TODO.md](TODO.md)，接手细节与坑清单见 [HANDOFF.md](HANDOFF.md)，
 > 验证记录见 [review.md](review.md)，数据集详情见 [DATA_NOTES.md](DATA_NOTES.md)。
 >
-> **版本基线**：v1（里程碑 M0–M5 全部完成）+ M6 浏览体验优化（2026-08-18）；
-> 验证口径：pytest 150 绿 + e2e_m1–m5 共 83 项 + GUI 冒烟全过。
+> **版本基线**：v1（里程碑 M0–M5 全部完成）+ M6 浏览体验优化（2026-08-18）+ M6.5 读取派发魔数校验（2026-08-24）；
+> 验证口径：pytest 157 绿 + e2e_m1–m5 共 84 项 + GUI 冒烟全过。
 
 ---
 
@@ -45,8 +45,8 @@ DataloadV 是面向**介入式 BCI 研究**的电生理数据桌面工作台（m
 
 | 格式 | 扩展名 | 读取途径 | 备注 |
 |---|---|---|---|
-| EDF/EDF+ | `.edf` | mne | 非 UTF-8 文件自动 latin1 回退（羊数据实证） |
-| BDF | `.bdf` | mne | 模板路径，无真实数据实测（backlog） |
+| EDF/EDF+ | `.edf` | mne | 非 UTF-8 文件自动 latin1 回退 |
+| BDF | `.bdf` | mne | **真实数据已实测**：本地羊数据 6 个 .edf 实为 BDF（魔数 `\xffBIOSEMI`），M6.5 起按内容正确读取 |
 | GDF | `.gdf` | mne | BCI-IV 2a/2b；事件码→中文标签（官方 PDF 核实 16 码） |
 | BrainVision | `.vhdr` | mne | 入口取头文件，数据文件随行 |
 | FIF | `.fif` | mne | mne 原生，合成往返有测试 |
@@ -118,8 +118,10 @@ src/dataloadv/
   `LoadPolicy.HEADER_ONLY / PRELOAD`：浏览 tab 打开时只读头（毫秒级），首帧数据后台整载；
   大文件按窗口读。**LoadedRawCache** 全局 LRU（默认预算 1.5GB，可在设置改）在 tab 关闭后
   逐出释放内存；批处理并发处理时 pin 防互逐。
-- **读取器注册表**：`@register_reader` 装饰器自注册；扩展名 → 魔数嗅探两级解析；
-  `scan_folder` 单文件失败进错误表**绝不中断整批**（4.9GB/1606 条实测 6s）。
+- **读取器注册表**：`@register_reader` 装饰器自注册；**魔数内容优先 → 扩展名**两级解析
+  （EDF/BDF/GDF/BrainVision 嗅探到内容与扩展名不符时以内容为准并记 warning——羊数据
+  6 个 .edf 实为 BDF 即此路径，按扩展名读会把 24-bit 样本错位解码）；`scan_folder`
+  单文件失败进错误表**绝不中断整批**（4.9GB/1606 条实测 6s）。
 - **步骤/特征同构注册表**：每个处理步骤 = pydantic 参数模型 + `apply(ctx)->ctx`；每个特征 =
   参数模型 + `extract(ctx)`。注册后参数表单**零 UI 代码**自动生成（`params_form.py`）。
   `to_dict/from_dict` 序列化保证「面板上组好的链」＝「批处理跑的链」＝「sidecar 记的链」。
@@ -191,7 +193,7 @@ dataloadv            # 或 python -m dataloadv
 
 | 命令 | 预期 |
 |---|---|
-| `pytest` | 150 passed（含真实数据项） |
+| `pytest` | 157 passed（含真实数据项） |
 | `python scripts/smoke_gui.py` | 末行 SMOKE OK（真窗口自检后自动退出） |
 | `python scripts/e2e_m1.py` … `e2e_m5.py` | 各打印 ALL OK（真实数据端到端，幂等可反复跑；m1 含 M6 浏览交互 18 项） |
 
@@ -397,7 +399,7 @@ GDF 事件码自动转中文标签（如 769 → 左手运动想象 cue）。
 ### 4.3 测试体系
 
 ```bash
-pytest                    # 全部 150 项
+pytest                    # 全部 157 项
 pytest -m real            # 仅真实数据冒烟（data/sheep 缺失自动跳过）
 pytest tests/test_proc_m3.py -k "epoching"   # 单文件/单关键字
 QT_QPA_PLATFORM=offscreen python scripts/e2e_m5.py   # 无头跑端到端
@@ -406,7 +408,7 @@ QT_QPA_PLATFORM=offscreen python scripts/e2e_m5.py   # 无头跑端到端
 - **e2e 幂等原理**：脚本开头切到一次性工作区、结束切回原工作区并关全部 tab；断言用总量
   而非新增数——可反复跑不污染状态。
 - 单测分层：synthetic_helpers 合成 8 导/250Hz 数据覆盖各模块；`real` 标记项用
-  data/sheep 真实 latin1 EDF 与真实 GDF；NWB 用 pynwb 真实写读往返；neo 系用桩 rawio
+  data/sheep 真实 BDF（.edf 误标，锁魔数派发）与真实 GDF；NWB 用 pynwb 真实写读往返；neo 系用桩 rawio
   验证模板逻辑（无真实样例文件的诚实边界，记 backlog）。
 
 ### 4.4 性能与内存要点
@@ -460,15 +462,16 @@ UI 新控件不直接计算；跨线程只传纯 Python/mne 对象。
 
 ### 5.2 真实数据路径速查
 
-羊 EDF `data/sheep/*.edf`；PhysioNet `data/dataset/files/S001/`；2a GDF
+羊数据（BDF 内容的 .edf）`data/sheep|sheep2|sheep3/*.edf`；PhysioNet `data/dataset/files/S001/`；2a GDF
 `data/dataset/BCICIV_2a_gdf/A01T.gdf`；2b GDF 目录 `data/dataset/BCICIV_2b_gdf/`（45 文件，
 批处理验收集）；ds1 `data/dataset/BCICIV_1_mat/BCICIV_calib_ds1a.mat`；ds4
 `data/dataset/BCICIV_4_mat/sub1_comp.mat`。
 
 ### 5.3 已知边界（v1 收官时点）
 
-- BDF/CNT/EGI/BrainVision/EEGLAB、Blackrock/Open Ephys/Intan/NWB 均无真实样例实测
-  （模板+往返/桩测试保证，取得文件后 `open_file()` 冒烟即可，风险低）；
+- BDF 已有真实数据实测（羊 6 文件，M6.5）；CNT/EGI/BrainVision/EEGLAB、Blackrock/
+  Open Ephys/Intan/NWB 均无真实样例实测（模板+往返/桩测试保证，取得文件后
+  `open_file()` 冒烟即可，风险低）；
 - ds3 分段 MEG 明确拒绝；.edf.event 边车不需要（内嵌注释已完整）；
 - 除浏览 tab 导航键（§3.5，M6 加入）外无全局快捷键、无通道拖拽排序、无导出对话框（导出按钮内嵌在结果 tab）——均记 backlog 见 TODO.md；
 - epochs 分段预览的通道名仍走 y 轴刻度（静态图、通道少，未触发重叠问题；记 backlog）。

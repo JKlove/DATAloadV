@@ -78,14 +78,21 @@ class Workspace:
     def add_metas(self, source_path: str, metas: list[RecordingMeta]) -> tuple[int, int]:
         """把一批扫描结果并入指定来源（按 path 去重）.
 
-        :returns: (新增条数, 重复跳过条数)——UI 导入完成提示用
+        重复导入同一文件时**保留 rec_id、用新扫描结果刷新内容**——文件可能
+        被替换过，或读取器修正过判定（2026-08-24：sheep 系列 .edf 实为
+        BDF，格式/时长全变；重导入一次旧条目即修正，不必先删再加）。
+
+        :returns: (新增条数, 重复条数)——UI 导入完成提示用
         """
         src = self.sources.setdefault(source_path, ImportSource(source_path))
         added = dup = 0
         for meta in metas:
             meta.import_source = source_path
-            if meta.path in src.recordings:
-                dup += 1  # 同一文件已在此来源下：保留原条目（rec_id 稳定）
+            old = src.recordings.get(meta.path)
+            if old is not None:
+                meta.rec_id = old.rec_id  # rec_id 绑定文件而非某次扫描
+                src.recordings[meta.path] = meta
+                dup += 1
                 continue
             src.recordings[meta.path] = meta
             added += 1

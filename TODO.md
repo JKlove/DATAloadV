@@ -115,11 +115,37 @@
       e2e_m3 + smoke 回归全绿
 - [x] 收尾四件事：STATUS/TODO/HANDOFF/MANUAL/README → review.md → 上下文检测 → git commit
 
+## M6.5 读取派发魔数校验（✅ 2026-08-24 完成，用户发现羊数据实为 BDF 驱动，验证见 review.md）
+
+> sheep/sheep2/sheep3 共 6 个 .edf 内容全是 BDF（\xffBIOSEMI 头）——此前按 EDF 解码
+> 24-bit 样本读成 16-bit，**时长虚增 1.5×、数值全部错位**（数据正确性 bug）。
+
+- [x] 核实：6 文件魔数普查 + 对照解码（45000→67500 样本实锤 1.5×）；data/ 其余数据集无不符
+- [x] io/registry.py `_dispatch_readers`：魔数内容优先派发（EDF/BDF/GDF/BrainVision 唯一定位
+      时以内容为准，扩展名不符 warning、**不给扩展名候选兜底**；hdf5 家族签名不参与）
+- [x] io/mne_readers.py：`_read_mne_robust` 通用助手（mne `_check_args` 扩展名硬拒绝 →
+      **file-like 对象重读公共入口**绕过——用户指定方案（read_raw_bdf 自 MNE 1.10 支持
+      file-like，edf/gdf 同路径），不直接实例化 Raw* 构造器；读后 `_detach_file_handles`
+      剥离 mne 内部两处句柄残留（否则 raw.copy()/deepcopy 炸，e2e_m3 实测）；latin1 回退保留）；
+      模板基类 `_robust` 声明
+- [x] io/sniffing.py：修 EDF 分支 off-by-one（版本域 = 字节 0–7，旧查 head[1:9] 漏判真 EDF）；
+      删无引用且语义错误的 `is_edf`
+- [x] core/workspace.py：`add_metas` 重复导入刷新 meta（rec_id 稳定）——用户重导入羊文件夹
+      一次即修正旧条目（EDF/270s → BDF/真实时长）
+- [x] 用户问题①核查：6 个羊 BDF 标注通道逐字节验证——全为纯 ASCII TAL 空注释
+      （`+N\x14\x14\x00`），满足 UTF-8、零事件是数据属性——"羊需要 latin1"系 M1 误解码
+      副产品，无需改码（latin1 机制保留给真 latin1 文件）
+- [x] 验证：pytest 157 绿（羊断言重写 format=BDF+真实时长；+魔数表/反向误标/不兜底/latin1 回归/
+      重导入刷新/组合回退/file-like raw 可 copy）；e2e_m1 19 项 ALL OK（+羊按 BDF 解码断言）；
+      e2e_m2–m5 + smoke 回归全绿
+- [x] 收尾四件事：DATA_NOTES（羊三目录 BDF 实锤+真实时长表）→ STATUS/TODO/HANDOFF →
+      review.md → 上下文检测 → git commit（用户指令后）
+
 ## 已知问题 / Backlog（v1 收官后暂缓项）
 
 - .edf.event WFDB 边车解析：M1 实测 PhysioNet EDF 内嵌注释已完整，边车为冗余副本，暂不需要；若未来遇到只有边车、无内嵌注释的数据集再补
 - **ds3 分段 MEG 读取**（data/dataset 里的 S1/S2.mat，BCI-IV 数据集 3）：数据是分段结构（非连续），与当前连续 raw 模型不匹配；M2 已识别并明确拒绝（提示记入 backlog）。若未来分段数据需求明确再实现
-- **BDF/CNT/EGI/BrainVision/EEGLAB 无真实数据实测**：M2 只有模板基类 + FIF 合成往返测试保证；拿到真实文件后跑 `open_file()` 冒烟即可（读取器走同一模板路径，风险低）
+- **CNT/EGI/BrainVision/EEGLAB 无真实数据实测**：M2 只有模板基类 + FIF 合成往返测试保证；拿到真实文件后跑 `open_file()` 冒烟即可（读取器走同一模板路径，风险低）。BDF 已于 M6.5 用真实羊数据实测（6 个 .edf 误标文件，含标注通道逐字节核查）
 - **Blackrock/Open Ephys/Intan/NWB 无真实数据实测**（M5）：neo 系用桩 rawio 验证模板关键逻辑（换算/转置/选流/事件）、NWB 用 pynwb 完整写支持做真实往返；拿到真实文件后跑 `open_file()` 冒烟即可（neo 模板路径统一，风险低）
 - eeglabio / pybv 装入 dev 依赖做 EEGLAB/BrainVision 合成往返：v1 收官时评估——neo/pynwb 已覆盖 M5 验收，暂缓，等真实数据再决定
 - 2b GDF 头自带 highpass 100 > lowpass 0.5 触发 mne RuntimeWarning（每文件两条，无害）；如需清净可在读取器预处理 info（暂缓——不改数据语义，仅日志噪音）

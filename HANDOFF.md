@@ -49,7 +49,7 @@ pip install -e "/Users/huyingbing/VSproject/intervention BCI/DataloadV[dev]"
 ```bash
 conda activate dlv
 dataloadv                                    # 启动应用（或 python -m dataloadv）
-pytest                                       # 全部单测（M6：150 passed，含 real 数据项）
+pytest                                       # 全部单测（M6.5：157 passed，含 real 数据项）
 pytest -m real                               # 仅真实数据冒烟（data/sheep 缺失自动跳过）
 python scripts/smoke_gui.py                  # GUI 冒烟：真窗口启动自检后自动退出
 python scripts/e2e_m1.py                     # M1 端到端：真实导入→浏览→渲染→释放（幂等，可反复跑）
@@ -71,8 +71,8 @@ src/dataloadv/
 │   └── app_settings.py      # AppSettings：n_workers/cache_gb/export_dir（临时文件+rename 原子写；apply() 热生效）（M5）
 ├── io/                      # 读取器层（禁止 import Qt）——注册表模式，每格式一个 Reader
 │   ├── base.py              # BaseReader ABC：read_meta 仅头/open/load_raw/sniff/common_meta_fields/filename_entities
-│   ├── registry.py          # @register_reader + open_file/scan_folder（容错+进度回调+.mff 目录候选）
-│   ├── sniffing.py          # 魔数嗅探（EDF/GDF/BDF/HDF5/BrainVision）
+│   ├── registry.py          # @register_reader + open_file/scan_folder（容错+进度回调+.mff 目录候选）；_dispatch_readers 魔数内容优先派发（M6.5）
+│   ├── sniffing.py          # 魔数嗅探（EDF/GDF/BDF/HDF5/BrainVision）——版本域严格前 8 字节（坑 #41）
 │   ├── mne_readers.py       # _MneRawReader 模板基类 + 8 子类（EDF/BDF/GDF/BV/FIF/EEGLAB/CNT/EGI）
 │   ├── bciciv_mat.py        # BCI-IV ds1/ds4 专用 + 未知 mat 拒绝猜测（多候选让位链）
 │   ├── event_maps.py        # GDF 官方事件码→中文标签（16 码，desc_2a/2b.pdf 原文核实）
@@ -139,7 +139,7 @@ src/dataloadv/
 
 ## 坑与注意事项（踩过的坑写这里，防止重蹈）
 
-1. **羊 EDF 非 UTF-8**：注释/TAL 通道含非 UTF-8 字节（如 0xc6），`mne.io.read_raw_edf` 默认编码会抛 UnicodeDecodeError——必须 `encoding="latin1"` 重试（解法源自 pipelineMotor `formats.py` 的 EdfLatin1Adapter，本项目的 EdfReader 将其内置为自动回退）。
+1. **羊 EDF 非 UTF-8**（M6.5 再认识：该现象发生在**错误的 EDF 解码路径**上——羊文件实为 BDF，按 BDF 读不触发编码问题；latin1 自动回退仍保留在 `_read_mne_robust`，对真 EDF 的非 UTF-8 注释仍有意义）：`mne.io.read_raw_edf` 默认编码抛 UnicodeDecodeError 时用 `encoding="latin1"` 重试（解法源自 pipelineMotor `formats.py` 的 EdfLatin1Adapter）。
 2. **BCI-IV ds4 .mat 很大**（118–134MB）：loadmat 出来是 int32/float64，要 `astype(np.float32)` 物化并 `del` 中间体，否则内存翻倍。参考 pipelineMotor `data/mat_loader.py` 的结构解析（本项目重新实现，不导入）。
 3. **mne 滤波需要 preload=True**：浏览器展示可保持 lazy，但预览/批处理在第一步前必须确保 preload。
 4. **`data/` 目录只读**：4.9GB 原始数据，应用绝不写入；用户配置在 `~/.dataloadv/`，导出去用户选择的目录。
@@ -178,16 +178,23 @@ src/dataloadv/
 37. **2b E（评估）文件 769/770 事件全 0，未知类 cue 是 783**：T 文件 769:60+770:60=120 段，E 文件 783:160 段——同一分段码表跑通两类文件必须含 783（M5 e2e 实测；正文见 STATUS 实证结论 M5-#1）。
 38. **pyqtgraph ViewBox 默认滚轮同时缩放 x/y，且 y 轴 setTicks 放全部通道名不可扩展**（M6 用户反馈"通道名重叠/…"根因）：解法组合——`setMouseEnabled(x=True, y=False)` 锁 y + 子类 ViewBox 重载 `wheelEvent` 接管滚轮（不调 super）+ 通道名改曲线行内嵌 `pg.TextItem`（半透明白 fill 压波形上可读）。另：`PlotCurveItem.yData` 就是 setData 传入数组本体（shares_memory 实证），读曲线数据做断言安全。
 39. **浏览器增益两个存量 bug（M1 起，M6 修复）**：①增益只乘通道间距不乘波形（`out_v + idx*spacing*gain`——语义应为 `out_v*gain + idx*spacing`）；②`_gain` 字段存的是**滑杆刻度值**（增益=10^(x/10)）却初始化 1.0 → 首帧起隐形 1.26×。教训：存"控件原始刻度"的字段，初值必须与控件初值一致。
+40. **mne 公共入口（read_raw_edf/bdf/gdf）按扩展名硬拒绝，file-like 对象可绕过**（M6.5，用户指定方案）：`_check_args` 抛 "Only BDF files are supported, got edf"，但对 file-like **跳过扩展名检查**（仅要求 preload=True；read_raw_bdf 自 MNE 1.10 官方支持 file-like，edf/gdf 同路径）——扩展名与内容不符时（sheep 系列 .edf 实为 BDF）传文件对象重读同一公共入口即可，**不要直接实例化 Raw* 构造器**。**错格式解码的症状要认得**：BDF 24-bit 样本按 EDF 16-bit 读 = 样本数虚增 1.5×（180s→270s）+ 数值全部错位且"看起来正常"（有限值、有峰形）——长度比值是最快破案点。另：内容派发必须"唯一定位"才提升（hdf5 是家族签名，抢了 NWB 的活），且魔数明确时**不给扩展名候选兜底**（错读成功比读失败更糟）。
+41. **EDF 头版本域是字节 0–7 共 8 字节**（M6.5 修 off-by-one）：嗅探判 EDF 只能看前 8 字节（`b"0"+7空格`）——越一位就把患者域首字节卷进来，真 EDF 患者名不以空格开头就漏判返回 None。此前 M2–M6 无人察觉：.edf 走扩展名快路径从不触发嗅探。教训：**给"快路径"兜底的慢路径，同样要有测试覆盖，否则它烂了都不知道**。
+42. **file-like 读取的 raw 内部残留文件句柄，copy()/deepcopy 直接炸**（M6.5 file-like 改造实测）：mne 把 file-like 存进**两处**——`_raw_extras[*]["blob"]`（懒读数据用）和 `_init_kwargs["input_fname"]`——整载后引用已无用途，但 `raw.copy()` 抛 "cannot pickle '_io.BufferedReader'"（只剥 blob 仍炸，第二处藏在 _init_kwargs）。`_detach_file_handles` 读后剥离两处（init_kwargs 回填真实路径）。教训：**绕过库入口的方案要全链路验证**——pytest 156 绿没拦住它，e2e_m3 预览（ProcessingContext 即 raw.copy()）第一个撞上。
+43. **e2e 轮询分支必须有 tries 上限 + check print 要 flush**（M6.5 排障半天教训）：e2e_m3 的 `_stage1c` 轮询无上限，worker 静默失败后每 800ms 打一条 ❌ 无限循环=假死；且其 check() print 无 flush=True，后台/管道运行时块缓冲看不到任何输出（坑 #36 的规约只落实在新脚本）。排障正确姿势：`python -u` + 不接 tail 管道直跑。
+44. **EDF/BDF 头部手工解析布局（两次踩坑后实证）**：固定头 256B 内**记录数@236、每记录秒数@244、通道数@252**（240/248 是空档，别按"标准偏移 240"记）；信号子头是**字段主序**——所有 label 连续（每通道 16B）→ 所有 transducer（80B）→ … → samples 字段区在 `256 + ns*216`，**不是**每通道 256B 块。羊文件 ns=9：labels@256、samples@2200、数据区@2560（=headerbytes 字段值，可自校验）。
 
-## 当前接手要点（2026-08-18，M6 已完成）
+## 当前接手要点（2026-08-24，M6.5 已完成）
 
-- **M6 浏览体验优化完成（用户实测 v1 三点反馈驱动）**：通道标签行内嵌（y 轴 setTicks 已废弃）、幅值标尺、窗口导航（一屏时长下拉/翻屏按钮/滚轮平移/Ctrl+滚轮缩放/键盘 ←→ Home End ↑↓）、全局浅色主题、增益双 bug 修复——pytest 150 绿 + e2e_m1 18 项 + e2e_m3/smoke 回归全过（见 review.md M6 节）
+- **M6.5 读取派发魔数校验完成（用户发现羊数据实为 BDF 驱动）**：`open_file` 走 `_dispatch_readers` 魔数内容优先派发（EDF/BDF/GDF/BrainVision 唯一定位时以内容为准、不兜底；hdf5 家族除外）；`_read_mne_robust` 扩展名不符时**file-like 绕过**（用户指定：走 read_raw_* 公共入口、不直接实例化 Raw*；读后 `_detach_file_handles` 剥离残留句柄，坑 #42）+latin1 回退；sniff EDF 分支 off-by-one 修复；workspace 重导入刷新 meta——**纠正了 M1 以来羊数据错位解码的数据正确性 bug**。**羊标注通道核查定论（2026-08-24）**：6 个羊 BDF 的 BDF Annotations 通道全是纯 ASCII TAL（`+N\x14\x14\x00` 每秒一条空注释），满足 UTF-8、零事件是数据本身属性——"羊需要 latin1"是 M1 误解码副产品，机制保留给真 latin1 文件。pytest 157 绿 + e2e_m1 19 项 + m2–m5/smoke 回归全过（见 review.md M6.5 节）
+- **用户工作区旧羊条目需重导入一次刷新**（format/时长从 EDF/270s → BDF/真实时长）——`add_metas` 现在重复导入即刷新（rec_id 稳定）；data/sheep、sheep2、sheep3 三个文件夹都重导
+- **M6 浏览体验优化完成（用户实测 v1 三点反馈驱动）**：通道标签行内嵌（y 轴 setTicks 已废弃）、幅值标尺、窗口导航（一屏时长下拉/翻屏按钮/滚轮平移/Ctrl+滚轮缩放/键盘 ←→ Home End ↑↓）、全局浅色主题、增益双 bug 修复
 - **v1 全部里程碑（M0–M5）完成并验证**：pytest + e2e_m1–m5 + smoke_gui 全过（见 review.md 各节）。后续事项见 TODO.md「Backlog」（Blackrock/OE/Intan/NWB 真实数据实测、ds3、eeglabio/pybv 等）
 - **批处理架构（M5 关键决策）**：BatchEngine 是**纯 Python**（无 QObject——架构规则 #1 优先于 plan.md 原文"BatchEngine(QObject)"）；回调（on_progress/on_file_done）在 worker 线程执行 → UI 侧 `queue.Queue` + QTimer 150ms 事件泵（batch_dialog._drain_events）转主线程；`run()` 整体经 `run_in_thread` 丢进一个 QThread，内部 ThreadPoolExecutor 提供并发；取消 = `engine.cancel()`（threading.Event）立即返回，引擎在**步骤边界**停止（proc/features 的 cancel_check 逐步骤检查，抛 PipelineCancelled）
 - 批处理新增文件三件套已定型：管线/特征输入用 `pipeline_panel.pipeline_dicts()`/`feature_dicts()`（dict 快照，JobSpec 零转换）；结果并入 `FeatureTable.add_result()`（多文件长表 recording 列区分）；导出走 engine._export（sidecar extra.batch 记 n_files/n_workers/files_written）
 - **特征范围决策（用户 2026-08-18 确认）：四层组合**——全量默认 + epochs 逐段 + crop 步骤（显式时间窗，进 sidecar）+ 视口一键预填（不隐式绑定）；滤波类预处理仍全量（边界效应），crop 只裁数据范围
 - **ProcStep/FeatureExtractor 同构注册表**：pydantic 参数模型 + `apply(ctx)`；注册后 params_form 零 UI 代码自动出表单（FeatureExtractor 的 `step_id` property 别名是零改动复用的关键）。**新步骤/特征三件套：参数模型 + 类 + strings_zh 文案**
 - 预览机制：`ProcessingContext.from_recording` 强制 PRELOAD + `raw.copy()`（原始逐位不变，pytest 有断言）；处理副本经 `make_preview_recording` 包装成不注册、不入工作区的 Recording → 复用全部浏览器机制
-- 读取器新格式套路：mne 系用 `_MneRawReader` 模板基类，只声明 `_fmt`/`_read_fn`（**staticmethod 包住**，坑 #12）/`_extra`；neo 系用 `_NeoRawReader` 模板（坑 #33）；NWB 单独实现（坑 #34）；`RecordingMeta(**self.common_meta_fields(path, fmt), ...)` 一次构造；neo/pynwb 均为 import-guard 可选依赖（缺失时应用照常运行）
-- 真实数据路径速查：羊 EDF `data/sheep/*.edf`；PhysioNet `data/dataset/files/S001/`；2a GDF `data/dataset/BCICIV_2a_gdf/A01T.gdf`；2b GDF `data/dataset/BCICIV_2b_gdf/`（M5 批处理验收用整个目录 45 文件）；ds1 mat `data/dataset/BCICIV_1_mat/BCICIV_calib_ds1a.mat`；ds4 mat `data/dataset/BCICIV_4_mat/sub1_comp.mat`
+- 读取器新格式套路：mne 系用 `_MneRawReader` 模板基类，只声明 `_fmt`/`_read_fn`（**staticmethod 包住**，坑 #12）/`_extra`，EDF 家族再加 `_robust=True`（file-like 绕过+latin1 回退，坑 #40/#42）；neo 系用 `_NeoRawReader` 模板（坑 #33）；NWB 单独实现（坑 #34）；`RecordingMeta(**self.common_meta_fields(path, fmt), ...)` 一次构造；neo/pynwb 均为 import-guard 可选依赖（缺失时应用照常运行）
+- 真实数据路径速查：羊数据（**BDF 内容的 .edf**）`data/sheep|sheep2|sheep3/*.edf`；PhysioNet `data/dataset/files/S001/`；2a GDF `data/dataset/BCICIV_2a_gdf/A01T.gdf`；2b GDF `data/dataset/BCICIV_2b_gdf/`（M5 批处理验收用整个目录 45 文件）；ds1 mat `data/dataset/BCICIV_1_mat/BCICIV_calib_ds1a.mat`；ds4 mat `data/dataset/BCICIV_4_mat/sub1_comp.mat`
 - **数据集详细信息（来源/结构/参数/事件码表/已知坑）全部在根目录 `DATA_NOTES.md`**（2026-08-18 按用户要求建立），改读取器前先读它；新数据/新实证发现要回写它

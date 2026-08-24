@@ -33,6 +33,28 @@ def test_workspace_add_dedup(tmp_path):
     assert ws.find_by_path("/a/x.edf") is not None
 
 
+def test_workspace_reimport_refreshes_meta(tmp_path):
+    """重复导入同一文件：rec_id 稳定，内容以新扫描为准.
+
+    2026-08-24 场景：sheep 系列 .edf 实为 BDF，读取器修正后 format/
+    duration 全变——重导入一次旧条目即刷新，不必先删再加。
+    """
+    ws = Workspace("测试工作区")
+    ws.add_metas("/a", [_meta("/a/x.edf", dur=270.0)])
+    old_id = ws.find_by_path("/a/x.edf").rec_id
+
+    m2 = _meta("/a/x.edf", dur=180.0)  # 模拟修正后的重扫描结果
+    m2.format = "BDF"
+    m2.reader_id = "bdf"
+    added, dup = ws.add_metas("/a", [m2])
+
+    assert (added, dup) == (0, 1)
+    got = ws.find_by_path("/a/x.edf")
+    assert got.rec_id == old_id  # rec_id 绑定文件而非某次扫描
+    assert got.format == "BDF"
+    assert got.duration_s == 180.0
+
+
 def test_workspace_remove(tmp_path):
     ws = Workspace("测试工作区")
     ws.add_metas("/a", [_meta("/a/x.edf")])
