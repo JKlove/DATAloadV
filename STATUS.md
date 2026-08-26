@@ -1,8 +1,16 @@
 # STATUS — 项目状态快照
 
-> 本文件回答"现在做到哪了"。每里程碑完成及重要提交后更新。最后更新：2026-08-24（M6.5 读取派发魔数校验完成）
+> 本文件回答"现在做到哪了"。每里程碑完成及重要提交后更新。最后更新：2026-08-24（M6.6 工作区移除条目 + 羊通道质量定论）
 
 ## 当前里程碑
+
+- **M6.6 工作区移除条目 + 羊通道质量定论：✅ 完成（2026-08-24）**，用户两问驱动：
+  ①「数据读出来都是噪声」——诊断定论：**不是读取 bug**——CH5–CH8 逐样本完全相同（采集箱
+  开路通道复用，钉满量程饱和或 std=0 死值）、CH4 部分饱和；CH1–CH3 真实皮层信号（去直流+
+  带通后 std≈279µV）但带大直流偏移；换算链 0.125µV/LSB 与手算一致（结论入 DATA_NOTES）；
+  ②「能否从工作区删除导入的数据」——功能落地：树右键/Del 键移除条目（录制项删单条、来源
+  节点整组先确认），只清工作区索引并落盘，**不删磁盘数据文件**，已开浏览 tab 保留；
+  pytest **163 绿**（+6：树信号载荷 3 + 主窗口端到端 3）+ e2e_m1/smoke 回归。
 
 - **M6.5 读取派发魔数校验：✅ 完成（2026-08-24）**，用户发现羊数据实为 BDF 驱动：open_file 改**魔数内容优先派发**（扩展名不符 warning 但以内容为准、不给扩展名候选兜底）+ mne 扩展名硬检查绕过（**file-like 对象重读公共入口**，用户指定方案；读后剥离 mne 内部残留句柄防 deepcopy 炸）+ sniff EDF 分支 off-by-one 修复 + workspace 重导入刷新 meta——**纠正了 M1 以来羊数据按 EDF 错误解码（时长虚增 1.5×、数值全错位）的数据正确性 bug**；同日核查羊标注通道：**全为纯 ASCII TAL 空注释，满足 UTF-8**（"羊需要 latin1"系 M1 误解码副产品，回退机制保留给真 latin1 文件）；验证全过（pytest 157 绿 + e2e_m1 扩 19 项 + m2–m5/smoke 回归，见 review.md）
 - **v1 全部里程碑（M0–M5）+ M6 浏览体验优化完成**——后续事项见 TODO.md「Backlog」
@@ -19,6 +27,7 @@
 | M5 批处理引擎+扩展格式 | ✅ 完成 | 2026-08-18 | BatchEngine(纯 Python 线程池/取消/逐文件容错)+批处理对话框(队列事件泵)+neo(Blackrock/OE/Intan)+NWB 读取器+设置+README；e2e_m5 19 项 |
 | M6 浏览体验优化 | ✅ 完成 | 2026-08-18 | 通道标签内嵌重构+幅值标尺+窗口导航(时长/滚轮平移/翻屏/键盘)+浅色主题+增益双 bug 修复；pytest 150 / e2e_m1 18 项 |
 | M6.5 读取派发魔数校验 | ✅ 完成 | 2026-08-24 | 魔数内容优先派发+mne 扩展名检查绕过（file-like）+sniff off-by-one+重导入刷新；纠正羊数据 BDF 错解码（1.5× 时长/数值错位）；标注通道核查全 ASCII；pytest 157 / e2e_m1 19 项 |
+| M6.6 工作区移除+羊通道定论 | ✅ 完成 | 2026-08-24 | 树右键/Del 移除条目（单条/整组确认，只清索引不删磁盘文件）+持久化；羊通道质量核查（CH5-8 开路复用同值、CH1-3 真实带大直流）；pytest 163 |
 
 ## 环境
 
@@ -27,7 +36,7 @@
 
 ## 测试
 
-- `pytest`：**157 passed**（M6 时 150 + M6.5 净增 7：魔数表/反向误标/内容优先不兜底/latin1 回归/重导入刷新/组合回退/file-like raw 可 copy；羊测试重写为 BDF 误标断言——format=BDF+真实时长 180/182/222 s；含真实 GDF 测试）
+- `QT_QPA_PLATFORM=offscreen pytest`：**163 passed**（M6.5 时 157 + M6.6 净增 6：树移除信号载荷 3——录制项单 path/来源节点整组/根与空选择不参与；主窗口端到端 3——单条无弹框+索引清掉+树刷新/多条确认后落盘可 reload/拒绝后原样保留。**须 offscreen：新增 MainWindow 级测试在 macOS 真窗口模式会挂住**）
 - `python scripts/e2e_m1.py`：**ALL OK（19 项）**——sheep + S001 真实导入 → 浏览 → 释放（幂等总量断言）；M6 追加 5 项 + M6.5 追加 1 项（羊数据按 BDF 解码：魔数优先于扩展名）
 - `python scripts/e2e_m2.py`：**ALL OK（17 项）**——4.9GB dataset 扫描 5.2s / 识别 1606 条 / 3 条已知结构报错 / 六格式（EDF/GDF 2a/GDF 2b/ds1/ds4/CSV）逐个打开均有真实曲线 / GDF 中文标签 / 六 tab 关闭释放
 - `python scripts/e2e_m3.py`：**ALL OK（11 项）**——羊 EDF 三步预览（带通+陷波+重参考）50Hz PSD 压制比 0.0001、坏道标记联动、A01T 分段预览 288 段、tab 释放
@@ -92,7 +101,24 @@
 6. **羊 6 个 BDF 的标注通道（BDF Annotations）全为纯 ASCII**（2026-08-24 逐字节核查）：内容是标准 TAL `+N\x14\x14\x00`——每秒一条**空文本**注释，满足 UTF-8；utf8 默认编码读取零报错、零事件（空注释无意义事件是数据本身属性）。"羊需要 latin1"确系 M1 按 EDF 误解码 BDF 的副产品，机制保留给真 latin1 老文件（合成回归测试锁定）
 7. **EDF/BDF 头部手工解析布局**：固定头 256B 内记录数@236、每记录秒@244、ns@252；信号子头**字段主序**（所有 label ns×16B 连续，samples 区在 `256+ns*216`），数据区起点=headerbytes 字段（自校验）——不是"每通道 256B 块"（两次踩坑后实证，HANDOFF 坑 #44）
 
+## M6.6 关键实证结论（写代码前实测，避免踩坑）
+
+1. **羊"全是噪声"根因是通道本身未接电极**（不是读取 bug）：CH5==CH6==CH7==CH8 逐样本
+   `np.array_equal` 全 True——采集箱把开路通道复用成同一段缓冲；数值钉 ±375000µV 满量程
+   饱和或 std=0。CH1–CH3 为真实信号（去直流+带通 1–40Hz 后 std≈279µV、宽带 β 为主），
+   但带数十 mV 直流偏移——直接浏览"信号骑大斜线"。换算 0.125µV/LSB 与手算一致
+2. **Qt 焦点模型：焦点在 QTreeWidget 内层时容器收不到 keyPress**——Del 键删除必须在树本体
+   子类重载 `keyPressEvent`（`_TreeWithDel`），容器级 QSS/事件过滤方案无效
+3. **MainWindow 级 pytest 在 macOS 真窗口模式会挂住**——全套 pytest 从此必须带
+   `QT_QPA_PLATFORM=offscreen`（此前只有 e2e/无头脚本需要）；又及 `| tail` 管道缓冲全部
+   输出直到进程结束，长命令一律后台直跑+`python -u`
+4. **测试间会通过 ~/.dataloadv/workspaces/<名>.json 持久化耦合**——MainWindow 测试的工作区
+   名必须每测试唯一（`request.node.name`）+ teardown unlink，否则"删了 1 条"的上一步状态
+   污染下一步（曾 3==2 假失败）
+
 ## 最近变更记录（新条目加在最上面）
+
+- 2026-08-24（M6.6 完成，用户两问驱动）：**①羊"噪声感"诊断定论**（诊断脚本实证，零代码改动）：CH5–CH8 逐样本相同=开路通道复用（饱和/死值伪迹）、CH4 部分饱和、CH1–CH3 真实皮层信号带大直流偏移、换算 0.125µV/LSB 正确——结论与浏览建议（右键标坏道 CH4–CH8 + 去均值/带通后看 CH1–CH3）写入 DATA_NOTES §1；**②工作区移除条目功能**：ui/strings_zh.py +5 文案（右键菜单/确认框/状态栏）；ui/widgets/workspace_tree.py 加 `remove_requested(list)` 信号（右键菜单 + `_TreeWithDel` 内层树接管 Del/Backspace——焦点在树上容器收不到 keyPress；`_paths_for_item` 分类：录制项单 path/来源节点整组/根不参与）；ui/main_window.py `_remove_from_workspace`（多条先 QMessageBox 确认 → workspace.remove_recording + save + notify 刷新，**只清索引不删磁盘文件**，已开 tab 保留）；tests/test_ui_workspace_remove.py 新建 +6（163 绿，**MainWindow 级测试须 offscreen**）；e2e_m1 19 项 + smoke 回归；MANUAL §3.4/计数、README 计数同步。
 
 - 2026-08-24（M6.5 完成，用户发现羊数据实为 BDF 驱动）：io/registry.py 新 `_dispatch_readers` **魔数内容优先派发**（EDF/BDF/GDF/BrainVision 嗅探定位读取器，扩展名不符记 warning、不兜底）+ io/mne_readers.py 通用 `_read_mne_robust`（mne `_check_args` 扩展名硬拒绝时 **file-like 对象重读公共入口**绕过——用户指定方案，不直接实例化 Raw*；读后 `_detach_file_handles` 剥离 mne 内部两处句柄残留防 deepcopy 炸；latin1 回退保留；模板基类加 `_robust` 声明）+ io/sniffing.py 修 EDF 分支 off-by-one（`head[:8]` 严格 8 字节版本域；删无引用的 `is_edf`）+ core/workspace.py `add_metas` 重复导入刷新 meta（rec_id 稳定、内容以新扫描为准）；**纠正 M1 以来羊数据按 EDF 错误解码的数据正确性 bug**（真实时长：sheep 180/182/222s、sheep2 1000/1075s、sheep3 301s）；**同日两项用户问题闭环**：①羊标注通道逐字节核查——全纯 ASCII TAL 空注释、满足 UTF-8（"羊需要 latin1"为误解码副产品，无需改码）；②读取方式改 file-like+read_raw_bdf（含 deepcopy 残留句柄坑修复，e2e_m3 预览链路回归验证）；tests 重写羊断言+净增 6（157 绿）；e2e_m1 +1 项（19 项 ALL OK）+ m2–m5/smoke 回归；DATA_NOTES 羊三目录重写 + MANUAL/README 同步。
 

@@ -141,6 +141,24 @@
 - [x] 收尾四件事：DATA_NOTES（羊三目录 BDF 实锤+真实时长表）→ STATUS/TODO/HANDOFF →
       review.md → 上下文检测 → git commit（用户指令后）
 
+## M6.6 工作区移除条目 + 羊通道质量定论（✅ 2026-08-24 完成，用户两问驱动，验证见 review.md）
+
+> ①"数据读出来都是噪声"→ 诊断定论（零代码改动，结论入 DATA_NOTES）；②"能否从工作区删除
+> 导入的数据"→ 功能落地（树右键/Del 移除，只清索引不删磁盘文件）。
+
+- [x] 问题①诊断：羊 CH5–CH8 逐样本 `np.array_equal` 全 True = 开路通道复用（饱和/死值伪迹）；
+      CH4 部分饱和；CH1–CH3 真实皮层信号（去直流+带通后 std≈279µV）带大直流偏移；
+      换算 0.125µV/LSB 与手算一致——读取与换算链均正确，"噪声感"是数据本身属性
+- [x] 问题②功能：workspace_tree.py `remove_requested(list)` 信号 + 右键菜单 + `_TreeWithDel`
+      内层树接管 Del/Backspace（焦点在树上，容器收不到 keyPress）；`_paths_for_item` 分类
+      （录制项单 path / 来源节点整组 / 根不参与）
+- [x] 主窗口 `_remove_from_workspace`：多条先 QMessageBox 确认 → remove_recording + save +
+      notify 刷新；**只清工作区索引，磁盘数据文件不动**；已开浏览 tab 保留
+- [x] 验证：pytest 163 绿（+6 test_ui_workspace_remove——树载荷 3 + 主窗口端到端 3，
+      MainWindow 级测试须 offscreen）；e2e_m1 19 项 + smoke 回归
+- [x] 收尾四件事：DATA_NOTES/STATUS/TODO/HANDOFF/MANUAL/README → review.md → 上下文检测 →
+      git commit（用户指令后）
+
 ## 已知问题 / Backlog（v1 收官后暂缓项）
 
 - .edf.event WFDB 边车解析：M1 实测 PhysioNet EDF 内嵌注释已完整，边车为冗余副本，暂不需要；若未来遇到只有边车、无内嵌注释的数据集再补

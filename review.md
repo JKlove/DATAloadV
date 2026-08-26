@@ -421,3 +421,51 @@ BDF**（文件头 `\xffBIOSEMI`，BioSemi 24-bit）。此前 open_file 只按扩
 - data/ 只读 ✅（对照实验复制到 /tmp 改名，原始 6 文件未动一字节）
 
 **收尾四件事**：STATUS（157 绿/e2e_m1 19 项/实证结论/变更记录）→ TODO（M6.5 小节全勾）→ HANDOFF（坑 #40–#44、pytest 157）→ DATA_NOTES（羊三目录 BDF 实锤 + 真实时长表 + latin1 坑再认识 + 标注通道核查结论）→ MANUAL/README → review.md 本节 → 上下文检测 → git commit（用户指令后）
+
+---
+
+## M6.6 — 工作区移除条目 + 羊通道质量定论（2026-08-24 完成，用户两问驱动）
+
+### 问题①：「数据读出来感觉都是噪声，尤其 sheep，有些通道不是电生理信号」——诊断（零代码改动）
+
+**定论：读取与换算链均正确，"噪声感"是数据本身的属性——部分通道根本没接电极。**
+
+- **CH5–CH8 逐样本完全相同**（6 文件全部 `np.array_equal(CH5,CH6,CH7,CH8)` True）=
+  采集箱把未接/开路通道**复用成同一段缓冲**；数值钉死 ±375000 µV 满量程饱和或 std=0 死值
+  ——浏览器里这四条"波形"是伪迹，不是电生理信号
+- **CH1/CH2/CH3 真实信号**：CH1 去直流 + 带通 1–40 Hz 后 std≈279 µV、宽带 β 节律为主
+  （羊皮层场电位 LFP/ECoG 量级）；但**带数十 mV 直流偏移**——直接浏览"信号骑在大斜线/台阶上"；
+  CH4 部分文件饱和、部分活跃（阈值边界）
+- **换算正确**：physmin/max=±1048576 µV、digimin/max=±8388608 → 0.125 µV/LSB，mne 按 BDF
+  解码值与手算一致（排除读取错误）
+- **给用户的用法**：右键标 CH4–CH8 为坏道（M6 已有）；CH1–CH3 先加去均值/重参考 + 带通
+  1–40 Hz 再浏览（处理面板预览，不动原文件）；sheep3（术中）噪声本底偏大属记录条件差异
+
+### 问题②：「能否从工作区删除导入的数据」——功能（M1 起首次提供条目级移除）
+
+| 文件 | 改动 |
+|---|---|
+| `ui/strings_zh.py` | +5 文案：右键菜单（单条/整组带条数）、确认框标题/正文（强调**不删磁盘文件**）、状态栏 |
+| `ui/widgets/workspace_tree.py` | 新信号 `remove_requested(list[str])`；右键菜单（CustomContextMenu → `_on_context_menu`，viewport 坐标映射 global）；`_TreeWithDel` 内层树子类接管 Del/Backspace（**焦点在 QTreeWidget 上时容器收不到 keyPressEvent**，必须树本体重载）；`_paths_for_item` 分类：录制项→单 path、来源节点→全部 children、根→[]（不参与） |
+| `ui/main_window.py` | `_remove_from_workspace`：多条先 `QMessageBox.question` 确认（单条直接删）→ `workspace.remove_recording` 逐条 + `save()` + `notify_workspace_changed()`（树/表刷新）+ 状态栏提示；**只清工作区索引，磁盘数据文件不动**；已打开的浏览 tab 保留（浏览器持有独立 Recording 引用） |
+| `tests/test_ui_workspace_remove.py` | 新建 6 测：树载荷 3（录制项单 path/来源节点整组/根与 None 不参与）+ 主窗口端到端 3（单条无弹框+索引清+树刷新/多条确认后索引清+空来源自动清理+**reload 同名工作区仍 1 条验证 save 落盘**/拒绝后原样保留）。MainWindow 级测试的工作区名用 `request.node.name` 每测试唯一 + teardown unlink（防 ~/.dataloadv 持久化把测试间耦合——曾 3==2 假失败） |
+| `MANUAL.md` | §3.4 工作区树交互行 + 验证口径 163 + pytest 行注明 offscreen |
+
+### 验证
+
+| 项 | 结果 |
+|---|---|
+| pytest | ✅ **163 绿**（157 + 6；**须 `QT_QPA_PLATFORM=offscreen`**——MainWindow 级测试在 macOS 真窗口模式挂住，此前组合命令第二段漏 offscreen 曾 240s 超时假挂） |
+| e2e_m1 | ✅ 19 项 ALL OK（含羊 BDF 解码回归） |
+| smoke_gui | ✅ SMOKE OK |
+| 持久化 | ✅ 移除后 `~/.dataloadv/workspaces/<名>.json` reload 验证（测试断言 save 真落盘） |
+| 磁盘文件 | ✅ 移除操作零磁盘写入 data/（remove_recording 只动内存索引 + 工作区 JSON） |
+
+### 架构规则自查
+
+- 计算层六包无 Qt import ✅（改动全在 ui/、tests/；core/workspace 的 remove_recording 为既有方法）
+- UI 只编排不计算 ✅（主窗口只做确认弹框 + 调 workspace 方法 + 刷新通知）
+- 跨线程只传纯 Python/mne 对象 ✅（未新增线程路径；信号载荷是 list[str]）
+- data/ 只读 ✅（移除语义只清索引；测试合成 meta，不触碰真实数据）
+
+**收尾四件事**：DATA_NOTES（羊通道质量核查定论）→ STATUS/TODO/HANDOFF（坑 #45 offscreen）→ MANUAL（§3.4/计数）/README（计数）→ review.md 本节 → 上下文检测 → git commit（用户指令后）

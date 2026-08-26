@@ -49,7 +49,9 @@ pip install -e "/Users/huyingbing/VSproject/intervention BCI/DataloadV[dev]"
 ```bash
 conda activate dlv
 dataloadv                                    # 启动应用（或 python -m dataloadv）
-pytest                                       # 全部单测（M6.5：157 passed，含 real 数据项）
+QT_QPA_PLATFORM=offscreen pytest             # 全部单测（M6.6：163 passed，含 real 数据项；
+                                             #   MainWindow 级测试须 offscreen——坑 #45）
+pytest -m real                               # 仅真实数据冒烟（data/sheep 缺失自动跳过；建议同带 offscreen）
 pytest -m real                               # 仅真实数据冒烟（data/sheep 缺失自动跳过）
 python scripts/smoke_gui.py                  # GUI 冒烟：真窗口启动自检后自动退出
 python scripts/e2e_m1.py                     # M1 端到端：真实导入→浏览→渲染→释放（幂等，可反复跑）
@@ -135,7 +137,7 @@ src/dataloadv/
 - 标识符英文，**docstring 与关键注释中文**（用户要求：后续维护者不读实现也能懂）
 - 类/函数 docstring 写清：用途、参数、返回、异常；关键算法处注释解释"为什么"而非"是什么"
 - pydantic v2 建模所有可序列化配置/参数；pandas 用于表格结果
-- git：仓库级身份 `DataloadV Dev <dev@dataloadv.local>`；每里程碑一次 commit，消息格式 `M<编号>: <内容摘要>`
+- git：身份用仓库现有配置（史实 `JKlove <huyingbing13@gmail.com>`，勿另设假身份）；仅用户要求时 commit；不加 Co-Authored-By 尾注；消息中文、格式 `M<编号>: <主题——要点串联；pytest N绿+回归+治理同步>`
 
 ## 坑与注意事项（踩过的坑写这里，防止重蹈）
 
@@ -183,9 +185,12 @@ src/dataloadv/
 42. **file-like 读取的 raw 内部残留文件句柄，copy()/deepcopy 直接炸**（M6.5 file-like 改造实测）：mne 把 file-like 存进**两处**——`_raw_extras[*]["blob"]`（懒读数据用）和 `_init_kwargs["input_fname"]`——整载后引用已无用途，但 `raw.copy()` 抛 "cannot pickle '_io.BufferedReader'"（只剥 blob 仍炸，第二处藏在 _init_kwargs）。`_detach_file_handles` 读后剥离两处（init_kwargs 回填真实路径）。教训：**绕过库入口的方案要全链路验证**——pytest 156 绿没拦住它，e2e_m3 预览（ProcessingContext 即 raw.copy()）第一个撞上。
 43. **e2e 轮询分支必须有 tries 上限 + check print 要 flush**（M6.5 排障半天教训）：e2e_m3 的 `_stage1c` 轮询无上限，worker 静默失败后每 800ms 打一条 ❌ 无限循环=假死；且其 check() print 无 flush=True，后台/管道运行时块缓冲看不到任何输出（坑 #36 的规约只落实在新脚本）。排障正确姿势：`python -u` + 不接 tail 管道直跑。
 44. **EDF/BDF 头部手工解析布局（两次踩坑后实证）**：固定头 256B 内**记录数@236、每记录秒数@244、通道数@252**（240/248 是空档，别按"标准偏移 240"记）；信号子头是**字段主序**——所有 label 连续（每通道 16B）→ 所有 transducer（80B）→ … → samples 字段区在 `256 + ns*216`，**不是**每通道 256B 块。羊文件 ns=9：labels@256、samples@2200、数据区@2560（=headerbytes 字段值，可自校验）。
+45. **MainWindow 级 pytest 必须带 `QT_QPA_PLATFORM=offscreen`**（M6.6 实测）：此前只有 e2e/无头脚本需要 offscreen，加入直接构造 MainWindow 的测试后，组合命令第二段漏 offscreen 在 macOS 真窗口模式挂住、240s 超时假挂——**全套 pytest 从此统一带 offscreen**。配套教训（坑 #36/#43 的重申）：`| tail` 管道缓冲全部输出直到进程结束，长命令一律后台直跑 + `python -u`，别接管道。另：**MainWindow 测试间会经 `~/.dataloadv/workspaces/<名>.json` 持久化耦合**——工作区名用 `request.node.name` 每测试唯一 + teardown unlink（曾 3==2 假失败，"删了 1 条"的上一步污染下一步）。
+46. **焦点在 QTreeWidget 内层时，容器组件收不到 keyPressEvent**（M6.6）：Del 键删除必须在树本体的子类里重载 `keyPressEvent`（`_TreeWithDel`），在容器/事件过滤器层拦截无效——Qt 键事件先给焦点控件，树不冒泡给父容器。
 
-## 当前接手要点（2026-08-24，M6.5 已完成）
+## 当前接手要点（2026-08-24，M6.6 已完成）
 
+- **M6.6 工作区移除条目 + 羊通道质量定论完成（用户两问驱动）**：①"读出来都是噪声"——诊断定论（零代码改动，结论入 DATA_NOTES §1）：**不是读取 bug**——羊 CH5–CH8 逐样本完全相同（开路通道复用，钉 ±375000µV 饱合或 std=0）、CH4 部分饱和；CH1–CH3 真实皮层信号（去直流+带通后 std≈279µV）带大直流偏移；换算 0.125µV/LSB 正确。**用法**：右键标 CH4–CH8 坏道 + 对 CH1–CH3 加去均值/重参考+带通 1–40Hz 预览。②树右键/Del 移除条目：`remove_requested(list)` → `_remove_from_workspace`（多条确认 → remove_recording+save+notify）——**只清工作区索引不删磁盘文件**，已开 tab 保留。pytest **163 绿**（+6；**须 offscreen**，坑 #45）+ e2e_m1 19 项 + smoke 回归（见 review.md M6.6 节）
 - **M6.5 读取派发魔数校验完成（用户发现羊数据实为 BDF 驱动）**：`open_file` 走 `_dispatch_readers` 魔数内容优先派发（EDF/BDF/GDF/BrainVision 唯一定位时以内容为准、不兜底；hdf5 家族除外）；`_read_mne_robust` 扩展名不符时**file-like 绕过**（用户指定：走 read_raw_* 公共入口、不直接实例化 Raw*；读后 `_detach_file_handles` 剥离残留句柄，坑 #42）+latin1 回退；sniff EDF 分支 off-by-one 修复；workspace 重导入刷新 meta——**纠正了 M1 以来羊数据错位解码的数据正确性 bug**。**羊标注通道核查定论（2026-08-24）**：6 个羊 BDF 的 BDF Annotations 通道全是纯 ASCII TAL（`+N\x14\x14\x00` 每秒一条空注释），满足 UTF-8、零事件是数据本身属性——"羊需要 latin1"是 M1 误解码副产品，机制保留给真 latin1 文件。pytest 157 绿 + e2e_m1 19 项 + m2–m5/smoke 回归全过（见 review.md M6.5 节）
 - **用户工作区旧羊条目需重导入一次刷新**（format/时长从 EDF/270s → BDF/真实时长）——`add_metas` 现在重复导入即刷新（rec_id 稳定）；data/sheep、sheep2、sheep3 三个文件夹都重导
 - **M6 浏览体验优化完成（用户实测 v1 三点反馈驱动）**：通道标签行内嵌（y 轴 setTicks 已废弃）、幅值标尺、窗口导航（一屏时长下拉/翻屏按钮/滚轮平移/Ctrl+滚轮缩放/键盘 ←→ Home End ↑↓）、全局浅色主题、增益双 bug 修复

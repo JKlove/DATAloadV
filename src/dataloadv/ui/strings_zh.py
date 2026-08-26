@@ -79,6 +79,11 @@ class S:
     FILTER_HINT = "筛选（文件名/被试/格式…）"
     TREE_ROOT_FMT = "工作区：{name}（{n} 条）"
     STATUS_OPENING = "正在打开：{name}…"
+    TREE_CTX_REMOVE = "从工作区移除"
+    TREE_CTX_REMOVE_SOURCE = "移除该来源全部条目（{n} 条）"
+    REMOVE_CONFIRM_TITLE = "移除确认"
+    REMOVE_CONFIRM_TEXT_FMT = "将从工作区移除 {n} 条条目（仅清理工作区索引，不删除磁盘上的数据文件）。是否继续？"
+    STATUS_REMOVED_FMT = "已从工作区移除 {n} 条"
 
     # ===== M1：信号浏览器 =====
     BROWSER_TITLE_FMT = "{name}"

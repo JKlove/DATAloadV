@@ -6,7 +6,7 @@
 > 验证记录见 [review.md](review.md)，数据集详情见 [DATA_NOTES.md](DATA_NOTES.md)。
 >
 > **版本基线**：v1（里程碑 M0–M5 全部完成）+ M6 浏览体验优化（2026-08-18）+ M6.5 读取派发魔数校验（2026-08-24）；
-> 验证口径：pytest 157 绿 + e2e_m1–m5 共 84 项 + GUI 冒烟全过。
+> 验证口径：pytest 163 绿 + e2e_m1–m5 共 84 项 + GUI 冒烟全过。
 
 ---
 
@@ -193,7 +193,7 @@ dataloadv            # 或 python -m dataloadv
 
 | 命令 | 预期 |
 |---|---|
-| `pytest` | 157 passed（含真实数据项） |
+| `pytest` | 163 passed（含真实数据项；含 MainWindow 级 UI 测试，**须 `QT_QPA_PLATFORM=offscreen`**） |
 | `python scripts/smoke_gui.py` | 末行 SMOKE OK（真窗口自检后自动退出） |
 | `python scripts/e2e_m1.py` … `e2e_m5.py` | 各打印 ALL OK（真实数据端到端，幂等可反复跑；m1 含 M6 浏览交互 18 项） |
 
@@ -254,7 +254,9 @@ QT_QPA_PLATFORM=offscreen python scripts/e2e_m1.py   # CI/SSH 无显示器的跑
 - **元数据表**（常驻首个 tab）：10 列（名称/被试/格式/通道数/采样率/时长/事件数/任务/Run/
   导入来源）；点列头排序（数值列按数值）；顶部过滤框全列包含匹配；双击行开浏览 tab；
   支持整行多选（Ctrl/Shift，供批处理取文件集）。
-- **工作区树**（左 Dock）：按导入来源分组；过滤框按文件名/被试匹配；双击录制条目开浏览 tab。
+- **工作区树**（左 Dock）：按导入来源分组；过滤框按文件名/被试匹配；双击录制条目开浏览 tab；
+  **右键或 Del 键移除条目**——录制项删单条、来源节点整组（多条先弹确认），
+  只清理工作区索引并落盘，**不删除磁盘数据文件**；已打开的浏览 tab 不受影响。
 
 ### 3.5 波形浏览（浏览 tab）
 
@@ -399,7 +401,7 @@ GDF 事件码自动转中文标签（如 769 → 左手运动想象 cue）。
 ### 4.3 测试体系
 
 ```bash
-pytest                    # 全部 157 项
+QT_QPA_PLATFORM=offscreen pytest   # 全部 163 项（有 MainWindow 级测试，须 offscreen）
 pytest -m real            # 仅真实数据冒烟（data/sheep 缺失自动跳过）
 pytest tests/test_proc_m3.py -k "epoching"   # 单文件/单关键字
 QT_QPA_PLATFORM=offscreen python scripts/e2e_m5.py   # 无头跑端到端

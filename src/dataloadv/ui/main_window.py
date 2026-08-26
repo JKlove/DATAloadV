@@ -94,6 +94,7 @@ class MainWindow(QMainWindow):
         """左工作区树 / 右处理管线 / 下日志."""
         self.workspace_tree = WorkspaceTree()
         self.workspace_tree.open_requested.connect(self._open_recording_async)
+        self.workspace_tree.remove_requested.connect(self._remove_from_workspace)
         self._dock_workspace = QDockWidget(S.DOCK_WORKSPACE, self)
         self._dock_workspace.setWidget(self.workspace_tree)
 
@@ -179,6 +180,30 @@ class MainWindow(QMainWindow):
             on_done=self._on_opened,
             on_error=lambda m: QMessageBox.critical(self, S.LOAD_FAILED_TITLE, m),
         )
+
+    def _remove_from_workspace(self, paths: list[str]) -> None:
+        """从工作区移除条目（树右键/Del 入口）.
+
+        仅清理工作区索引并落库——磁盘数据文件不动（删除磁盘文件不是
+        本工具的职责）。多条（来源节点整组）先弹确认；单条直接删。
+        已打开的浏览 tab 保留（内存里的数据不受索引影响）。
+        """
+        paths = [p for p in paths if p]
+        if not paths:
+            return
+        if len(paths) > 1 and QMessageBox.question(
+            self,
+            S.REMOVE_CONFIRM_TITLE,
+            S.REMOVE_CONFIRM_TEXT_FMT.format(n=len(paths)),
+        ) != QMessageBox.StandardButton.Yes:
+            return
+        ws = self.state.workspace
+        for p in paths:
+            ws.remove_recording(p)
+        ws.save()
+        self.state.notify_workspace_changed()
+        self.statusBar().showMessage(S.STATUS_REMOVED_FMT.format(n=len(paths)))
+        logger.info("从工作区移除 %d 条条目（不删磁盘文件）", len(paths))
 
     def _on_opened(self, rec) -> None:
         """worker 返回 Recording（主线程）：登记 → recording_opened 信号开 tab.
