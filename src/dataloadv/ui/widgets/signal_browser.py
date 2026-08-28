@@ -3,19 +3,34 @@
 绘制策略（为什么这样快）：
 1. **窗口化读取**：视口变化（30ms 防抖）→ 只读可见 [t0,t1) 的数据
    （``Recording.get_window``，LAZY 大文件也只读这一段）
-2. **峰值抽取**：每像素约 2 对 min/max 点，用 ``connect="pairs"`` 画包络
-   ——无混叠伪影，点数与数据总量无关（134MB 文件与 1MB 文件同速）
+2. **两档绘制**（M6.7 修复）：样本数 ≤ ~3×像素宽 → 原始折线整段连线
+   （``connect="all"``，此密度下折线仍可读）；超出 → 每桶 (min,max) 对的
+   包络（``connect="pairs"``）——点数与数据总量无关（134MB 文件与 1MB
+   文件同速）。旧版 raw 透传也带 pairs（隔段漏画呈虚线）+ 阈值 2 样本/px
+   使 250Hz 数据的 9s/10s 一屏恰跨档（10s 密集竖线带、9s 断续发虚）
 3. 通道垂直堆叠：每通道一条曲线 + 固定 y 偏移；通道名画在曲线行左端
    **内侧**（M6 重构，替代旧的 y 轴刻度——任意导联数都不重叠、不截断）
+4. **行居中**（M6.7b 修复）：每通道按**本窗口中位数**对齐到自己的行——
+   DC 耦合数据（BioSemi BDF，clinicaldata/羊系列）通道带数万 µV 直流
+   偏移，若按绝对值堆叠，曲线全画在锁定 yRange 外数千 µV 处，波形区
+   一片空白（用户实测"第二个数据打开后 tab 空白"的根因——其实加载
+   都成功了，只是画到了视野外）。EEG 浏览器标准做法即行居中显示。
 
-交互（M6 重构，用户实测反馈驱动）：
+交互（M6 重构，用户实测反馈驱动；M6.8 增四项）：
 - **滚轮 = 平移**时间轴（y 轴锁定，通道行不再被滚轮压挤重叠）；
   **Ctrl+滚轮** = 以鼠标位置为锚点缩放一屏时长；右键拖框 = 框选缩放
 - 键盘 ←/→ = 上一/下一屏、Home/End = 最前/最后一屏、↑/↓ = 增益 ±1 档
   （点一下图区获取焦点；通道列表/时长框/滑杆聚焦时按键归控件原生行为）
-- 工具栏：|◀ 最前 / ◀ 上一屏 / 一屏时长下拉（可输入自定义秒）/ 下一屏 ▶ / 最末 ▶|
-- 右上角**幅值标尺**：竖线像素长度固定，标注换算回真实 µV（随增益动态更新）
-- 事件跳转、增益滑杆、通道显隐、右键坏道标记沿用旧版
+- 工具栏：|◀ 最前 / ◀ 上一屏 / **◀ 1s / 1s ▶**（M6.8 秒级步进）/ 下一屏 ▶ /
+  最末 ▶| / 一屏时长下拉（可输入自定义秒）
+- **总览时间轴滑块**（M6.8）：底部事件条升级——当前视口为半透明滑块，
+  拖动定位；点时间轴任意位置居中过去；x 轴锁死 [0, 时长]
+- **行居中开关**（M6.8）：默认开（每通道减本窗口中位数贴行）；关闭后按
+  绝对电平显示（通道间真实电平差），y 轴自动适配数据范围；通道列表每行
+  显示该通道的直流偏移（后台统计，"CH1  +45.2k µV"）
+- **增益**：滑杆粗调（10^(x/10) 指数刻度）+ 输入框精确倍率（0.01–100×，
+  权威源）；右上角**幅值标尺**竖线像素长度固定，标注换算回真实 µV
+- 事件跳转、通道显隐、右键坏道标记沿用旧版
 """
 
 from __future__ import annotations
@@ -27,7 +42,9 @@ import numpy as np
 import pyqtgraph as pg
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtWidgets import (
+    QCheckBox,
     QComboBox,
+    QDoubleSpinBox,
     QHBoxLayout,
     QLabel,
     QListWidget,
@@ -40,6 +57,7 @@ from PySide6.QtWidgets import (
 )
 
 from ...core.recording import LoadPolicy, Recording
+from ...workers.generic import run_in_thread
 from ..strings_zh import S
 from .event_lane import EventLane, event_color
 
@@ -47,8 +65,11 @@ logger = logging.getLogger(__name__)
 
 # 防抖毫秒数：拖动/缩放时避免每个中间视口都触发读盘
 _REFRESH_DEBOUNCE_MS = 30
-# 每像素目标样本对数（min/max 各一），>1 时相邻桶之间留缝更接近传统示波器观感
-_SAMPLES_PER_PIXEL = 2
+# raw 折线保留到 ~3 样本/像素才切换包络（M6.7：旧值 2 时 250Hz 数据的
+# 9s/10s 一屏恰跨抽取阈值——Retina ~1212 逻辑px 绘图区下 2500 vs 2250 对
+# 阈值 2424：10s 密集成竖线带、9s 断续虚线；3 样本/px 折线仍可读，且让
+# 常用预设 1/2/5/10s 全部留在折线档，观感连续无跳变）
+_SAMPLES_PER_PIXEL = 3
 # 初始显示窗口秒数（整个录制更短则全显）
 _INITIAL_VIEW_S = 10.0
 # 通道间距的稳健估计：振幅 = 全通道 MAD 的倍数（对尖峰/坏道不敏感）
@@ -81,7 +102,10 @@ def minmax_decimate(times: np.ndarray, values: np.ndarray, max_points: int):
     i_min = v.argmin(axis=1)
     i_max = v.argmax(axis=1)
     t_min, v_min = t[rows, i_min], v[rows, i_min]
-    t_max, v_max = t[rows, i_max], t[rows, i_max]
+    # v_max 曾误写成 t[rows, i_max]（单字符变量名同长，肉眼极难发现）——
+    # 包络的"max 点"全部变成时间戳（~0-10 的 小值），上半包络塌到 0 附近，
+    # 密集窗口渲染成从真实 min 直落到 0 的密集竖线带（M6.7b 定位修复）
+    t_max, v_max = t[rows, i_max], v[rows, i_max]
     # 保证每对内两点按时间序（包络竖线方向一致）
     swap = t_min > t_max
     out_t = np.empty(2 * t.shape[0])
@@ -107,6 +131,19 @@ def _nice_number(v: float) -> float:
         if frac <= m * 1.000001:
             return m * 10.0**e
     return 10.0 ** (e + 1)
+
+
+def _fmt_offset_uv(v: float) -> str:
+    """通道直流偏移（µV）→ 紧凑带符号文本：+45.2k / −375.0k / +5.20M / +12.3.
+
+    clinicaldata 级偏移（数千到数十万 µV）用 k/M 缩写才能塞进通道列表行。
+    """
+    a = abs(v)
+    if a >= 1e6:
+        return f"{v / 1e6:+.2f}M"
+    if a >= 1e3:
+        return f"{v / 1e3:+.1f}k"
+    return f"{v:+.1f}"
 
 
 class _PanViewBox(pg.ViewBox):
@@ -156,9 +193,13 @@ class SignalBrowserView(QWidget):
         # 每通道 {idx, name, curve, label, enabled}；label = 行内嵌通道名标签
         self._channels: list[dict] = []
         self._spacing_uv = 100.0  # 通道间距（µV），首帧数据到来后自动估计
-        self._gain = 0.0  # 滑杆刻度值（增益=10^(x/10)）；初值 0 = 1.0×。
+        self._gain = 0.0  # 增益的权威值（dB×10 浮点，增益=10^(x/10)）；初值 0 = 1.0×。
         # （M6 修复：旧值 1.0 让首帧一直带 10^0.1≈1.26× 的隐形增益——
         #   滑杆初始就是 0，字段却初始化成 1.0，从 M1 潜伏至今）
+        # （M6.8 改为浮点：滑杆整数刻度只是粗调吸附，输入框才是精确权威源）
+        self._gain_syncing = False  # 程序化同步滑杆/输入框时不触发用户处理逻辑
+        self._abs_lo: float | None = None  # 绝对模式 y 自适配范围（本窗口数据×增益）
+        self._abs_hi: float | None = None
         self._event_lines: list[pg.InfiniteLine] = []
         self._loaded_once = False
         # 坏道标记（raw 未加载时先记在这里，加载后一次性写入 info["bads"]）
@@ -169,8 +210,6 @@ class SignalBrowserView(QWidget):
         self._populate_channels()
 
         # 首帧数据（含 ensure_raw）在后台线程，避免大文件头读取卡 UI
-        from ...workers.generic import run_in_thread
-
         run_in_thread(
             lambda: self.rec.ensure_raw(self.rec.recommended_policy()),
             on_done=self._on_raw_ready,
@@ -180,14 +219,19 @@ class SignalBrowserView(QWidget):
     # ------------------------------------------------------------------ UI 构建
 
     def _build_ui(self) -> None:
-        # 工具条：翻屏导航 + 一屏时长（M6）｜ 时间 + 事件跳转 + 增益（旧版沿用）
+        # 工具条：翻屏导航 + 一屏时长（M6）+ 秒级平移（M6.8）｜
+        # 时间 + 事件跳转 + 行居中开关 + 增益滑杆/输入框（M6.8）
         bar = QHBoxLayout()
         self._btn_first = QPushButton(S.BTN_GO_FIRST)
         self._btn_prev_page = QPushButton(S.BTN_PREV_PAGE)
+        self._btn_prev_s = QPushButton(S.BTN_PREV_S)  # ±1s：细于 0.9 屏的步进
+        self._btn_next_s = QPushButton(S.BTN_NEXT_S)
         self._btn_next_page = QPushButton(S.BTN_NEXT_PAGE)
         self._btn_last = QPushButton(S.BTN_GO_LAST)
         self._btn_first.clicked.connect(lambda: self._go_edge(first=True))
         self._btn_prev_page.clicked.connect(lambda: self._page(-1))
+        self._btn_prev_s.clicked.connect(lambda: self._step_s(-1))
+        self._btn_next_s.clicked.connect(lambda: self._step_s(+1))
         self._btn_next_page.clicked.connect(lambda: self._page(+1))
         self._btn_last.clicked.connect(lambda: self._go_edge(first=False))
 
@@ -207,24 +251,43 @@ class SignalBrowserView(QWidget):
         # 曾长期接反（prev→+1/next→-1），写使用手册盘点 UI 时发现于 2026-08-18 修正。
         self._btn_prev.clicked.connect(lambda: self._jump_event(-1))
         self._btn_next.clicked.connect(lambda: self._jump_event(+1))
+        # 行居中开关（M6.8）：默认勾选 = M6.7b 行为；不勾显示绝对电平
+        self._center_cb = QCheckBox(S.CB_ROW_CENTER)
+        self._center_cb.setChecked(True)
+        self._center_cb.setToolTip(S.CB_ROW_CENTER_TIP)
+        self._center_cb.toggled.connect(lambda _on: self._refresh_data())
         gain_lbl = QLabel(S.LBL_GAIN)
         self._gain_slider = QSlider(Qt.Orientation.Horizontal)
-        self._gain_slider.setRange(-20, 20)  # 10^(x/10)：0.1× – 10×，指数刻度
+        self._gain_slider.setRange(-20, 20)  # 10^(x/10)：0.01× – 100×，指数刻度（粗调）
         self._gain_slider.setValue(0)
         self._gain_slider.valueChanged.connect(self._on_gain)
         self._gain_slider.setMaximumWidth(160)
+        # 增益输入框（M6.8）：精确倍率的权威源（滑杆整数刻度只能 10^(n/10) 档，
+        # 无法设 2.5× 这类值）；双向同步见 _set_gain
+        self._gain_spin = QDoubleSpinBox()
+        self._gain_spin.setRange(0.01, 100.0)  # 与滑杆 -20..20 对应（同一对数尺度）
+        self._gain_spin.setDecimals(2)
+        self._gain_spin.setSingleStep(0.1)
+        self._gain_spin.setSuffix(f" {S.GAIN_SUFFIX}")
+        self._gain_spin.setValue(1.0)
+        self._gain_spin.valueChanged.connect(self._on_gain_spin)
+        self._gain_spin.setMaximumWidth(90)
         for w in (
-            self._btn_first, self._btn_prev_page, self._btn_next_page, self._btn_last,
-            win_lbl, self._window_combo,
+            self._btn_first, self._btn_prev_page, self._btn_prev_s, self._btn_next_s,
+            self._btn_next_page, self._btn_last, win_lbl, self._window_combo,
         ):
             bar.addWidget(w)
         bar.addStretch(1)
-        for w in (self._lbl_time, self._btn_prev, self._btn_next, gain_lbl, self._gain_slider):
+        for w in (
+            self._lbl_time, self._btn_prev, self._btn_next, self._center_cb,
+            gain_lbl, self._gain_slider, self._gain_spin,
+        ):
             bar.addWidget(w)
 
-        # 通道列表（左）：勾选显隐 + 右键标记坏道（M3 与 BadChannelsStep 联动）
+        # 通道列表（左）：勾选显隐 + 右键标记坏道（M3 与 BadChannelsStep 联动）；
+        # M6.8 起每行还显示该通道的直流偏移（后台算好后拼进 text）
         self._ch_list = QListWidget()
-        self._ch_list.setMaximumWidth(150)
+        self._ch_list.setMaximumWidth(200)
         self._ch_list.itemChanged.connect(self._on_channel_toggle)
         self._ch_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self._ch_list.customContextMenuRequested.connect(self._on_channel_context)
@@ -237,6 +300,8 @@ class SignalBrowserView(QWidget):
         self._gfx.addItem(self._lane, 1, 0)
         self._lane.wire_click()  # 进 scene 后才能绑点击（见 EventLane.wire_click）
         self._lane.clicked_time.connect(self._center_at)
+        # 总览滑块双向联动（M6.8）：拖滑块 → 主图跟随；主图视口变化 → 滑块回写
+        self._lane.viewport_moved.connect(self._on_lane_viewport)
         # 行高：主图占 5，事件条占 1
         self._gfx.ci.layout.setRowStretchFactor(0, 5)
         self._gfx.ci.layout.setRowStretchFactor(1, 1)
@@ -281,6 +346,9 @@ class SignalBrowserView(QWidget):
             )
             label.setPos(0.0, i * self._spacing_uv)  # 先放个初值，首帧刷新对齐
             item = QListWidgetItem(name)
+            # 名称的权威源放 UserRole（M6.8）：text 后续会被拼上直流偏移值
+            # （"CH1  +45.2k µV"），右键菜单/坏道标记不能再拿 text 当名字
+            item.setData(Qt.ItemDataRole.UserRole, name)
             item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
             item.setCheckState(Qt.CheckState.Checked)
             self._ch_list.addItem(item)
@@ -311,7 +379,56 @@ class SignalBrowserView(QWidget):
             self.rec.raw.info["bads"] = self.current_bads()  # 加载前的标记补写
         vb = self._plot.getViewBox()
         vb.sigRangeChanged.connect(self._schedule_refresh)
+        # 总览滑块即时回写（M6.8）：直连、不走 30ms 防抖——拖主图/滚轮时
+        # 滑块跟手；读数刷新仍走防抖（数据量被像素约束，两者不冲突）
+        vb.sigRangeChanged.connect(lambda *_a: self._lane.set_viewport(*self._visible_range()))
         self._refresh_data()
+        # 各通道直流偏移统计（通道列表显示用）：后台算，完成后主线程拼进列表
+        run_in_thread(
+            self._compute_channel_offsets,
+            on_done=self._apply_channel_offsets,
+            on_error=lambda m: logger.warning("通道偏移统计失败 %s：%s",
+                                              self.rec.meta.filename, m),
+        )
+
+    def _compute_channel_offsets(self) -> np.ndarray:
+        """每通道的直流偏移（µV）= 分窗中位数再取中位数（后台线程执行）.
+
+        不整载 ``get_data()``（LAZY 大文件会物化整个数组）：沿录制全长取
+        ≤20 个均匀分布的 2s 窗逐窗取中位数，再对窗口取中位数——对 DC
+        偏移这一统计量与全程中位数等价，且对局部瞬态/慢漂移更稳健。
+        """
+        n_ch = len(self.rec.meta.channel_names)
+        dur = self.rec.meta.duration_s
+        m = min(20, max(1, int(dur / 2)))  # 窗数：2s 窗且至多 20 个
+        medians = np.zeros((m, n_ch))
+        for k in range(m):
+            t0 = dur * k / m
+            t1 = min(t0 + 2.0, dur)
+            if t1 <= t0:
+                t1 = min(t0 + 0.1, dur)
+            data, _ = self.rec.get_window(t0, t1, list(range(n_ch)))
+            if data.shape[1] == 0:
+                continue
+            medians[k] = np.median(data * _UV, axis=1)
+        return np.median(medians, axis=0)
+
+    def _apply_channel_offsets(self, offsets: np.ndarray) -> None:
+        """偏移统计完成（主线程）：拼进通道列表行文本.
+
+        ``blockSignals`` 必须有——``itemChanged`` 在 ``setText`` 时也触发，
+        不挡会连发 N 次 ``_on_channel_toggle`` → 无谓刷新。
+        """
+        self._ch_offsets = offsets
+        self._ch_list.blockSignals(True)
+        try:
+            for i in range(min(len(offsets), self._ch_list.count())):
+                name = self._ch_list.item(i).data(Qt.ItemDataRole.UserRole)
+                self._ch_list.item(i).setText(
+                    f"{name}  {_fmt_offset_uv(float(offsets[i]))} {S.UNIT_UV}"
+                )
+        finally:
+            self._ch_list.blockSignals(False)
 
     def _schedule_refresh(self, *_a) -> None:
         """视口变化 → 防抖后刷新（拖动过程只在停顿时真正读数）."""
@@ -341,20 +458,58 @@ class SignalBrowserView(QWidget):
             max_points = width_px * _SAMPLES_PER_PIXEL
             if data_uv.shape[1] > 0 and not self._spacing_estimated:
                 self._estimate_spacing(data_uv)
+            # 行居中的基线 = 每通道**本窗口**中位数（随视口重算）：不管通道
+            # 带多大直流偏移/慢漂移，波形始终落在自己行的附近（M6.7b）。
+            # 窗口内漂移的"斜率形状"仍然如实呈现，只有跨窗口的绝对电平
+            # 不再进入画面（EEG 浏览器通行语义；绝对电平看特征/导出）。
+            # M6.8 起可由「行居中」开关关闭——关闭后按绝对电平显示（见下）。
+            centering = self._center_cb.isChecked()
+            if centering and data_uv.shape[1] > 0:
+                baselines = np.median(data_uv, axis=1)
+            else:
+                baselines = np.zeros(len(enabled))
             gain = self._gain_scale()
+            # 绝对模式的 y 自适配范围（本窗口数据 × 增益；空窗口保持原范围）
+            self._abs_lo = float(data_uv.min()) * gain if data_uv.size else None
+            self._abs_hi = float(data_uv.max()) * gain if data_uv.size else None
             for row, ch in enumerate(enabled):
                 out_t, out_v = minmax_decimate(times, data_uv[row], max_points)
-                # 增益乘波形、间距不乘（M6 修复：旧版 `out_v + idx*spacing*gain`
-                # 只拉开基线不缩波形，gain>1 时上方通道飞出固定 yRange、
-                # gain<1 时全部叠回基线——与"只缩波形不挪基线"的语义相反）
-                ch["curve"].setData(
-                    out_t, out_v * gain + ch["idx"] * self._spacing_uv,
-                    connect="pairs",
-                )
-        # 通道标签跟随视口左缘（所有通道都更新，含隐藏——便宜且状态一致）
+                # connect 只对抽取后的 (min,max) 成对结构用 "pairs"；raw 透传
+                # （n ≤ max_points，minmax_decimate 原样返回）必须 "all" 整段
+                # 连线——原始序列带 pairs 会 0-1/2-3/… 隔段漏画，波形呈断续
+                # 虚线（M6.7 修复，"9s 屏线太虚"根因）
+                connect = "pairs" if len(times) > max_points else "all"
+                # 显示值（行居中）=（原始值 − 行基线）× 增益 + 行位置：增益只
+                # 缩波形不挪基线（M6 修复语义不变）；行基线扣除让 DC 耦合
+                # 数据的波形留在锁定 yRange 内（M6.7b，"空白 tab"根因）。
+                # 显示值（绝对模式）= 原始值 × 增益：无行偏移、纯电平堆叠，
+                # 通道间真实电平差直接可见（yRange 同步自适配，见 _apply_y_range）
+                if centering:
+                    disp = (out_v - baselines[row]) * gain + ch["idx"] * self._spacing_uv
+                else:
+                    disp = out_v * gain
+                    # 记本窗口中位（含增益）供标签贴行用；隐藏通道用旧值兜底
+                    ch["_med"] = (
+                        float(np.median(data_uv[row])) * gain
+                        if data_uv.shape[1] > 0
+                        else ch.get("_med", ch["idx"] * self._spacing_uv)
+                    )
+                ch["curve"].setData(out_t, disp, connect=connect)
+        # 通道标签跟随视口左缘（所有通道都更新，含隐藏——便宜且状态一致）；
+        # 绝对模式标签贴曲线本窗口中位（行结构已让位于绝对电平，标签是唯一
+        # 行标识；隐藏通道沿用上次 _med 兜底，其 label 本就不可见）
         margin = (t1 - t0) * 0.012
+        centering = self._center_cb.isChecked()
         for ch in self._channels:
-            ch["label"].setPos(t0 + margin, ch["idx"] * self._spacing_uv)
+            y = (
+                ch["idx"] * self._spacing_uv
+                if centering
+                else ch.get("_med", ch["idx"] * self._spacing_uv)
+            )
+            ch["label"].setPos(t0 + margin, y)
+        # y 轴范围按模式应用（行居中=堆叠行布局；绝对=数据自适配）。
+        # 放在 _estimate_spacing 之后：首帧同一次刷新内后写的胜出，天然正确。
+        self._apply_y_range()
         self._update_scale_bar(t0, t1)
         self._update_window_label(t1 - t0)
         # 时间标签
@@ -369,9 +524,13 @@ class SignalBrowserView(QWidget):
         """用首帧数据的稳健振幅估计通道间距（一次即止）.
 
         MAD 对坏通道/瞬态尖峰不敏感，×8 保证相邻通道波形基本不重叠。
+        只统计**有交流起伏的通道**（M6.7b）：开路/饱和平线的 MAD=0，
+        若一并取中位数，平线过半时（clinicaldata TPDJ 系 8 通道 5 条平）
+        中位数恰为 0 → 间距塌缩 → yRange 塌缩 → 全部画到视野外。
         """
         stds = np.median(np.abs(data_uv - np.median(data_uv, axis=1, keepdims=True)), axis=1)
-        amp = float(np.median(stds)) * _SPACING_MAD_SCALE
+        live = stds[stds > 0.01]  # µV 级阈值：真信号 MAD ≥ µV 级，平线严格为 0
+        amp = float(np.median(live)) * _SPACING_MAD_SCALE if len(live) else 0.0
         if amp > 1e-3:  # 全平数据（如常数导联）不覆盖默认值
             self._spacing_uv = amp
             n = len(self._channels)
@@ -380,13 +539,57 @@ class SignalBrowserView(QWidget):
             )
         self._spacing_estimated = True
 
+    def _apply_y_range(self) -> None:
+        """按显示模式应用 y 轴范围（M6.8）——每次刷新末尾调用.
+
+        - 行居中：堆叠行布局 ``[-1.5s, (n+0.5)s]``（与首帧/间距估计同公式），
+          同值重复设置幂等无害；从绝对模式切回时靠它恢复行布局。
+        - 绝对模式：y 自适配本窗口数据范围（留 2% 边）——大直流偏移数据
+          若沿用堆叠 yRange 会全部画在视野外（M6.7b"空白 tab"的绝对模式
+          镜像）。与 y 轴锁定不冲突：锁定只禁用户手势，程序 setYRange 照常。
+
+        幅值标尺是纯视图几何（视口高度÷增益换算真实 µV），与模式无关。
+        """
+        n = max(len(self._channels), 1)
+        if self._center_cb.isChecked():
+            self._plot.setYRange(
+                -1.5 * self._spacing_uv, (n + 0.5) * self._spacing_uv, padding=0
+            )
+        elif self._abs_lo is not None and self._abs_hi is not None and self._abs_hi > self._abs_lo:
+            pad = (self._abs_hi - self._abs_lo) * 0.02
+            self._plot.setYRange(self._abs_lo - pad, self._abs_hi + pad, padding=0)
+
     def _gain_scale(self) -> float:
-        """增益滑杆 → 显示缩放（10^(x/10)，只缩波形不挪基线）."""
+        """增益 → 显示缩放（10^(x/10)，只缩波形不挪基线）."""
         return 10.0 ** (self._gain / 10.0)
 
-    def _on_gain(self, value: int) -> None:
-        self._gain = value
+    def _set_gain(self, value: float) -> None:
+        """增益三入口（滑杆/输入框/键盘）的统一出口（M6.8）.
+
+        ``_gain`` 是 dB×10 浮点权威值；滑杆整数刻度吸附最近档（粗调），
+        输入框显示精确倍率。同步期间置 ``_gain_syncing`` 挡回环
+        （与 ``_combo_lock`` 同一模式）。
+        """
+        v = min(max(value, -20.0), 20.0)
+        self._gain = v
+        self._gain_syncing = True
+        try:
+            self._gain_slider.setValue(int(round(v)))
+            self._gain_spin.setValue(10.0 ** (v / 10.0))
+        finally:
+            self._gain_syncing = False
         self._refresh_data()
+
+    def _on_gain(self, value: int) -> None:
+        if self._gain_syncing:
+            return
+        self._set_gain(float(value))
+
+    def _on_gain_spin(self, value: float) -> None:
+        """输入框倍率 → dB×10（10·log₁₀；0 被范围下限挡在外面）."""
+        if self._gain_syncing or value <= 0:
+            return
+        self._set_gain(10.0 * math.log10(value))
 
     def _update_scale_bar(self, t0: float, t1: float) -> None:
         """右上角幅值标尺：像素长度固定，标注换算回真实 µV（含增益）.
@@ -455,6 +658,14 @@ class SignalBrowserView(QWidget):
         w = t1 - t0
         self._set_x_range(t0 + direction * _PAGE_STEP * w, t1 + direction * _PAGE_STEP * w)
 
+    def _step_s(self, direction: int) -> None:
+        """上一/下一秒（M6.8）：固定 1s 步进，补充翻屏（0.9 屏）的细分辨率.
+
+        高倍放大（一屏 2–5s）时翻屏一步就是大半屏，秒级步进才能逐秒推进。
+        """
+        t0, t1 = self._visible_range()
+        self._set_x_range(t0 + direction, t1 + direction)
+
     def _go_edge(self, first: bool) -> None:
         """最前/最末一屏：[0, w] 或 [dur-w, dur]."""
         dur = self.rec.meta.duration_s
@@ -492,6 +703,18 @@ class SignalBrowserView(QWidget):
             width_s = max(t1 - t0, 0.5)
         self._plot.setXRange(t - width_s / 2, t + width_s / 2, padding=0)
 
+    def _on_lane_viewport(self, t0: float, t1: float) -> None:
+        """总览滑块拖动 → 主图跟随（M6.8）——**只取中心、按自身宽度重锚**.
+
+        不直接采纳滑块两缘的宽度：拖出 [0, duration] 时滑块两条边界线
+        各自被 bounds 钳制、区域会瞬时压窄——若照单全收就把一屏时长
+        永久改掉了。取中心 + 主图当前宽度后，clamp/回写把滑块纠正回来。
+        """
+        t0c, t1c = self._visible_range()
+        w = t1c - t0c
+        c = (t0 + t1) / 2
+        self._set_x_range(c - w / 2, c + w / 2)
+
     def _jump_event(self, direction: int) -> None:
         """上一/下一事件：从当前视图中心出发找最近的事件 onset."""
         ev = self.rec.events
@@ -520,9 +743,11 @@ class SignalBrowserView(QWidget):
         elif k == Qt.Key.Key_End:
             self._go_edge(first=False)
         elif k == Qt.Key.Key_Up:
-            self._gain_slider.setValue(min(self._gain_slider.value() + 1, 20))
+            # 直接在权威值上 ±1（M6.8）：走滑杆 setValue(int) 会把输入框设的
+            # 小数增益（如 2.5× ≈ 3.98 dB×10）取整抹掉，一键跳变 4 倍
+            self._set_gain(self._gain + 1.0)
         elif k == Qt.Key.Key_Down:
-            self._gain_slider.setValue(max(self._gain_slider.value() - 1, -20))
+            self._set_gain(self._gain - 1.0)
         else:
             super().keyPressEvent(ev)
             return
@@ -545,11 +770,11 @@ class SignalBrowserView(QWidget):
         return sorted(self._bad_names)
 
     def _on_channel_context(self, pos) -> None:
-        """通道右键 → 标记/取消坏道."""
+        """通道右键 → 标记/取消坏道（名字取 UserRole——text 已被偏移值拼接）."""
         item = self._ch_list.itemAt(pos)
         if item is None:
             return
-        name = item.text()
+        name = item.data(Qt.ItemDataRole.UserRole)
         menu = QMenu(self._ch_list)
         unmark = name in self._bad_names
         act = menu.addAction(S.MENU_UNMARK_BAD if unmark else S.MENU_MARK_BAD)

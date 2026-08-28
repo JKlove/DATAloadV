@@ -54,11 +54,13 @@ class MainWindow(QMainWindow):
         self.setWindowTitle(S.APP_TITLE)
         self.resize(1440, 900)
 
-        # pyqtgraph 全局浅色（白底）主题（M6 按用户要求由深色更换；关闭抗锯齿
-        # 换取大数据量绘制性能，信号浏览器用峰值包络弥补视觉锯齿——
+        # pyqtgraph 全局浅色（白底）主题（M6 按用户要求由深色更换；
+        # antialias=True（M6.7 恢复）：信号浏览器两档绘制把每条曲线点数
+        # 约束在 ~3×像素宽以内，抗锯齿开销可承受；关闭时亚像素 1px 线段
+        # 会整段丢失，白底上波形发虚——
         # 配色调整集中在各控件：S.SIGNAL_PEN_COLOR / S.PLOT_TEXT_COLOR /
         # event_lane.EVENT_PALETTE / psd_view._SERIES_COLORS / batch_view._STATUS_COLOR）
-        pg.setConfigOptions(background="w", foreground="k", antialias=False)
+        pg.setConfigOptions(background="w", foreground="k", antialias=True)
 
         self.state = SessionState()
         self.state.workspace_changed.connect(self._refresh_views)

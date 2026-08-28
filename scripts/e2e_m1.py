@@ -9,6 +9,8 @@
 from __future__ import annotations
 
 import sys
+
+import numpy as np
 from pathlib import Path
 
 PROJECT = Path(__file__).resolve().parent.parent
@@ -106,6 +108,28 @@ def main() -> int:
                       abs(t1e - dur) < 1e-3 and abs((t1e - t0e) - 5.0) < 1e-3)
                 v._refresh_data()
                 check("M6 幅值标尺标注 µV", "µV" in v._scale_text.toPlainText())
+                # M6.8 回归：秒级平移 / 行居中开关（绝对模式 y 自适配——
+                # 羊 CH1 大直流偏移是天然考题）/ 总览滑块跟随视口
+                v._go_edge(first=True)
+                v._step_s(+1)
+                t0s, _ = v._visible_range()
+                check("M6.8 ±1s 平移", abs(t0s - 1.0) < 1e-6)
+                v._center_cb.setChecked(False)
+                v._refresh_data()
+                y0f, y1f = v._plot.getViewBox().viewRange()[1]
+                meds = [
+                    float(np.median(c["curve"].yData)) for c in enabled
+                    if c["curve"].yData is not None and len(c["curve"].yData)
+                ]
+                check("M6.8 绝对模式 y 自适配含曲线",
+                      meds and all(y0f <= m <= y1f for m in meds))
+                v._center_cb.setChecked(True)
+                v._refresh_data()
+                v._page(+1)
+                r0, r1 = v._lane._region.getRegion()
+                t0r, t1r = v._visible_range()
+                check("M6.8 总览滑块跟随视口",
+                      abs(r0 - t0r) < 1e-3 and abs(r1 - t1r) < 1e-3)
         finally:
             QTimer.singleShot(300, _stage4)
 

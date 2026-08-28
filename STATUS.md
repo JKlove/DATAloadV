@@ -116,7 +116,33 @@
    名必须每测试唯一（`request.node.name`）+ teardown unlink，否则"删了 1 条"的上一步状态
    污染下一步（曾 3==2 假失败）
 
+## M6.7 关键实证结论（写代码前实测，避免踩坑）
+
+1. **pyqtgraph `connect="pairs"` 会把 raw 透传序列隔段漏画**（0-1/2-3/… 只连一半段）——
+   用户"9s 屏线太虚"的直接根因；pairs 只对 min/max 成对结构合法，raw 必须用默认 "all"
+2. **抽取阈值悬崖正好卡在 9s/10s 之间（Retina）**：`vb.width()` 返回**逻辑像素**
+   （≈物理一半；实测布局 1212px）→ 旧阈值 max_points=2424，250Hz 数据 10s=2500>2424
+   触发 m=2 抽取（相邻样本画成竖线=密集成带）、9s=2250≤2424 走 raw。阈值提到 3 样本/px
+   后 1/2/5/10s 预设全留折线档（30s=7500 才切包络），观感连续无跳变
+3. **`minmax_decimate` 在 m=2 时输出点数==输入点数**（2500→1250 桶×2 点）——判断
+   "是否抽取"不能用长度比较，用同一条件 `n > max_points`
+4. **工作区测试隔离事故链（M6.6 埋雷 → M6.7 实锤）**：持久化真实布局是
+   `workspaces/<名>/workspace.json` 目录（teardown 按 `<名>.json` glob 永远落空）+
+   `current_workspace.txt` 全局标记被测试改写不恢复（用户 GUI 续进测试名工作区，当天
+   1574 条真实导入被困 `test_删除_*` 目录）+ qtbot 关窗 closeEvent 自动 save 再落盘
+   → 后续 pytest 首载 1574 条稳定失败。fixture 三重隔离：preset 标记/closeEvent 落盘
+   改道 tmp/按真实布局 rmtree + 恢复标记；用户数据已修复（并入 默认工作区 1572 条，
+   备份 /tmp/dataloadv_repair_backup_20260827_160326）
+
 ## 最近变更记录（新条目加在最上面）
+
+- 2026-08-28（M6.8 完成，用户四项浏览增强需求驱动）：**①行居中开关**：工具栏 QCheckBox「行居中」默认开（=M6.7b 行为，现有回归零改动）；关闭 = 绝对电平显示（`out_v*gain`、无行偏移、通道间真实电平差直接可见）+ `_apply_y_range` 每次 y 自适配本窗口数据范围±2%（否则大偏移数据绝对模式又是"空白"镜像）；绝对模式行标签贴曲线本窗口中位（`ch["_med"]` 兜底隐藏通道）。**②通道列表直流偏移显示**：`_compute_channel_offsets` 后台分窗中位数取中位数（≤20 个均匀 2s 窗，不整载 LAZY 大文件）→ 主线程 `blockSignals` 包住拼 `"CH1  +68.9k µV"`（`itemChanged` 在 setText 也触发，不挡连发刷新）；通道名权威源迁 `UserRole`（右键/坏道标记不得再拿 item.text()）。**③增益输入框**：QDoubleSpinBox 0.01–100×（**勘误：滑杆 -20..20 配 10^(x/10) 实际就是 0.01–100×，旧注释/手册的"0.1×–10×"是错的**）；三入口统一 `_set_gain(float)`——滑杆粗调吸附、键盘 ±1.0 保小数（旧 setValue(int) 会把 2.5× 取整成 10×）、`_gain_syncing` 防环。**④总览时间轴滑块**：EventLane 升级——LinearRegionItem 做视口滑块（**逐线 setMovable(False) 冻结边缘=只平移不改宽**；拖出界 bounds 压窄由 browser 中心重锚自愈）、x 三重锁死 [0,duration]（旧版 setMouseEnabled(x=True) 允许用户拖走 lane 自己+autoRange 随事件漂移=用户"时间轴拖动逻辑不清晰"的根源）、`set_viewport`/`viewport_moved`+`_syncing` 双向防环、主图回写直连不经防抖（拖主图时滑块跟手）；顺带修 L89 硬编码"无事件"→`S.EVENT_LANE_NONE`。**⑤±1s 按钮**（`_step_s`，补充 0.9 屏翻屏的细分辨率）。验证：pytest **193 绿**×2（+22 项：TestStepSecond 3/TestGainInput 4/TestDcToggle 5/TestChannelOffsets 3/TestOverviewLane 7——event_lane 首次有测试）+ e2e_m1 **22 项** + e2e_m3 10 项 + smoke 回归 + 真窗口 DGDJ-位置4 四态截图亲眼确认（居中+偏移列表 / 绝对 y 自适配含 375k 饱和平线 / 2.50× 输入 / 回居中+滑块拖动 [31,41]+时间标签 36.00s/76.0s）。HANDOFF 坑 #52（LinearRegionItem 三细节）/#53（两处注释骗人+itemChanged setText）新增。
+
+- 2026-08-27（M6.7b 完成，用户"第二个数据打开后 tab 空白"截图驱动）：**根因不是加载而是显示几何**（日志无错误/worker 健全/refresh 跑完；截图时间标签"5.00 s / 76.0 s"即 refresh 完成的证据）。**主因**：M6 锁 y 轴 + 堆叠公式假设基线 0 µV，clinicaldata（BioSemi BDF DC 耦合）CH1–4 真信号骑 4.5k–69k µV 直流偏移、CH5–8 饱和平线 ±375000 µV → 曲线全画在锁定 yRange 外，工具栏/标签/网格照常画 = "加载成功的空白"；"第一个能看"是位置1 偏移恰好落界的巧合。**修法 = 行居中**（EEG 浏览器标准做法）：显示值 = (原始值 − 本窗口该通道中位数) × gain + idx×spacing；`_estimate_spacing` 改只按有交流起伏通道（MAD>0.01µV）估计（≥5 条饱和平线会把间距 MAD 拖到 0 塌缩，TPDJ 形态），全平保持默认 100µV。**次因（顺带挖出随 M6.6 潜伏的笔误）**：`minmax_decimate` `t_max, v_max = t[…], t[…]` 双 t（单字符同字节长度，diff 隐形）→ 包络档 max 点全是时间戳、上半包络塌 0——正是 M6.7"10s 密集竖线带"观感的成分之一；诊断指纹 = 常数 375010 进 median 出 187505。验证：pytest **171 绿**×2（+TestOffsetRobustDisplay 4 项：显示中位在界内/平线不塌间距/平线贴行/全平默认间距；+TestMinMaxDecimateValues 2 项：常数进出/桶极值覆盖）+ e2e_m1 19 项 + e2e_m3 10 项 + smoke 回归 + **真窗口用户精确时序四连开（0/11/13/14s）逐 tab 截图亲眼确认 4/4 波形可见**（含用户截图中空白的位置4；教训：非白像素比例会被网格线假阳性，必须看内容——坑 #51）。clinicaldata 通道质量定论写入 DATA_NOTES §8；HANDOFF 坑 #49/#50/#51 新增。
+
+- 2026-08-27（M6.7 完成，用户"10s 密集/9s 发虚"反馈驱动）：**①浏览渲染两档修复**：signal_browser.py raw 透传改 `connect="all"`（旧版无条件 pairs → 隔段漏画=虚线根因）+ 抽取阈值 `_SAMPLES_PER_PIXEL` 2→3 样本/px（Retina 逻辑px 1212 下旧阈值 2424 恰卡在 250Hz 数据 9s=2250/10s=2500 之间——10s 密竖线带、9s 断续虚线的观感突变全由跨档造成；3 让 1/2/5/10s 预设全留折线档、30s+ 才包络）+ main_window antialias 恢复 True（两档绘制点数约束在 ~3×像素宽内，关 AA 亚像素 1px 线段整段丢失）；离屏前后对比渲染实证（sheep/GDF 9s/10s 修后均为连续实线、30s 包络不变）。tests/test_ui_browser_m6.py +TestRenderTwoModes 2 项（折线档 connect=all/包络档 pairs，前提自检跨阈值）。**②工作区测试污染事故修复**：test_ui_workspace_remove.py `win` fixture 三重隔离重写——旧 teardown glob 的 `workspaces/<名>.json` 从不存在（真实布局是目录）、`current_workspace.txt` 标记被劫持不恢复（用户当天 1574 条真实导入被困 `test_删除_*` 目录、后续 pytest 首载 1574 稳定失败）；修法 = 构造前 preset 标记 + teardown closeEvent 落盘改道 tmp + 按真实布局 rmtree + 恢复标记；**用户数据已修复**（清合成来源并入 默认工作区 1572 条/7 来源、标记恢复、4 个残留目录清除，备份 /tmp/dataloadv_repair_backup_20260827_160326）。pytest **165 绿** + e2e_m1 19 项 + smoke 回归；HANDOFF 坑 #45 修正/#47/#48 新增。
+
+- 2026-08-26（诊断闭环，零代码改动）：**慢漂移/幅值增长四轮实证**（用户"sheep+GDF 基线左低右高、幅值越来越高；EDF/MAT 无此问题"提问）：①sheep=**真实漂移**三形态——卧幅值 std ×300（6→1997µV）/data2 基线单调上斜 +204µV/min/术中全通道同号 22.5k→197kµV（参考漂移），纯 mne file-like 直读交叉一致排除读取层，0.5Hz 高通后羊残差 −890µV→建议 高通+去均值/重参考 组合；②GDF 63 文件全量普查——EEG 基线全库 ≤3µV 平稳，唯一例外 B0204E 88µV 系 **EOG 眼电**末段暴跌（EEG 本身 0.1µV 平稳）；"幅值增长"= 开头静息段 + EOG 任务锁定尖峰（EEG std 全程 3–11µV）、无尾部零填充；③EDF/MAT 平稳=录制硬件差异（BioSemi DC 耦合 vs g.USBamp 0.5–100Hz 带通 vs 离线预处理）。方法学：首末窗均值差/std 比 + 时间分辨剖面 + 逐通道×逐时段矩阵 + 纯 mne 交叉 + 整文件 1s 包络 PNG（pyqtgraph offscreen grab）。定论写入 DATA_NOTES §1/§4。
 
 - 2026-08-24（M6.6 完成，用户两问驱动）：**①羊"噪声感"诊断定论**（诊断脚本实证，零代码改动）：CH5–CH8 逐样本相同=开路通道复用（饱和/死值伪迹）、CH4 部分饱和、CH1–CH3 真实皮层信号带大直流偏移、换算 0.125µV/LSB 正确——结论与浏览建议（右键标坏道 CH4–CH8 + 去均值/带通后看 CH1–CH3）写入 DATA_NOTES §1；**②工作区移除条目功能**：ui/strings_zh.py +5 文案（右键菜单/确认框/状态栏）；ui/widgets/workspace_tree.py 加 `remove_requested(list)` 信号（右键菜单 + `_TreeWithDel` 内层树接管 Del/Backspace——焦点在树上容器收不到 keyPress；`_paths_for_item` 分类：录制项单 path/来源节点整组/根不参与）；ui/main_window.py `_remove_from_workspace`（多条先 QMessageBox 确认 → workspace.remove_recording + save + notify 刷新，**只清索引不删磁盘文件**，已开 tab 保留）；tests/test_ui_workspace_remove.py 新建 +6（163 绿，**MainWindow 级测试须 offscreen**）；e2e_m1 19 项 + smoke 回归；MANUAL §3.4/计数、README 计数同步。
 

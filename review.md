@@ -469,3 +469,164 @@ BDF**（文件头 `\xffBIOSEMI`，BioSemi 24-bit）。此前 open_file 只按扩
 - data/ 只读 ✅（移除语义只清索引；测试合成 meta，不触碰真实数据）
 
 **收尾四件事**：DATA_NOTES（羊通道质量核查定论）→ STATUS/TODO/HANDOFF（坑 #45 offscreen）→ MANUAL（§3.4/计数）/README（计数）→ review.md 本节 → 上下文检测 → git commit（用户指令后）
+
+## M6.7 — 浏览渲染两档修复 + 工作区测试污染事故（2026-08-27 完成，用户"10s 密集/9s 发虚"反馈驱动）
+
+### 背景与定位
+
+用户实测：10s 一屏"数据线密集看不出电生理变化"，9s 一屏"能看出来但线太虚"。
+离屏复现 + 阈值数学定位（Retina `vb.width()`=逻辑像素 1212 → 旧 max_points=2424，
+250Hz 数据 9s=2250≤2424、10s=2500>2424 恰跨抽取档）：**两个观感问题各对应一个代码缺陷**——
+① raw 透传无条件 `connect="pairs"` → 隔段漏画=虚线；② 抽取阈值 2 样本/px 太低 → 10s 被切
+成 m=2 逐对竖线（密集成带）。修后离屏前后对比渲染实证：9s/10s 均连续实线、30s 包络不变。
+
+### 改动
+
+- `ui/widgets/signal_browser.py`：raw 透传 `connect="all"`（按 `n > max_points` 分支，注意
+  m=2 时抽取输出点数==输入点数，不能用长度判断）；`_SAMPLES_PER_PIXEL` 2→3（1/2/5/10s
+  预设全留折线档）；模块 docstring 同步
+- `ui/main_window.py`：antialias 恢复 True（两档绘制点数约束在 ~3×像素宽内；关 AA 亚像素
+  1px 线段整段丢失）
+- `tests/test_ui_browser_m6.py`：+TestRenderTwoModes 2 项（前提自检跨阈值）
+- `tests/test_ui_workspace_remove.py`：`win` fixture 三重隔离重写（见下）
+
+### 事故与修复（工作区测试污染，用户数据受影响）
+
+M6.6 fixture 两处失效：teardown glob 的 `workspaces/<名>.json` **从不存在**（真实布局
+`workspaces/<名>/workspace.json` 目录）；`reload_workspace` 改写全局 `current_workspace.txt`
+标记且不恢复 → 用户 GUI 续进测试名工作区，**08-27 当天 8 来源 1574 条真实导入被困
+`test_删除_*` 目录**；qtbot 关窗 closeEvent 自动 save 再落盘 → 后续 pytest 首载 1574 稳定
+失败（干净 main 同样失败，与本日渲染改动无关，git stash 实证）。修复：fixture preset 标记
++ closeEvent 落盘改道 tmp_path 替身 + 按真实布局 rmtree + 恢复用户标记；**用户数据已修复**
+（合成来源清除、1572 条并入 默认工作区/7 来源、标记恢复、4 个残留目录删除；
+完整备份 /tmp/dataloadv_repair_backup_20260827_160326）。
+
+### 架构四条 & 验证
+
+- 计算层六包无 Qt import ✅（改动全在 ui/、tests/）
+- UI 只编排不计算 ✅（渲染分支是纯展示逻辑）
+- 跨线程只传纯 Python/mne 对象 ✅（未新增线程路径）
+- data/ 只读 ✅（诊断渲染只读真实文件；工作区修复只动 ~/.dataloadv 索引）
+
+**验证**：pytest **165 绿**（163+2，offscreen）；e2e_m1 19 项 ALL OK；smoke OK；
+跑后 `~/.dataloadv/workspaces` 无 test_* 残留、标记稳定 默认工作区；
+离屏前后对比渲染（sheep/GDF × 9s/10s/30s）目检通过。
+
+**收尾四件事**：治理同步（STATUS 实证/变更记录、HANDOFF 坑 #45 修正 + #47/#48、
+MANUAL/README 计数与两档描述、DATA_NOTES 补 clinicaldata）→ review.md 本节 →
+上下文检测 → git commit（用户指令后）
+
+## M6.7b — "第二个数据打开后 tab 空白"：行居中 + minmax 笔误（2026-08-27 完成，用户四连开截图驱动）
+
+### 背景与定位
+
+用户实测：会话内第一个数据能正常显示，之后再打开的 tab 全是空白（工具栏/标签在，波形区空）；
+退出重启后第一个又能看、后续仍空白。**取证链**（日志 3108–3127 = 截图会话四连开 0/11/13/14s，
+零错误零"后台任务失败"→ 排除加载层；截图时间标签"5.00 s / 76.0 s"只在 `_refresh_data_inner`
+设置 → refresh 已跑完；DGDJ-位置4 yRange 跨度换算与 500µV 标尺逐位吻合 → 几何而非渲染）。
+**主因**：M6 锁 y 轴 + 堆叠公式 `(值) + idx*spacing` 假设基线 0——clinicaldata 是 BioSemi BDF
+**DC 耦合**，CH1–4 真信号骑 4.5k–69k µV 直流偏移上、CH5–8 饱和平线 ±375000 µV → 曲线全画在
+锁定 yRange 外数千 µV 处。"第一个能看"是位置1 偏移恰落范围内的巧合。**次因**（挖出随 M6.6
+提交潜伏的笔误）：`minmax_decimate` 第二个赋值 `v_max = t[rows, i_max]`（双 t，单字符同字节
+长度 diff 隐形）→ 包络档 max 点全是时间戳（0–10 小值）、上半包络塌 0——M6.7"10s 密集竖线带"
+观感的成分之一；诊断指纹：常数 375010 输入 median 输出 187505（真值/时间戳各半）。
+
+### 改动
+
+- `ui/widgets/signal_browser.py`：①`_refresh_data_inner` 行居中——`baselines = np.median(
+  data_uv, axis=1)`（本窗口每通道中位数），显示值 = `(out_v - baselines[row]) * gain +
+  idx*spacing`；窗口内漂移形状仍如实呈现，跨窗口绝对电平不进画面（EEG 浏览器标准做法）。
+  ②`_estimate_spacing` 只按有交流起伏的通道（MAD>0.01µV）估计——≥5 条饱和平线把 MAD 中位数
+  拖到 0、间距塌缩（TPDJ-位置1 形态）；全平录音保持默认 100µV。③`minmax_decimate` 双 t 笔误
+  修复（`v_max = v[rows, i_max]`），函数内留笔误形态注释。④模块 docstring 第 4 点记录行居中
+  语义与缘由。
+- `tests/test_ui_browser_m6.py`：+TestOffsetRobustDisplay 4 项（clinicaldata 形态合成 FIF：
+  3 条大偏移真信号 + 5 条饱和平线——每通道显示中位数必在锁定 yRange 内【空白 tab 直接回归】/
+  间距忽略平线通道/平线贴自己行 ±1µV/全平录音默认间距且 yRange 不塌缩）；+TestMinMaxDecimate
+  Values 2 项（常数 375010 进出不变——时间戳泄漏的直接断言；250/16 Hz 正弦桶宽=整周期，
+  极值覆盖 ±5µV + 值域 >40000 + 对内时间序契约）。
+
+### 验证
+
+- pytest **171 绿**（全量 ×2 复跑稳定；曾 1 次 test_ui_workspace_remove 顺序偶发，复跑两次
+  全绿——线程时序性质，非本次改动引入）
+- e2e_m1 19 项 / e2e_m3 10 项 / smoke_gui 全过
+- **真窗口用户精确时序复刻**（0/11/13/14s 四连开 DGDJ 位置1–4，1369×916）：四个 tab 全部
+  loaded、2500 点、CH1 显示中位 ≈0（贴行0），逐 tab 截图亲眼确认 4/4 波形真实可见（位置1–4
+  的 CH1–4 波形 + CH5–8 平线；含用户截图中空白的位置4）。临床截图不外传图床，本地读图核验。
+
+### 架构四条 & 教训
+
+- 计算层六包无 Qt import ✅（改动全在 ui/、tests/）
+- UI 只编排不计算 ✅（行居中/间距估计是纯展示几何）
+- 跨线程只传纯 Python/mne 对象 ✅（未新增线程路径）
+- data/ 只读 ✅（诊断只读真实文件；截图仅存 /tmp）
+- 教训（HANDOFF 坑 #49/#50/#51）：y 锁定的堆叠显示必须行居中（DC 耦合世界基线不在 0）；
+  单字符变量名笔误同字节长度 diff 隐形——min/max 类函数要常数进出数值断言；非白像素占比
+  会被网格线假阳性，视觉验证必须看内容；源码显示与行为矛盾时 `ast.parse`/`git show` 终裁。
+
+## M6.8 — 浏览器四功能：行居中开关/增益输入/总览滑块/±1s（2026-08-28 完成，用户四项需求驱动）
+
+### 需求与实现
+
+用户四项：①DC offset 开关（行居中可开关 + 通道列表显示各通道直流偏移）；
+②增益可输入（保留滑杆 + 数值设置框）；③总览时间轴+可拖滑块；④上一秒/下一秒按钮。
+
+- **行居中开关**（`signal_browser.py`）：工具栏 QCheckBox「行居中」默认开（=M6.7b 行为，
+  现有 TestOffsetRobustDisplay 零改动全绿）。关闭 = 绝对电平：显示值 `out_v*gain`
+  （无行偏移、通道间真实电平差直接可见）；`_apply_y_range` 每次刷新按模式应用——
+  居中=堆叠行布局公式（同值幂等，往返恢复），绝对=本窗口数据范围±2% 自适配
+  （`_abs_lo/_hi`，空窗口保持原范围；不做自适配则大偏移数据在绝对模式下重演
+  "空白 tab"）。绝对模式行标签贴曲线本窗口中位（`ch["_med"]`，隐藏通道用旧值兜底）。
+- **通道偏移显示**：`_compute_channel_offsets` 后台纯 numpy——≤20 个均匀 2s 窗
+  逐窗中位数再取中位数（**不整载**：`get_data()` 会物化 LAZY 大文件全数组），
+  `run_in_thread` → 主线程 `_apply_channel_offsets`。两个坑的防护：`blockSignals`
+  包住 `setText`（`itemChanged` 在 setText 也触发，不挡连发 N 次 refresh）；
+  通道名权威源迁 `item.setData(UserRole, name)`（`_on_channel_context` 改读 UserRole，
+  `toggle_bad` 按名匹配不受影响）。列表宽 150→200；`_fmt_offset_uv` 自适应 k/M。
+- **增益输入**：QDoubleSpinBox 0.01–100×（2 位小数、suffix"×"）。三入口统一
+  `_set_gain(float)`：clamp ±20 → 存 dB×10 浮点权威值 → `_gain_syncing` 标志内同步
+  滑杆（round 吸附）与 spin（10^(v/10)）→ 刷新。**勘误**：滑杆 -20..20 配 10^(x/10)
+  实际就是 0.01×–100×，代码注释与 MANUAL 写的"0.1×–10×"一直是错的（spin 范围照旧
+  注释写就会与滑杆两端脱钩）。键盘 ↑↓ 改 `self._gain ± 1.0`（旧 `setValue(int)` 会把
+  输入框设的 2.5×≈3.98 取整成 10×，一键跳变 4 倍）。
+- **总览时间轴滑块**（`event_lane.py`）：LinearRegionItem 做当前视口滑块——**逐线
+  `line.setMovable(False)` 冻结边缘**（拖区域=两线整体移动天然保宽；拖边界=各自独立
+  InfiniteLine，冻结即"只平移"，一屏时长归主图管）；x 三重锁死 [0,duration]
+  （setLimits + setXRange + enableAutoRange(False)）+ `setMouseEnabled(False,False)`
+  （旧版 x=True 允许用户拖走 lane 自己的 x 轴、autoRange 又随事件范围漂移——
+  用户"时间轴拖动逻辑不清晰"的完整根源；docstring 声称的 setXLink 从未实现，已删）。
+  双向联动：用户拖滑块 → `viewport_moved` → browser `_on_lane_viewport` **只取中心、
+  按主图自身宽度重锚**（拖出界两线各自被 bounds 钳制、区域瞬时压窄——直接采纳两缘
+  会把一屏时长永久改掉）；主图 `sigRangeChanged` 直连 `lane.set_viewport`（不经
+  30ms 防抖，拖主图时滑块跟手）。防环两级：`set_viewport` 值相同早退 + `_syncing`
+  包住 setRegion 吞掉它的 emit。点击居中（`wire_click`/`_on_click`）原样共存
+  （LinearRegionItem 左键点击不 accept，scene 级 sigMouseClicked 照发）。
+  顺带修 L89 硬编码"无事件"→`S.EVENT_LANE_NONE`（文案规范）。
+- **±1s**：`_btn_prev_s`/`_btn_next_s`（「◀ 1s」「1s ▶」）插在上一屏/下一屏之间；
+  `_step_s(direction)` → `_set_x_range(t0±1, t1±1)`（clamp 由统一出口保证）。
+
+### 验证
+
+- pytest **193 绿**全量 ×2（+22：TestStepSecond 3 / TestGainInput 4（含键盘保小数、
+  范围两端不脱钩两个坑的回归）/ TestDcToggle 5（默认居中哨兵/绝对显示值=原始电平/
+  y 自适配含曲线/开关往返/绝对 label 贴中位）/ TestChannelOffsets 3 / TestOverviewLane
+  7（x 锁定/region 定位/拖动→主图跟随/**故意错宽不改一屏时长**/翻屏→region 回写/
+  回写不回响/无事件用文案常量）——event_lane 首次有测试）
+- e2e_m1 **22 项** ALL OK（+3：±1s 精确平移/绝对模式 y 自适配含羊 CH1 大直流/
+  总览滑块跟随视口）；e2e_m3 10 项 + smoke 回归全过
+- **真窗口 DGDJ-位置4 四态截图亲眼确认**：A 默认居中（CH1-4 波形+CH5-8 平线、
+  列表 `CH1 +68.9k µV … CH8 +375.0k µV`、滑块 [0,10]）；B 关行居中（y 自适配
+  [31k, 382k] 覆盖饱和平线，CH1-4 各自电平分层可见）；C spin 输 2.50（中位
+  67288→168220 精确 ×2.5）；D 回居中+程序化拖滑块 (30,40)+±1s → 视口 [31,41]、
+  滑块精确跟随、时间标签 36.00 s / 76.0 s
+- 排查插曲：一次全量跑被 `| tail` 管道假超时（pytest 实际 2.78s 完成，tail 缓冲
+  不退出）——坑 #45"长命令别接管道"再+1 实锤
+
+### 架构四条
+
+- 计算层六包无 Qt import ✅（改动全在 ui/、tests/、scripts/；`_compute_channel_offsets`
+  是纯 numpy 展示统计，与 `_estimate_spacing`/行居中中位数同性质先例）
+- UI 只编排不计算 ✅（偏移统计在 workers 线程，回调主线程拼 UI）
+- 跨线程只传纯 Python/mne 对象 ✅（offsets 是 numpy 数组）
+- data/ 只读 ✅（验证只读真实文件，截图仅存 /tmp）

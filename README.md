@@ -29,7 +29,7 @@ dataloadv          # 或 python -m dataloadv
 
 ## 验证
 
-- 单测：`QT_QPA_PLATFORM=offscreen pytest`（163 项，含真实羊 BDF（.edf 误标）与真实 GDF 数据）
+- 单测：`QT_QPA_PLATFORM=offscreen pytest`（193 项，含真实羊 BDF（.edf 误标）与真实 GDF 数据）
 - 端到端：`python scripts/e2e_m1.py` … `e2e_m5.py`（各里程碑真实数据验收，幂等可反复跑）
 
 环境搭建完整命令见 [HANDOFF.md](HANDOFF.md)；开发计划见 [plan.md](plan.md)，当前进度见 [STATUS.md](STATUS.md)；**说明·运行·使用·调试一册通览见 [MANUAL.md](MANUAL.md)**。

@@ -7,15 +7,14 @@ save + notify（树/表刷新）。移除只清索引，磁盘数据文件不动
 
 from __future__ import annotations
 
-import json
-from pathlib import Path
+import shutil
 
 import pytest
 
 pytest.importorskip("PySide6", reason="无 GUI 环境")
 
 from dataloadv.core.recording import RecordingMeta  # noqa: E402
-from dataloadv.core.workspace import Workspace  # noqa: E402
+from dataloadv.core.workspace import APP_DIR, Workspace  # noqa: E402
 
 
 def _meta(path: str) -> RecordingMeta:
@@ -90,21 +89,44 @@ class TestMainWindowRemove:
 
     @pytest.fixture()
     def win(self, qtbot, tmp_path, request):
-        """一次性工作区隔离的 MainWindow（不碰用户真实 ~/.dataloadv 工作区）.
+        """一次性工作区隔离的 MainWindow（不碰用户真实 ~/.dataloadv 状态）.
 
-        每个测试用唯一工作区名：save 落 ~/.dataloadv/workspaces/<name>.json，
-        测试间不通过持久化文件耦合；teardown 清掉自己的落盘。
+        三重隔离（2026-08-27 修复——旧版隔离失效造成了实锤事故：teardown
+        glob 的 ``workspaces/<名>.json`` 路径**从来不存在**（真实布局是
+        ``workspaces/<名>/workspace.json`` 目录），测试目录全部残留；且
+        ``reload_workspace`` 会改写全局"当前工作区"标记 ``current_workspace.txt``
+        且从不恢复——用户下次启动 GUI 直接续进了测试名工作区，当天的
+        1574 条真实导入全落在了 ``test_删除_*`` 目录里，再反过来污染测试）：
+        1. 构造 MainWindow **前**先把标记 preset 成测试名——初始加载就不会
+           去解析用户真实工作区；teardown 恢复用户原标记（原先没有则删掉）。
+        2. teardown 把 ``state.workspace`` 换成落盘目标在 tmp_path 的替身——
+           qtbot 关窗触发的 ``closeEvent`` 会 ``workspace.save()``，写进
+           tmp 而不是 ``~/.dataloadv``。
+        3. 按真实布局删 ``workspaces/<名>/`` 整个目录。
         """
         from dataloadv.ui.main_window import MainWindow
 
         name = f"test_删除_{request.node.name}"
+        marker = APP_DIR / "current_workspace.txt"
+        had_marker = marker.exists()
+        before_text = marker.read_text(encoding="utf-8") if had_marker else None
+        Workspace.set_current(name)  # MainWindow() 构造即加载空测试工作区
         win = MainWindow()
         qtbot.addWidget(win)
         win.state.reload_workspace(name)
         win._test_ws_name = name  # 重载断言用（见 test_multi_remove_with_confirm）
         yield win
-        for p in Path.home().glob(f".dataloadv/workspaces/{name}.json"):
-            p.unlink(missing_ok=True)
+        # ① closeEvent 落盘改道 tmp（qtbot 关窗发生在本 teardown 之后）
+        stub = Workspace(name)
+        stub._file = tmp_path / "close_event_save.json"
+        win.state.workspace = stub
+        # ② 删测试工作区目录（真实持久化布局）
+        shutil.rmtree(Workspace(name)._file.parent, ignore_errors=True)
+        # ③ 恢复用户"当前工作区"标记
+        if had_marker:
+            marker.write_text(before_text, encoding="utf-8")
+        else:
+            marker.unlink(missing_ok=True)
 
     def test_single_remove_no_dialog(self, win):
         from dataloadv.ui import main_window as mw
