@@ -159,6 +159,46 @@
 - [x] 收尾四件事：DATA_NOTES/STATUS/TODO/HANDOFF/MANUAL/README → review.md → 上下文检测 →
       git commit（用户指令后）
 
+## M6.7 浏览渲染两档修复 + 工作区测试污染事故（✅ 2026-08-27 完成，用户"10s 密集/9s 发虚"反馈驱动，验证见 review.md）
+
+- [x] 渲染两档：raw 透传 `connect="all"`（旧版无条件 pairs 隔段漏画=虚线根因）+ 抽取阈值
+      `_SAMPLES_PER_PIXEL` 2→3 样本/px（Retina 逻辑px 下旧阈值恰卡 9s/10s 之间）+
+      antialias 恢复 True
+- [x] TestRenderTwoModes 回归 2 项（折线档 all / 包络档 pairs，前提自检跨阈值）
+- [x] 工作区测试污染事故修复：test_ui_workspace_remove `win` fixture 三重隔离重写
+      （preset 标记 / closeEvent 落盘改道 tmp / 按真实布局 rmtree+恢复标记）；
+      **用户数据已修复**（清合成来源并入 默认工作区 1572 条/7 来源，备份
+      /tmp/dataloadv_repair_backup_20260827_160326）
+- [x] 验证：pytest 165 绿；e2e_m1 19 项 + smoke 回归
+- [x] 收尾四件事：治理文件 → review.md → 上下文检测 → git commit（随 M6.7–M6.8 一并提交 255e67d）
+
+## M6.7b 行居中修复 + minmax 笔误（✅ 2026-08-27 完成，用户"第二个数据打开后 tab 空白"截图驱动，验证见 review.md）
+
+- [x] 根因定论：**显示几何非加载**——y 锁定+堆叠公式假设基线 0，clinicaldata（DC 耦合）
+      CH1–4 骑 4.5k–69k µV 直流、CH5–8 饱和平线 → 曲线画在 yRange 外 = "加载成功的空白"
+- [x] 行居中：显示值 = (原始值 − 本窗中位)×gain + idx×spacing；`_estimate_spacing` 只按
+      有交流起伏通道（MAD>0.01µV），全平保持默认 100µV
+- [x] `minmax_decimate` 双 t 笔误修复（包络档上半包络塌 0 的次因，随 M6.6 潜伏）
+- [x] 验证：pytest 171 绿×2（+6）；e2e_m1/m3/smoke 回归；真窗口四连开（0/11/13/14s）
+      逐 tab 截图确认 4/4 波形可见
+- [x] 收尾四件事：DATA_NOTES §8 clinicaldata 定论 + 治理 → review.md → 上下文检测 →
+      git commit（随 M6.7–M6.8 一并提交 255e67d）
+
+## M6.8 浏览器四功能（✅ 2026-08-28 完成，用户四项需求驱动，验证见 review.md）
+
+- [x] 行居中开关：工具栏 QCheckBox 默认开（=M6.7b 行为，回归零改动）；绝对模式
+      `out_v*gain` + y 自适配±2%，行标签贴曲线本窗中位
+- [x] 通道列表直流偏移显示：后台分窗中位数取中位数（≤20 个 2s 窗不整载）；
+      `blockSignals` 包 setText（itemChanged 在 setText 也触发）；通道名权威源迁 UserRole
+- [x] 增益输入框：QDoubleSpinBox 0.01–100×，三入口统一 `_set_gain(float)`（滑杆粗调/
+      键盘 ±1.0 保小数/`_gain_syncing` 防环）；勘误旧注释"0.1×–10×"
+- [x] 总览时间轴滑块：EventLane 升级（LinearRegionItem 逐线冻边缘只平移、x 三重锁
+      [0,dur]、点击居中共存、`set_viewport`/`viewport_moved`+`_syncing` 双向防环）
+- [x] ±1s 步进按钮（`_step_s`，补 0.9 屏翻屏之下的细分辨率）
+- [x] 验证：pytest 193 绿×2（+22）；e2e_m1 22 项（+3）+ e2e_m3/smoke 回归；真窗口
+      DGDJ-位置4 四态截图确认（居中+偏移列表 / 绝对 y 自适配 / 2.50× / 回居中+滑块拖动）
+- [x] 收尾四件事：治理七件套 → review.md → 上下文检测 → git commit 255e67d
+
 ## 已知问题 / Backlog（v1 收官后暂缓项）
 
 - .edf.event WFDB 边车解析：M1 实测 PhysioNet EDF 内嵌注释已完整，边车为冗余副本，暂不需要；若未来遇到只有边车、无内嵌注释的数据集再补

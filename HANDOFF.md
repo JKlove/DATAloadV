@@ -27,8 +27,10 @@ pip install "mne==1.12.0" edfio
 conda install -y -c conda-forge "pynwb>=3.0"
 pip install "neo>=0.13"
 
-# 5. 本包可编辑安装（含 dev 依赖）
-pip install -e "/Users/huyingbing/VSproject/intervention BCI/DataloadV[dev]"
+# 5. 本包可编辑安装（含 dev 依赖）——在项目根目录（含 pyproject.toml 那层）执行；
+#    用相对路径 "." 安装，不写死本机绝对路径（换终端/换用户/换克隆位置通用）
+cd <项目根目录>             # 例：cd ~/VSproject/"intervention BCI"/DataloadV
+pip install -e ".[dev]"
 ```
 
 **实际安装后的版本**（2026-08-18 M0 安装实测 + M5 追加，与 STATUS.md 保持同步）：
@@ -49,10 +51,9 @@ pip install -e "/Users/huyingbing/VSproject/intervention BCI/DataloadV[dev]"
 ```bash
 conda activate dlv
 dataloadv                                    # 启动应用（或 python -m dataloadv）
-QT_QPA_PLATFORM=offscreen pytest             # 全部单测（M6.6：163 passed，含 real 数据项；
+QT_QPA_PLATFORM=offscreen pytest             # 全部单测（M6.8：193 passed，含 real 数据项；
                                              #   MainWindow 级测试须 offscreen——坑 #45）
 pytest -m real                               # 仅真实数据冒烟（data/sheep 缺失自动跳过；建议同带 offscreen）
-pytest -m real                               # 仅真实数据冒烟（data/sheep 缺失自动跳过）
 python scripts/smoke_gui.py                  # GUI 冒烟：真窗口启动自检后自动退出
 python scripts/e2e_m1.py                     # M1 端到端：真实导入→浏览→渲染→释放（幂等，可反复跑）
 python scripts/e2e_m2.py                     # M2 端到端：4.9GB 扫描+六格式打开（幂等，可反复跑）
@@ -61,7 +62,7 @@ python scripts/e2e_m4.py                     # M4 端到端：特征计算/视�
 python scripts/e2e_m5.py                     # M5 端到端：45 文件批处理+取消+扩展格式（幂等，可反复跑）
 ```
 
-## 架构导览（M5 后的实际结构，v1 收官）
+## 架构导览（M6.8 后的实际结构）
 
 ```
 src/dataloadv/
@@ -122,7 +123,11 @@ src/dataloadv/
                               #   + feature_table（特征结果 tab：长表排序浏览+CSV/HDF5/分段导出+sidecar）
                               #   + batch_view（批处理运行页：逐文件表/失败红显/双击日志对话框；M5）
                               #   signal_browser（M6 重构：_PanViewBox 滚轮平移/通道名行内嵌 TextItem/
-                              #   幅值标尺 _nice_number/翻屏导航/键盘；绘图浅色主题在 main_window 一处）
+                              #   幅值标尺 _nice_number/翻屏导航/键盘；绘图浅色主题在 main_window 一处；
+                              #   M6.7b 行居中——M6.8 加开关+通道偏移显示 UserRole/增益输入框 _set_gain/
+                              #   ±1s 步进/总览滑块接线 _on_lane_viewport）
+                              #   event_lane（M6.8 升级总览轴：LinearRegionItem 视口滑块逐线冻边缘+
+                              #   x 三重锁 [0,dur]+viewport_moved/set_viewport 双向防环）
 ```
 
 **四条硬性规则**（review 时检查）：

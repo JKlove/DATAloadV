@@ -6,7 +6,7 @@
 > 验证记录见 [review.md](review.md)，数据集详情见 [DATA_NOTES.md](DATA_NOTES.md)。
 >
 > **版本基线**：v1（里程碑 M0–M5 全部完成）+ M6 浏览体验优化（2026-08-18）+ M6.5 读取派发魔数校验（2026-08-24）；
-> 验证口径：pytest 165 绿 + e2e_m1–m5 共 84 项 + GUI 冒烟全过。
+> 验证口径：pytest 193 绿 + e2e_m1–m5 共 86 项 + GUI 冒烟全过。
 
 ---
 
@@ -32,7 +32,7 @@ DataloadV 是面向**介入式 BCI 研究**的电生理数据桌面工作台（m
 | 模块 | 能力 | 入口 |
 |---|---|---|
 | 数据管理 | 16 格式导入（单文件/整目录递归）、元数据表（10 列排序过滤）、工作区持久化、逐文件错误报告 | 文件菜单 → 导入文件…/导入文件夹… |
-| 波形浏览 | 多通道滚动浏览（两档绘制：稀疏折线整段连线/密集 min-max 包络防混叠）、一屏时长选择+翻屏导航（按钮/滚轮/键盘）、幅值标尺、事件竖线叠加与跳转、事件概览条点击定位、通道显隐、纵向增益、右键坏道标记 | 工作区树/元数据表双击 |
+| 波形浏览 | 多通道滚动浏览（两档绘制：稀疏折线整段连线/密集 min-max 包络防混叠）、一屏时长选择+翻屏/±1s 步进导航（按钮/滚轮/键盘）、底部总览时间轴滑块（拖动/点击定位）、行居中开关+通道直流偏移显示、增益（滑杆+精确输入框 0.01–100×）、幅值标尺、事件竖线叠加与跳转、通道显隐、右键坏道标记 | 工作区树/元数据表双击 |
 | 预处理 | 7 种步骤组成链（自上而下执行）、pydantic 参数自动表单、当前文件预览（处理副本新 tab）、原始 vs 处理后 PSD 对比 | 右侧「处理」Dock |
 | 特征提取 | 3 种提取器（频带功率/PSD 曲线/时域统计）、raw 全量摘要或 epochs 逐段、「用当前显示窗口」一键预填时间窗 | 右侧「处理」Dock → 计算特征 |
 | 批处理 | 面板管线+特征链批量套到工作区任意文件子集；2–8 线程并行、逐文件进度/日志、单文件失败不杀整批、随时取消、UI 全程响应 | 处理菜单 → 批处理… |
@@ -166,8 +166,11 @@ pip install "mne==1.12.0" edfio
 conda install -y -c conda-forge "pynwb>=3.0"   # pynwb 走 conda
 pip install "neo>=0.13"                        # neo 不在 conda-forge，pip 例外
 
-# 5. 本包可编辑安装（含 dev 依赖）
-pip install -e "/Users/huyingbing/VSproject/intervention BCI/DataloadV[dev]"
+# 5. 本包可编辑安装（含 dev 依赖）——先进入项目根目录（含 pyproject.toml 的那一层，
+#    即本仓库的克隆位置），再用相对路径 "." 安装：不写死本机绝对路径，
+#    换终端用户/换机器/换克隆位置都照跑（路径含空格时靠引号或 Tab 补全）
+cd <项目根目录>             # 例：cd ~/VSproject/"intervention BCI"/DataloadV
+pip install -e ".[dev]"
 ```
 
 ### 2.2 启动
@@ -193,7 +196,7 @@ dataloadv            # 或 python -m dataloadv
 
 | 命令 | 预期 |
 |---|---|
-| `pytest` | 165 passed（含真实数据项；含 MainWindow 级 UI 测试，**须 `QT_QPA_PLATFORM=offscreen`**） |
+| `pytest` | 193 passed（含真实数据项；含 MainWindow 级 UI 测试，**须 `QT_QPA_PLATFORM=offscreen`**） |
 | `python scripts/smoke_gui.py` | 末行 SMOKE OK（真窗口自检后自动退出） |
 | `python scripts/e2e_m1.py` … `e2e_m5.py` | 各打印 ALL OK（真实数据端到端，幂等可反复跑；m1 含 M6 浏览交互 18 项） |
 
@@ -266,7 +269,7 @@ QT_QPA_PLATFORM=offscreen python scripts/e2e_m1.py   # CI/SSH 无显示器的跑
 | **Ctrl+滚轮** | 以鼠标位置为锚点缩放一屏时长（×1.25/档） |
 | **← / →** | 上一屏 / 下一屏（步进 0.9 屏，留 10% 上下文；需先点一下图区获得焦点） |
 | **Home / End** | 最前一屏 / 最后一屏 |
-| **↑ / ↓** | 纵向增益 ±1 档（等效拖滑杆） |
+| **↑ / ↓** | 纵向增益 ±1 档（dB×10 步进、**保留小数**——如 2.50× 按 ↑ 到 2.5×10^0.1；滑杆是整数刻度粗调，两者不等效） |
 | 「一屏时长 (s)」下拉 | 选 1/2/5/10/30/60 s 预设，或直接输入自定义秒数；视口中心保持不变；拖框缩放后此处回显实际宽度 |
 | 「\|◀ 最前 / ◀ 上一屏 / **◀ 1s / 1s ▶** / 下一屏 ▶ / 最末 ▶\|」 | 翻屏按钮 + 秒级步进（M6.8：高倍放大时翻屏一步就是大半屏，±1s 补细分辨率） |
 | 「行居中」开关（M6.8） | 勾选=每通道减本窗口中位数对齐到自己的行（默认）；不勾=显示**绝对电平**（通道间真实电平差直接可见），y 轴自动适配数据范围；通道列表每行同步显示该通道的直流偏移 |
@@ -411,7 +414,7 @@ GDF 事件码自动转中文标签（如 769 → 左手运动想象 cue）。
 ### 4.3 测试体系
 
 ```bash
-QT_QPA_PLATFORM=offscreen pytest   # 全部 165 项（有 MainWindow 级测试，须 offscreen）
+QT_QPA_PLATFORM=offscreen pytest   # 全部 193 项（有 MainWindow 级测试，须 offscreen）
 pytest -m real            # 仅真实数据冒烟（data/sheep 缺失自动跳过）
 pytest tests/test_proc_m3.py -k "epoching"   # 单文件/单关键字
 QT_QPA_PLATFORM=offscreen python scripts/e2e_m5.py   # 无头跑端到端
