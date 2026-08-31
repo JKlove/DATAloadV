@@ -199,6 +199,100 @@
       DGDJ-位置4 四态截图确认（居中+偏移列表 / 绝对 y 自适配 / 2.50× / 回居中+滑块拖动）
 - [x] 收尾四件事：治理七件套 → review.md → 上下文检测 → git commit 255e67d
 
+## M7 信号质量体检（✅ 2026-08-28 完成——固化收官后 4 轮手工诊断的方法论）
+
+> **架构决策**：QC 做成**特征提取器**接入现有 FEATURE_REGISTRY——自动获得 pydantic 参数表单/
+> 批处理接入/FeatureTable 导出，零新 UI 架构；计算全部纯 Python（features 层，不碰 Qt——
+> 硬性规则 #1）。浏览器侧只加一键入口与结果呈现（UI 只编排不计算）。
+
+- [x] features/qc.py：QualityCheckFeature——逐通道指标：邻道逐样本同值（开路复用）、
+      满量程钉值/饱和占比、std=0 死值、直流中位（µV）、漂移斜率（µV/min）、平线占比；
+      参数可调（饱和阈值/统计窗数）；分窗统计不整载（照 M6.8 偏移统计的 LAZY 模式）
+      ——`compute_channel_qc(get_window 闭包)` 纯函数双入口共用；**无绝对饱和阈值**
+      （rail=钉本通道极值占比，跨设备满量程差 2 数量级）；坏道**参检不排除**
+      （与 pick_channels 语义相反，自带通道选择）
+- [x] 浏览 tab 一键「质量体检」：通道列表质量标记（✓/?/✗ 前缀 + tooltip 中文明细与指标）+
+      **自动建议**坏道（QMessageBox.question 人工确认后 toggle_bad，不静默改 bads）
+- [x] QC 结果行进 FeatureTable → 随现有导出链出 CSV/HDF5 + sidecar；批处理全工作区体检
+      一次跑完（注册表接入，BatchEngine/表单零改动自然获得）
+- [x] **黄金标准回归**：羊 CH5–8 报开路/饱和（4 bad 全 dup）、CH1–4 不坏（大直流真信号，
+      实测判 suspect——低频峰值平台 2.3% 触发疑似线属设计语义）、clinicaldata TPDJ-位置1
+      八通道全坏（M7 指标精化 M6.7b"全平"概括：CH2/4/8 真平线 + CH2≡CH4、其余钉满量程+跳变）
+- [x] scripts/e2e_m7.py：真实数据端到端 16 项（浏览器路径/特征链/CSV·HDF5 回读一致），
+      幂等验证 ×2
+- [x] 收尾四件事：治理文件（含 environment.yml 导出）→ review.md → 上下文检测 → git commit
+      （pytest 213 绿 = 193 + 20 新；e2e_m1–m5 + smoke 回归全过；e2e_m7 16 项×2；
+      DATA_NOTES §8 补 M7 精化定论 + 02号脑电 2 文件入册诊断）
+
+**M7 遗留（小项，不阻塞 M8）**：真窗口目视确认（✓/?/✗ 前缀观感、tooltip 可读性）留用户日常
+使用中验收；颜色/文案均在 strings_zh 单点可调。
+
+## M8 分段分析可视化（✅ 完成 2026-08-28，"可以按计划继续开发"指令）
+
+- [x] EpochsPreviewView 增强：四视图——平均堆叠（M3 现状零回归）/ ERP 蝶形（全通道同坐标分色
+      +零线）/ 单通道 ERP（逐段半透明细线 + **按事件码分色**平均粗线，尾标注码）
+- [x] 时频图（mne.time_frequency，morlet）：`features/tfr.py` 纯函数（2-45Hz 对数 24 点、
+      段平均、基线 dB、段数上限 80）+ 预览后台线程接入（ImageItem+色标+y 反转低频在下；
+      迟到回调双保险丢弃）
+- [x] 时间分辨频带功率特征：`BandPowerParams.time_windows`（`起-止` 秒可负；epochs 相对
+      事件锚点/raw 绝对秒；窗进特征名 `alpha@0-1s`；整段条目始终并存；默认空零回归）——
+      特征/批处理/导出链零新 UI 即获得
+- 验证：pytest 242 绿（+29）+ e2e_m8 13 项（A01T 四视图矩阵+守恒式 8.2%+导出回读）+
+  e2e_m1–m5/m7/smoke 回归
+
+**M8 遗留（小项，不阻塞 M9）**：真窗口目视确认四视图观感（蝶形配色区分度/单通道灰细线密度/
+时频色标默认档位）留用户日常使用中验收；文案/配色在 strings_zh 单点可调。跨窗对比建议等长窗
+或统一 n_per_seg_s（MANUAL §3.8 已写——不同窗长 nperseg 分辨率偏差实测 24%）。
+`QSortFilterProxyModel.invalidateFilter()` 弃用警告（M6.6 meta_table.py，12 条/全量跑）：
+Qt 6.x 后续版本须换 `filterInvalidated` 信号或 `beginFilterChange`，暂无害记 backlog。
+
+## M8.1 三锚定分段 + 时频观感 + 单段浏览（✅ 完成 2026-08-28，用户三问题反馈+截图驱动）
+
+- [x] epoching 三锚定：`anchor`（事件锚定/固定窗滑窗/手动时刻）+ `step_s`（步进，空=无重叠）
+      + `anchors_s`（手动锚点秒）——滑窗/手动不查事件表（CSV/HDF5/ds1/ds4 无事件数据可分段）；
+      手动越界显式报错列出全部无效锚点；锚点样本域构造防 off-by-one 静默丢段；
+      params_form 零改动（Literal→下拉/Optional[float]→开关+spin/list[float]→逗号框全现成）
+- [x] 时频观感三修：Y 残留压扁修复（`_draw_tfr` 末尾 autoRange——堆叠/蝶形 setYRange 禁用
+      autoRange 的残留根因）+ viridis/jet/hot 配色下拉（公式生成 uint8；换色不扰动 levels）
+      + 结果按通道缓存（切走切回/换配色零重算零线程）
+- [x] 第五视图「单段浏览（全通道）」：第 N 段全通道堆叠 + 段号 SpinBox + ◀/▶ + ←/→ 键盘
+      （滑窗分段模式即"翻页滑动看数据"）；append 尾部保 e2e_m8 索引寻址稳定
+- 验证：pytest 257 绿（+15）+ e2e_m81 12 项（手动 4 段/滑窗 538 段现算/Y span 47.5Hz 铺满/
+  jet levels 不扰动/缓存秒显/跳段翻段）+ e2e_m8 13 项零回归 + smoke
+
+**M8.1 遗留（小项，不阻塞 M9）**：真窗口目视确认（jet/hot 观感、滑窗翻段手感、单段视图
+行距）留用户日常使用中验收；PSD 对比视图支持 epochs 阶段为潜在增强（用户指示后开工）。
+
+## M8.2 视图观感精修（✅ 完成 2026-08-28，用户三截图反馈驱动）
+
+- [x] 堆叠系视图（各通道平均/单段浏览）通道名改**行首内嵌 TextItem**（8pt 半透明白底）——
+      y 轴 setTicks 放 25 导联名在有限窗高下必挤叠（用户截图证实；M6 浏览器同款方案）
+- [x] ERP 蝶形图加**图例**（逐通道配色=通道名；半透明白底+灰框；每列至多 12 行自动分列
+      防矮窗口截断）——M8 "不用 legend 防 clear 残留"的顾虑在 0.14 不成立（clear 清条目）
+- [x] 切时频图**左轴 ticks 残留清理**——`_redraw` 统一 `setTicks([])`+图例清空隐藏；
+      `_draw_tfr` 里 `setTicks(None)` 恢复自动频率刻度（单段浏览→时频左上角飘通道名的
+      根因；顺带修复蝶形→时频频率刻度被砍的暗病）
+- 验证：pytest 261 绿（+4）+ e2e_m8 13 项 + e2e_m81 12 项零回归 + smoke +
+  离屏渲染 25 通道四视图截图亲眼确认（标签盒高<行距不再连片/图例 3 列 25 条全可见/
+  时频数字频率刻度无残留）
+
+## M8.3 特征结果图表区（✅ 完成 2026-08-30，用户两点需求驱动）
+
+- [x] `welch_psd` 逐通道语义：channels 留空=全部数据通道各一条（通道平均废除）；新增
+      `time_windows`（raw 绝对秒多窗）；窗标记 `@起-止s` 进图例/CSV 列名/HDF5 attrs
+      （旧文件回读兜底）；`_resolve_spans` 抽模块级 BandPower/WelchPsd 共用零变
+- [x] `feature_charts.py`：PSD 曲线页（log-log 多通道多窗、60 条截断）+ 特征柱状图页
+      （每特征一格、Y 独立、分段按事件码聚合）；feature_table QSplitter 接线，
+      批处理结果 tab 同一控件两入口同享
+- 验证：pytest 271 绿（+10）+ e2e_m4 19 项（逐通道断言+全曲线 50Hz 压制中位数）+ smoke
+  + 三形态白底截图目视确认（像素统计证伪分析器"黑底"幻觉——独立截图须复刻 MainWindow
+  的 pg 全局主题）
+
+## M9 处理后连续数据导出（排队，视需求开工，2026-08-28 批准）
+
+- [ ] 预处理后的 raw 导出 EDF/FIF（现在只能导特征与 epochs）
+- [ ] 与 pipelineMotor 互操作验证（sidecar 记录全管线；导出回读一致）
+
 ## 已知问题 / Backlog（v1 收官后暂缓项）
 
 - .edf.event WFDB 边车解析：M1 实测 PhysioNet EDF 内嵌注释已完整，边车为冗余副本，暂不需要；若未来遇到只有边车、无内嵌注释的数据集再补
@@ -207,6 +301,5 @@
 - **Blackrock/Open Ephys/Intan/NWB 无真实数据实测**（M5）：neo 系用桩 rawio 验证模板关键逻辑（换算/转置/选流/事件）、NWB 用 pynwb 完整写支持做真实往返；拿到真实文件后跑 `open_file()` 冒烟即可（neo 模板路径统一，风险低）
 - eeglabio / pybv 装入 dev 依赖做 EEGLAB/BrainVision 合成往返：v1 收官时评估——neo/pynwb 已覆盖 M5 验收，暂缓，等真实数据再决定
 - 2b GDF 头自带 highpass 100 > lowpass 0.5 触发 mne RuntimeWarning（每文件两条，无害）；如需清净可在读取器预处理 info（暂缓——不改数据语义，仅日志噪音）
-- **epochs_preview 仍用 y 轴 setTicks 标通道名**（M6 只重构了信号浏览器）：分段预览通道数通常 ≤25 且图形静态、无滚轮 y 缩放路径，实际不会触发重叠；若未来分段通道很多再改行内嵌标签
 - **白底对比度人工目检**：M6 换色均按白底可辨原则挑选并有测试覆盖存在性，但整体观感（如网格浓度、事件色区分度）未做截图级人工评审——用户日常使用中如有个别颜色不顺眼，改 strings_zh/各控件色值即可（均为一处常量）
-- **clinicaldata/01号脑电未做信号诊断**（2026-08-27 用户放入并导入）：通道质量（开路/饱和复用）、慢漂移剖面、事件有无尚未核查——首次正式分析前建议跑一轮与羊数据同款诊断（DATA_NOTES §8）
+- **clinicaldata 事件通道核查**（2026-08-28 更新）：通道质量诊断已完成且**可复跑**——M6.7b 手工定论（DATA_NOTES §8）+ M7 质量体检自动复现并精化（TPDJ-位置1 全坏、02号脑电 2 文件已入册诊断）；仅剩 BDF TAL 注释/事件有无待用到的场合再核查

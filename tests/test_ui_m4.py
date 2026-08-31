@@ -7,12 +7,20 @@
 
 from __future__ import annotations
 
+import numpy as np
 import pytest
 
 pytest.importorskip("PySide6", reason="无 GUI 环境")
 
+from PySide6.QtWidgets import QLabel, QTabWidget  # noqa: E402
+
 from dataloadv.batch import FeatureTable  # noqa: E402
 from dataloadv.features import FEATURE_REGISTRY  # noqa: E402
+from dataloadv.ui.widgets.feature_charts import (  # noqa: E402
+    FeatureBarGrid,
+    PsdCurvesChart,
+    make_charts_area,
+)
 from dataloadv.ui.widgets.feature_table import FeatureTableView  # noqa: E402
 from dataloadv.ui.widgets.params_form import ParamsForm  # noqa: E402
 from dataloadv.ui.widgets.pipeline_panel import PipelinePanel  # noqa: E402
@@ -167,3 +175,91 @@ class TestFeatureTableView:
         view._proxy.sort(6, Qt.SortOrder.AscendingOrder)
         rows = [view._proxy.data(view._proxy.index(r, 6)) for r in range(2)]
         assert rows == ["2", "10"]
+
+
+class TestFeatureCharts:
+    """M8.3 图表区：PSD 曲线图 / 柱状网格 / 组装三态（数值断言不解析像素）."""
+
+    def _table(self, scalars=None, curves=None) -> FeatureTable:
+        t = FeatureTable()
+        t.add_result(
+            type("R", (), {"scalars": scalars or [], "curves": curves or []})(),
+            recording="x.gdf",
+        )
+        return t
+
+    @staticmethod
+    def _curve(i: int, window: str = "") -> dict:
+        return {"recording": "x.gdf", "channel": f"EEG{i:02d}", "window": window,
+                "freqs": np.linspace(0.5, 40, 77),
+                "psd": np.linspace(1.0, 2.0, 77) * (1 + i)}
+
+    def test_psd_chart_counts_curves(self, qtbot):
+        chart = PsdCurvesChart([self._curve(i) for i in range(3)])
+        qtbot.addWidget(chart)
+        assert chart.n_curves == 3 and chart.total_curves == 3
+
+    def test_psd_chart_truncates_at_60_with_hint(self, qtbot):
+        """70 条只画 60；截断提示含总数（批处理 990 条场景的护栏）."""
+        chart = PsdCurvesChart([self._curve(i) for i in range(70)])
+        qtbot.addWidget(chart)
+        assert chart.n_curves == 60 and chart.total_curves == 70
+        assert any("70" in lb.text() for lb in chart.findChildren(QLabel))
+
+    def test_bar_grid_aggregates_by_event_code(self, qtbot):
+        """分段行按事件码求均值：T1 两段 (1+3)/2=2，T2 一段=10."""
+        scalars = [
+            {"epoch_index": 0, "event_code": "T1", "channel": "EEG00",
+             "feature": "alpha", "value": 1.0},
+            {"epoch_index": 1, "event_code": "T1", "channel": "EEG00",
+             "feature": "alpha", "value": 3.0},
+            {"epoch_index": 2, "event_code": "T2", "channel": "EEG00",
+             "feature": "alpha", "value": 10.0},
+        ]
+        grid = FeatureBarGrid(self._table(scalars=scalars))
+        qtbot.addWidget(grid)
+        agg = grid.aggregated
+        by = {(r["event_code"], r["feature"]): r["value"] for _, r in agg.iterrows()}
+        assert by[("T1", "alpha")] == pytest.approx(2.0)
+        assert by[("T2", "alpha")] == pytest.approx(10.0)
+        assert grid.feature_names == ["alpha"]
+        assert grid.has_epochs
+
+    def test_bar_grid_one_cell_per_feature(self, qtbot):
+        """两个特征 → 两格；特征名进 feature_names（格 title 同源）."""
+        scalars = [
+            {"epoch_index": None, "event_code": None, "channel": "EEG00",
+             "feature": f, "value": 1.0}
+            for f in ("alpha", "rms_uv")
+        ]
+        grid = FeatureBarGrid(self._table(scalars=scalars))
+        qtbot.addWidget(grid)
+        assert grid.feature_names == ["alpha", "rms_uv"]
+
+    def test_make_charts_area_three_states(self, qtbot):
+        """空表=None（零观感变化）；仅曲线=单图；双有=两 tab."""
+        assert make_charts_area(FeatureTable()) is None
+        w = make_charts_area(self._table(curves=[self._curve(0)]))
+        assert isinstance(w, PsdCurvesChart)
+        qtbot.addWidget(w)
+        both = self._table(
+            scalars=[{"epoch_index": None, "event_code": None, "channel": "EEG00",
+                      "feature": "alpha", "value": 1.0}],
+            curves=[self._curve(0)],
+        )
+        tabs = make_charts_area(both)
+        assert isinstance(tabs, QTabWidget) and tabs.count() == 2
+        qtbot.addWidget(tabs)
+
+    def test_view_with_charts_teardown_symmetric(self, qtbot):
+        """带图表区的视图：构造出 _charts，teardown 后对称释放."""
+        table = self._table(
+            scalars=[{"epoch_index": None, "event_code": None, "channel": "EEG00",
+                      "feature": "alpha", "value": 1.0}],
+            curves=[self._curve(0)],
+        )
+        view = FeatureTableView(table, None)
+        qtbot.addWidget(view)
+        assert view._charts is not None
+        view.teardown()
+        assert view._charts is None and view._table is None and view._ctx is None

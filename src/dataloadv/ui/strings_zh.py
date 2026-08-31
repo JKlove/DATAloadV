@@ -122,6 +122,52 @@ class S:
     )
     GAIN_SUFFIX = "×"             # 增益输入框后缀（倍率）
 
+    # ===== M7：信号质量体检（浏览器一键 + 特征提取器双入口）=====
+    BTN_QC = "质量体检"            # 工具栏左组尾部按钮（计算期间禁用防重入）
+    BTN_QC_TIP = (
+        "逐通道体检：死值 / 平直 / 满量程饱和 / 开路复用 / 基线漂移，\n"
+        "在通道列表标注 ✓ 好 / ? 疑似 / ✗ 坏，并把问题明细写进悬浮提示。"
+    )
+    QC_PREFIX_GOOD = "✓ "         # 通道列表前缀（good）
+    QC_PREFIX_SUSPECT = "? "      # 疑似（suspect）
+    QC_PREFIX_BAD = "✗ "          # 坏（bad）
+    QC_QUALITY_GOOD = "好"
+    QC_QUALITY_SUSPECT = "疑似"
+    QC_QUALITY_BAD = "坏"
+    QC_TIP_STATS = (
+        "直流 {dc} µV | 标准差 {std} µV | 漂移 {drift} µV/min\n"
+        "平直 {flat}% | 钉极值 {rail}%"
+    )
+    QC_SUGGEST_TITLE = "体检完成"
+    QC_SUGGEST_TEXT = (
+        "体检发现 {n} 个疑似坏通道：\n\n{lines}\n\n"
+        "是否标记为坏道？（坏道曲线灰显，后续处理/特征默认排除）"
+    )
+    QC_ALL_GOOD = "体检完成：{n} 个通道全部合格，未发现疑似坏通道。"
+    QC_NO_ISSUE = "未发现问题"     # 体检合格通道的 tooltip 明细行
+    QC_FAIL_TEXT = "质量体检失败：\n{msg}"
+
+    # ===== M8：分段预览三视图 + 时频 =====
+    EP_VIEW_LABEL = "视图"          # 分段预览的视图模式下拉
+    EP_VIEW_AVG = "各通道平均（堆叠）"       # M3 现状：垂直偏移堆叠
+    EP_VIEW_BUTTERFLY = "ERP 蝶形图"        # 全通道同一坐标叠加
+    EP_VIEW_SINGLE = "单通道 ERP"           # 逐段细线 + 按事件码分色平均
+    EP_VIEW_TFR = "时频图（单通道）"         # morlet 段平均功率谱热图
+    EP_LBL_CHANNEL = "通道"          # 单通道/时频视图的通道选择
+    EP_TFR_COMPUTING = "时频计算中…（morlet，段平均）"
+    EP_TFR_UNIT = "dB（基线校正）"    # 时频色标单位
+    EP_TFR_FREQ_AXIS = "频率 (Hz)"
+    EP_TFR_FAIL = "时频计算失败：{msg}"
+    EP_LEGEND_SINGLE = "彩色粗线=按事件码平均；灰色细线=各分段"
+
+    # ===== M8.1：时频配色 + 单段浏览 =====
+    EP_LBL_CMAP = "配色"                    # 时频热图配色下拉（viridis/jet/hot 专有名词不翻）
+    EP_VIEW_SEGMENT = "单段浏览（全通道）"     # 第五视图：第 N 段全通道堆叠
+    EP_LBL_SEGMENT = "段号"
+    EP_HINT_SEGMENT = "第 {i} / {n} 段 · 事件码 {code}（←/→ 翻段）"
+    EP_BTN_SEG_PREV = "◀"
+    EP_BTN_SEG_NEXT = "▶"
+
     # ===== M2：采样率询问（CSV/TXT/HDF5 内无采样率）=====
     ASK_FS_TITLE = "设定采样率"
     ASK_FS_TEXT = (
@@ -188,6 +234,13 @@ class S:
     FEAT_EPOCHS_FMT_HINT = "分段数据：{fmt}"
     FEAT_EXPORT_EPOCHS_H5 = "HDF5（跨工具）"
     FEAT_EXPORT_EPOCHS_FIF = "FIF（mne 无损）"
+    # M8.3：特征结果图表区（PSD 曲线 tab + 柱状图 tab）
+    FEAT_TAB_PSD = "PSD 曲线"
+    FEAT_TAB_BARS = "特征柱状图"
+    FEAT_CHART_CURVE_TRUNC = "曲线共 {total} 条，仅显示前 {n} 条（可收窄通道/时间窗后重算）"
+    FEAT_CHART_EP_AGG = "分段数据已按事件码求均值聚合（每类事件一条系列）"
+    FEAT_CHART_SERIES_TRUNC = "系列共 {total} 条，仅显示前 {n} 条"
+    FEAT_CHART_FEATURE_TRUNC = "特征共 {total} 项，仅显示前 {n} 项（可在参数里收窄频段/统计量）"
 
 
     # ===== M5：批处理 =====

@@ -67,6 +67,7 @@ class FeatureTable:
             self._curves.append({
                 "recording": recording,
                 "channel": c.get("channel", ""),
+                "window": str(c.get("window", "")),  # M8.3 时间窗标记 "@lo-hi s"，空=全量
                 "freqs": np.asarray(c["freqs"], dtype=float),
                 "psd": np.asarray(c["psd"], dtype=float),  # µV²/Hz
             })

@@ -149,6 +149,65 @@ class TestBandPower:
         assert {r["epoch_index"] for r in rows} == {0, 1, 2}
         assert {r["event_code"] for r in rows} == {"T0", "T1", "T2"}
 
+    # -------------------------------------------------- M8：时间分辨 time_windows
+
+    @staticmethod
+    def _time_resolved_raw():
+        """10s 合成：ch0 前 5s 纯噪声、后 5s 叠 10Hz α（raw 绝对窗考题）."""
+        import mne
+
+        sf = 250.0
+        t = np.arange(int(sf * 10)) / sf
+        rng = np.random.default_rng(7)
+        data = rng.normal(0, 5e-6, (2, len(t)))
+        data[0, t >= 5.0] += 25e-6 * np.sin(2 * np.pi * 10.0 * t[t >= 5.0])
+        return mne.io.RawArray(data, mne.create_info(["A", "B"], sf, "eeg"),
+                               verbose="ERROR")
+
+    def test_time_windows_abs_on_raw(self):
+        """raw 绝对窗：整段条目 + 两个窗条目并存；后 5s 窗的 α ≫ 前 5s 窗."""
+        ctx = ProcessingContext(raw=self._time_resolved_raw(), stage="raw")
+        rows = self._rows(ctx, bands=["alpha"], time_windows=["0-5", "5-10"])
+        by = {(r["channel"], r["feature"]): r["value"] for r in rows}
+        assert set(by) == {
+            ("A", "alpha"), ("B", "alpha"),  # 整段摘要条目始终在（spans 首项）
+            ("A", "alpha@0-5s"), ("A", "alpha@5-10s"),
+            ("B", "alpha@0-5s"), ("B", "alpha@5-10s"),
+        }
+        assert by[("A", "alpha@5-10s")] > 50 * by[("A", "alpha@0-5s")]
+        # 默认（空窗）＝ M4 行为：特征名裸频段、整段一条
+        plain = self._rows(ctx, bands=["alpha"])
+        assert {r["feature"] for r in plain} == {"alpha"}
+
+    def test_time_windows_relative_on_epochs(self, synthetic_raw):
+        """epochs 相对窗：窗坐标=事件锚点系（-1-0 / 0-2），行数=段×通道×窗.
+
+        ch0 全程 10Hz 正弦（平稳）：Welch 是密度归一（V²/Hz），频带积分对
+        窗长不敏感——两窗功率应近似相等（窗长只改频率分辨率/方差）。
+        """
+        ctx = make_ctx(synthetic_raw)
+        apply_pipeline(ctx, [("epoching", STEP_REGISTRY["epoching"].make_params(
+            {"tmin": -1.0, "tmax": 2.0}))])
+        rows = self._rows(ctx, bands=["alpha"], channels=["EEG00"],
+                          time_windows=["-1-0", "0-2"])
+        feats = {r["feature"] for r in rows}
+        assert feats == {"alpha", "alpha@-1-0s", "alpha@0-2s"}  # 整段条目+两窗
+        assert len(rows) == 3 * 3  # 3 段 × (整段 + 2 窗)
+        by = {(r["epoch_index"], r["feature"]): r["value"] for r in rows}
+        for ep in range(3):
+            w1, w2 = by[(ep, "alpha@-1-0s")], by[(ep, "alpha@0-2s")]
+            assert w2 == pytest.approx(w1, rel=0.3)  # 平稳密度不变式
+
+    def test_time_windows_out_of_range_refused(self, synthetic_raw):
+        ctx = make_ctx(synthetic_raw)
+        with pytest.raises(FeatureError, match="超出数据时间范围"):
+            self._rows(ctx, time_windows=["55-65"])  # 60s 录制，65 越界
+
+    def test_time_windows_too_few_samples_refused(self, synthetic_raw):
+        ctx = make_ctx(synthetic_raw)
+        with pytest.raises(FeatureError, match="不足 2 个采样点"):
+            self._rows(ctx, time_windows=["10-10.001"])  # 250Hz 下 0 个整点
+
 
 # ------------------------------------------------------------------ 时域统计
 class TestTimeDomain:
@@ -188,26 +247,51 @@ class TestTimeDomain:
 
 # ------------------------------------------------------------------ PSD 曲线
 class TestWelchPsd:
-    def test_mean_curve_and_channel_peak(self, synthetic_raw):
-        """通道平均曲线只有一条；纯 10Hz 通道（EEG00）的谱峰应在 10Hz.
+    def _curves(self, ctx, **overrides):
+        params = FEATURE_REGISTRY["welch_psd"].make_params(overrides)
+        return apply_features(ctx, [("welch_psd", params)]).curves
 
-        注：通道平均曲线的峰在 50Hz（ch1 工频 30µV > 两通道 10Hz 20µV 的
-        合成功率）——这是合成数据为陷波测试设计的特性，不是缺陷。
+    def test_default_all_channels_and_peak(self, synthetic_raw):
+        """M8.3：留空=全部数据通道逐通道各一条（通道平均语义已废）.
+
+        纯 10Hz 通道（EEG00）的谱峰应在 10Hz；全量窗的 window=""（新字段）。
         """
         ctx = make_ctx(synthetic_raw)
-        result = apply_features(ctx, [("welch_psd", FEATURE_REGISTRY["welch_psd"].default_params())])
-        assert len(result.curves) == 1
-        assert result.curves[0]["channel"] == "(通道平均)"
-        params = FEATURE_REGISTRY["welch_psd"].make_params({"channels": ["EEG00"]})
-        result2 = apply_features(ctx, [("welch_psd", params)])
-        c = result2.curves[0]
-        assert c["freqs"][np.argmax(c["psd"])] == pytest.approx(10.0, abs=1.0)
+        curves = self._curves(ctx)
+        assert len(curves) == 8  # 8 通道 × 全量 1 窗
+        assert [c["channel"] for c in curves] == [f"EEG{i:02d}" for i in range(8)]
+        assert all(c["window"] == "" for c in curves)
+        c0 = next(c for c in curves if c["channel"] == "EEG00")
+        assert c0["freqs"][np.argmax(c0["psd"])] == pytest.approx(10.0, abs=1.0)
 
     def test_per_channel_curves(self, synthetic_raw):
         ctx = make_ctx(synthetic_raw)
         params = FEATURE_REGISTRY["welch_psd"].make_params({"channels": ["EEG00", "EEG01"]})
         result = apply_features(ctx, [("welch_psd", params)])
         assert [c["channel"] for c in result.curves] == ["EEG00", "EEG01"]
+
+    def test_time_windows_subwindows(self, synthetic_raw):
+        """时间窗 0-30：全量 8 条（window=""）+ 子窗 8 条（"@0-30s"）.
+
+        ch0 平稳 10Hz 正弦：子窗谱峰仍在 10Hz（平稳信号窗不改变峰位）。
+        """
+        ctx = make_ctx(synthetic_raw)
+        curves = self._curves(ctx, time_windows=["0-30"])
+        assert len(curves) == 16
+        assert sum(c["window"] == "" for c in curves) == 8
+        assert sum(c["window"] == "@0-30s" for c in curves) == 8
+        sub = next(c for c in curves if c["channel"] == "EEG00" and c["window"])
+        assert sub["freqs"][np.argmax(sub["psd"])] == pytest.approx(10.0, abs=1.0)
+
+    def test_time_windows_out_of_range_refused(self, synthetic_raw):
+        ctx = make_ctx(synthetic_raw)
+        with pytest.raises(FeatureError, match="超出数据时间范围"):
+            self._curves(ctx, time_windows=["55-65"])  # 60s 录制，65 越界
+
+    def test_time_windows_too_few_samples_refused(self, synthetic_raw):
+        ctx = make_ctx(synthetic_raw)
+        with pytest.raises(FeatureError, match="不足 2 个采样点"):
+            self._curves(ctx, time_windows=["10-10.001"])  # 250Hz 下 0 个整点
 
     def test_refused_on_epochs_stage(self, synthetic_raw):
         """PSD 曲线仅 raw：epochs 阶段给中文阶段错误."""
@@ -244,7 +328,7 @@ class TestRegistryAndTable:
         table.add_result(res, "test.gdf", "S01")
         assert len(table) == 8 * 3  # 8 通道 × (2 频段 + 1 统计量)
         assert table.n_recordings == 1 and table.recording_names() == ["test.gdf"]
-        assert len(table.curves) == 1
+        assert len(table.curves) == 8  # M8.3：留空=逐通道各一条
         wide = table.to_wide()
         assert wide.shape == (8, 3 + 5)  # 8 行（通道）× 3 特征列 + 5 索引列
         assert {"alpha", "beta", "rms_uv"} <= set(wide.columns)

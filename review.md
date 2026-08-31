@@ -630,3 +630,261 @@ MANUAL/README 计数与两档描述、DATA_NOTES 补 clinicaldata）→ review.m
 - UI 只编排不计算 ✅（偏移统计在 workers 线程，回调主线程拼 UI）
 - 跨线程只传纯 Python/mne 对象 ✅（offsets 是 numpy 数组）
 - data/ 只读 ✅（验证只读真实文件，截图仅存 /tmp）
+
+## 2026-08-28 — v1 + M6.x 收官总结与 v2 方向规划（用户批准：M7 → M8 → M9）
+
+> 本节是规划记录（非实现里程碑）：现状盘点 + 后续方向获用户批准，同步写入 plan.md §8 与
+> TODO.md M7–M9 节。
+
+### 现状盘点
+
+- **v1（M0–M5）2026-08-18 一天收官**：读取（16 格式注册表+魔数派发）→ 管理（工作区树/
+  元数据表/持久化/移除）→ 浏览（多通道滚动+事件叠加+行居中/总览滑块）→ 预处理（7 步骤链+
+  预览+PSD 对比）→ 特征（3 提取器）→ 批处理（线程池+取消+逐文件日志）→ 导出
+  （CSV/HDF5/FIF+sidecar）；架构四条硬性规则全程未破。
+- **收官后 6 轮反馈驱动迭代全部完成**（M6 / M6.5 / M6.6 / M6.7 / M6.7b / M6.8，提交至
+  a47df7a）：浏览器体验、羊 EDF↔BDF 错解码纠正（数据正确性）、工作区移除+羊通道定论、
+  渲染两档+行居中（DC 偏移"空白 tab"）、浏览器四功能（DC 开关/增益输入/总览滑块/±1s）。
+- **质量资产**：pytest 193 绿 + e2e_m1–m5 共 86 项 + smoke；治理七件套实时同步；
+  DATA_NOTES 全部数据实证入册（羊 3 批 / dataset 5 类 / clinicaldata 8 文件）。
+- **薄环节判断**（规划的出发点）：浏览与诊断环节扎实；**分析产出**（分段只有波形、谱只有
+  全窗 Welch）与 **QC 自动化**（收官后至少 4 轮诊断是同套方法论的手工重复：羊噪声感/
+  clinicaldata 空白/慢漂移普查/通道质量核查）是两个缺口。
+
+### 批准的 v2 方向（顺序 M7 → M8 → M9，详见 plan.md §8）
+
+1. **M7 信号质量体检（QC）**——首选：QC 做成特征提取器接入 FEATURE_REGISTRY（自动获得
+   表单/批处理/导出，零新 UI 架构）+ 浏览 tab 一键体检（质量标记+自动建议坏道，人工确认）；
+   验收 = 羊/clinicaldata 已知定论做黄金标准回归。
+2. **M8 分段分析可视化**：平均 ERP（butterfly+单通道）、时频图（morlet）、时间分辨频带
+   功率特征——ERD/ERS 是运动想象 BCI 核心指标。
+3. **M9 处理后连续数据导出**：raw → EDF/FIF + sidecar，补齐与 pipelineMotor 的连续数据
+   互操作。
+4. 捎带：conda env export 锁定 environment.yml；TODO backlog 清理（clinicaldata 诊断项
+   已完成，仅剩事件通道待核查）。
+5. 明确暂不做：ds3、.edf.event 边车、真实数据补测（等文件到位）、主题切换。
+
+### 下一步
+
+M7 开工（任务拆解见 TODO.md M7 节）。
+
+## 2026-08-28 — M7 信号质量体检完成（v2 首里程碑）
+
+**做了什么**：把收官后 4 轮手工"噪声感"诊断（羊噪声感/clinicaldata 空白/慢漂移普查/通道质量
+核查）固化成一键可复跑的体检——`features/qc.py` 一处纯计算、两个入口：
+
+1. **compute_channel_qc 纯函数**收 `get_window` 闭包：浏览器传 `rec.get_window`（LAZY 大文件
+   不整载）、提取器传 `ctx.raw` 分窗闭包（PRELOAD 亦只取窗）——`_plan_windows` 均匀撒
+   ≤20 个 2s 窗拼接算全局统计（钉极值需要全程极值；窗边界 diff 是真实相邻时刻比较）。
+2. **指标**：开路复用（逐对 `np.array_equal`）、死值（std<0.01µV）、平直占比（diff==0）、
+   钉极值占比（**刻意无绝对饱和阈值**——BioSemi ±375000µV 与 g.USBamp ±5000µV 差两个
+   数量级）、漂移斜率（窗中位数最小二乘 µV/min）、直流中位（**只进指标不定级**——DC 耦合
+   固有，大直流可能是真信号，M6.7b 定论）。
+3. **分级**：bad=复用｜死值｜平直≥99%｜钉极值≥50%；suspect=钉极值≥1% 或 |漂移|≥50µV/min。
+4. **浏览器接线**：工具栏「质量体检」→ `run_in_thread` 防重入 → 通道列表 ✓/?/✗ 前缀 +
+   tooltip 中文问题明细与全部指标（`_refresh_ch_list_text` 统一拼装，blockSignals 包
+   setText/setToolTip）→ 坏道**建议确认**（question 列出坏通道与原因，Yes→逐个 toggle_bad
+   复用现有灰显/info["bads"]/bads_changed——不静默改 bads）。
+5. **注册表红利**：QualityCheckFeature 自动获得参数表单/批处理/CSV·HDF5 导出（qc 排
+   "添加特征"菜单首位）；**通道选择与 pick_channels 语义相反**——坏道参检不排除。
+
+**黄金标准全复现（真实数据）**：
+
+- 羊 BDF：CH5-8 四通道开路复用判坏（全 dup、钉极值 100%）；**CH1-4 真信号不坏**——实测判
+  疑似（低频大信号峰值平台 rail≈2.3% 触发疑似线 1%、CH2/3 带真实慢漂移 −651/−2890µV/min），
+  "疑似=建议人工复核"正是设计语义；黄金不变式是"真信号不坏"而非"真信号必 good"。
+- clinicaldata TPDJ-位置1：八通道全坏——**M7 指标精化 M6.7b"全平"概括**为两型：CH2/4/8
+  真·平线（flat≈100%，CH2≡CH4 逐样本相同）与 CH1/3/5/6/7 钉满量程+偶发跳变（rail 50–85%、
+  漂移 −2k~−13kµV/min）。
+- 02号脑电 2 文件（此前未入册）顺带诊断：DGDJ——CH5-8 两对复用全坏；金盘电极——CH1≡CH2、
+  CH4≡CH8 坏 4，CH3/5/6/7 真信号。结论入 DATA_NOTES §8。
+
+**验证**：pytest **213 绿**（+20，test_features_qc.py 一个文件覆盖纯函数→注册表→UI→真实
+数据）；e2e_m7 **16 项×2 幂等**（浏览器路径/特征链/CSV·HDF5 回读一致；须逐模块 patch
+signal_browser.QMessageBox——坑 #54）；e2e_m1–m5 + smoke 回归全过。真窗口目视确认（前缀
+观感/tooltip 可读性）留用户日常使用验收。
+
+**下一步**：M8 分段分析可视化（ERP butterfly/时频/时间分辨 bandpower，任务拆解见 TODO.md）。
+
+## 2026-08-28 — M8 分段分析可视化完成（v2 第二里程碑）
+
+**做了什么**：epochs 预览从"看段"升级到"分析"——四视图 + 时频纯函数 + 时间分辨特征，三件
+互相咬合（单通道分色视图与时频共用通道选择；time_windows 与单通道视图共用"事件锚点"心智）：
+
+1. **四视图**（`epochs_preview.py` 全量重写，~270 行）：构造一次 `get_data`（伏特）/times/
+   每段事件码/ch_names/sfreq 全缓存，切换零重算。平均堆叠=M3 现状（spacing 自适应）；蝶形=
+   `pg.intColor(i, hues=max(n,6))` 全通道同坐标+零线；**单通道按码分色**=逐段灰细线
+   （(150,150,150,60)）铺底 + 按事件码 `event_color` 平均粗线（width=2）+ 尾部 TextItem
+   标码；**时频**=后台线程算 morlet 段平均 → ImageItem+setRect 时间对齐 + invertY（低频在
+   下）+ HistogramLUTItem 色标（挂 _gfx 侧列，plot.clear() 清不到——`_remove_lut` 专门清）。
+2. **compute_epochs_tfr 纯函数**（`features/tfr.py`）：`tfr_array_morlet(output="power",
+   zero_mean=True, n_cycles=max(freqs/2,2))` 段平均 → 10log10 dB；默认 2–45Hz 对数间隔
+   （30 个）；段数>80 抽前 80（体感卡顿阈值，留注释）；**基线校正两道闸**——`baseline is
+   not None and times[0] < 0` 且基线期≥2 采样点才减基线均值，否则峰值归一（db−db.max）。
+   实现首版踩了真 bug：tmin≥0 时 (None,0) 只罩住 t=0 单样本照减不误（docstring 声称的跳过
+   分支没落实）——测试逼出后加闸。
+3. **time_windows**（`spectral.py` BandPowerFeature）：`起-止` 秒语法支持负数（`-1-0`）；
+   epochs 相对事件锚点（=预览横轴）/raw 绝对秒；**越界容差一个采样周期 dt**（离散语义：
+   样本 t_i 代表 [t_i,t_i+dt)，10s 录制输 0-10 天然合法）；窗标记拼进特征名
+   （`alpha@0-1s`）；**整段裸条目始终并存**；默认空=零回归。
+4. **线程与迟到回调**：时频 run_in_thread 后台算，`_draw_tfr` 开头双保险（视图已切走或
+   teardown 后丢弃）+ `_tfr_running` 防重入；teardown 幂等（e2e 关 tab 与测试 fixture 都可能
+   二调）。
+
+**验收口径的迭代（本里程碑最重要的一课）**：最初想断"A01T 运动想象 α ERD（事件后功率降）"
+这个教科书方向。离线三步验证推翻：① 守恒式（整段 α 应=子窗时长加权混合）残差 24%——不同
+窗长不同频率分辨率（4s 窗 0.25Hz vs 1s 窗 1Hz）系统性偏差；② 统一 n_per_seg_s=1.0 后残差
+8.2%；③ 等长 1s 窗下 22 EEG 通道群体中位 1.05±0.1——**原始未处理数据无显著 ERD 方向**
+（合理：A01T 是带伪迹的 raw，无滤波无 ICA，个体差异大）。终判据=**数据可复现的事实**：
+守恒式中位误差<12%，而非教科书预期。与 M7"真信号不坏（而非真信号必 good）"同一方法论：
+断数据不断理论。
+
+**验证**：pytest **242 绿**（+29：tfr 纯函数 17 含 A01T 真实黄金项/UI 四视图 8/BandPower
+时间窗 4）；e2e_m8 **13 项**（A01T 四视图矩阵+迟到丢弃+时间分辨特征 21600 行+CSV 回读；
+特征阶段须 `win.tabs.setCurrentWidget(shared["browser"])` 切回——分段预览后 active 是
+EpochsPreviewView，`panel.start_features` 只认 browser）；e2e_m1/m3/m4/m5/m7 + smoke 回归
+全过。测试等后台线程真收尾用 `qtbot.waitUntil(lambda: not _KA_THREADS)`（workers/generic
+模块级容器）——ImageItem 出现≠deleteLater 链走完，是 QThread 竞态（"Signal source has
+been deleted"）的本质解。
+
+**下一步**：M9 连续导出（EDF/FIF 整段预处理结果落盘），任务拆解见 TODO.md。
+
+## 2026-08-28 — M8.1 三锚定分段+时频观感修复+单段浏览完成（用户三问题反馈+截图驱动）
+
+**背景**：用户看完 M8 四视图提三问——①无事件标签的数据无法分段（CSV/HDF5/ds1/ds4 评估集
+恒空事件）；②时频热图纵向压成一条（截图证实）且要 jet/hot 配色；③PSD 两链路是否冲突。
+第③问已梳理答复（对比 PSD 与 PSD 特征同底层不同职责，无工程项）；本期落地①②+用户确认的
+「单段浏览」第五视图。
+
+**做了什么**：
+
+1. **三锚定分段**（`proc/epoching.py`）：`anchor: Literal["事件锚定","固定窗滑窗","手动时刻"]`
+   + `step_s`（滑窗步进，空=无重叠）+ `anchors_s`（手动锚点秒）。锚点构造抽成三个
+   @staticmethod 统一返回 (samples, codes, event_id)——事件分支从 M3 纯搬移零修改（288 段
+   黄金测试守门）；滑窗/手动**不查事件表**（无事件数据从根上可分段）；锚点一律**样本域**
+   构造（mne 保留条件 `anchor+round(tmin·fs)≥0` 且 `anchor≤n_times−1−round(tmax·fs)`，
+   秒域近似差 1 样本会被 `on_missing="ignore"` 静默丢段）。**手动锚点越界显式报错列出全部
+   无效锚点**——显式枚举的输入要最小惊讶，"要 5 段得 3 段"比报错难排查。参数表单零改动
+   （Literal→下拉、Optional[float]→开关+spin、list[float]→逗号框，params_form 全现成）；
+   中文 Literal 值即冻结的序列化格式（旧 JSON 缺 anchor 键默认回填零回归，实测三处兼容）。
+2. **时频观感三修**（`epochs_preview.py`）：①Y 压扁根因=堆叠/蝶形程序化 `setYRange` 禁用了
+   autoRange，上一视图大范围（实测蝶形后 [-89, 800+]）残留——`_draw_tfr` 末尾 `autoRange()`
+   修复（须在 addItem(img) 之后，与 invertY 先后无关）；②配色下拉 viridis/jet/hot——jet/hot
+   无内置（`pg.colormap.get` 抛 FileNotFoundError）用公式生成，**必须 (256,3) uint8**：
+   pg.ColorMap 收 0..1 float 色数组按 0..255 截断（0.75→0）得近全黑图且无告警；
+   `lut.gradient.setColorMap` 只换查找表不碰 levels（换色零亮度扰动，测试双断言：LUT 换色
+   +levels 逐位不变）；③时频结果**按通道缓存** `_tfr_cache`——命中同步绘制零线程零重算，
+   切走切回/换配色不再"计算中"闪烁；`_on_tfr_done` 在 `_data is not None` 守卫下回填
+   （用户已切走也缓存——结果只依赖通道）。
+3. **第五视图「单段浏览（全通道）」**（用户确认）：第 N 段全通道堆叠 + 段号 SpinBox（suffix
+   "/ N"）+ ◀/▶ 按钮 + ←/→ 键盘（QShortcut WidgetWithChildrenShortcut 作用域限预览内，不与
+   浏览 tab 键盘导航冲突）；滑窗分段模式下即"翻页滑动看数据"。堆叠画法与平均视图共用
+   `_draw_stacked(rows_uv)`；**第五项 append 尾部**保 e2e_m8 按索引 0-3 寻址稳定。
+
+**排障小记**：配色测试三连修——`np.asarray(img.lut)` 得到 bound method 对象数组（img.lut 是
+HistogramLUTItem.getLookupTable 的可调用引用，随 gradient 实时变）；`img.lut(256)` 报
+`'int' object has no attribute 'dtype'`（签名 `getLookupTable(img=None, n=None, alpha=None)`
+首参是 img），正确写法 `img.lut(n=256)`；`img.getLevels()` 返回 ndarray，`==` 断言触发
+truth-value 歧义，须 `np.array_equal`。
+
+**验证**：pytest **257 绿**（+15：epoching 锚定 9——滑窗 11 段样本序列
+`arange(250,14000,1250)`/半重叠 22 段差 625/步进>窗长拒/窗超长拒/手动 3 段/越界列全部无效
+锚点/空锚点拒/默认=事件锚定/序列化往返；预览 6——Y 残留修复/配色 LUT·levels/缓存零重算/
+控件启停/单段浏览×2）；e2e_m81 **12 项**（A01T 手动 [10,20,30.5,350]→4 段「手动」零静默
+丢弃、蝶形→时频 Y span 47.5Hz 铺满、切 jet levels 不扰动、切走切回缓存秒显、滑窗 538 段
+**样本域公式现算**（`arange(250, 672528-1000, 1250)`，Plan 期把合成数据 22 段估成 23 的
+教训——段数一律现算不硬编码）、第五视图 25 通道+跳段/▶ 翻段）；e2e_m8 13 项**零回归** +
+e2e_m1/m3/m4/m5/m7 + smoke 全过。
+
+**下一步**：M9 连续导出（EDF/FIF 整段预处理结果落盘），任务拆解见 TODO.md。
+
+## 2026-08-28 — M8.2 视图观感三修完成（用户三截图反馈驱动）
+
+**背景**：用户实测五视图后反馈三观感问题（截图证实）——①各通道平均（堆叠）纵轴 channel
+名称重叠；②ERP 蝶形图几种颜色的线缺标识信息（图例）；③单段浏览通道名同样重叠，且
+**先选单段浏览再切时频图，纵轴左上角残留其它通道的名称**。
+
+**做了什么**（全部在 `epochs_preview.py`）：
+
+1. **堆叠系通道名行首内嵌**（修①③的挤叠半边）：y 轴 `setTicks` 放 25 导联名在有限窗高下
+   必挤叠——`_draw_stacked` 改 M6 浏览器同款 TextItem（`anchor=(0,0.5)`、半透明白底、行首
+   行基线 `setPos(times[0], i*spacing)`）。预览 tab 比浏览器矮，离屏渲染实测默认字号**标签
+   盒高≥行距**（相邻盒相触成连续白条）——显式 8pt 压盒高后 hairline 分离、25 名全可读。
+2. **蝶形图图例**（修②）：M8 "不用 legend 防 plot.clear() 状态残留"的顾虑在 0.14 实测
+   **不成立**（clear 会清 `leg.items` 条目；但图例框本身不清，须手动 hide）——`_legend`
+   惰性建 + 逐通道挂"色线=通道名"；0.14 图例默认 NoBrush 无底框（文字压曲线）→ 半透明白
+   底+灰框；单列 25 条在矮窗口排不到底被截断（离屏实测只见 10 条）→ `setColumnCount`
+   每列至多 12 行自动分列（25 通道=3 列全可见）。`_redraw` 统一 `clear()+hide()`。
+3. **切时频 ticks 残留清理**（修③的残留半边）：根因=`_redraw` 复位 invertY/label 但没清
+   ticks——堆叠系视图的通道名 ticks 残留到时频视图、经 `invertY(True)` 翻到左上角飘字；
+   `_make_plot` 预置 + `_redraw` 统一 `setTicks([])`；`_draw_tfr` 里 **`setTicks(None)`
+   恢复默认自动刻度系统**（`[]`=无刻度、`None`=自动——语义不同；旧代码从蝶形 `setTicks([])`
+   切时频频率刻度被砍的暗病顺带修复）。
+
+**排障小记**：本环境 Read 工具读 PNG 走 CDN 上传链路（拿不到像素级视觉），视觉验证闭环
+=离屏 grab 自渲染 → PIL 裁剪左带 3x 放大 → 图像分析器读图核对（行距/盒高像素实测、图例
+列数、左轴刻度内容）——"视觉验证必须看内容"（坑 #51）在无直读能力环境下的可行替代。
+另：`LegendItem.columnCount` 是 int **属性**非方法（`setColumnCount` 才是方法）、`TextItem`
+有 `setFont` 无 `font()` getter（取回走内部 `t.textItem.font()`）——两处 API 口径坑已入
+HANDOFF #57。
+
+**验证**：pytest **261 绿**（+4：行内嵌标签文本+8pt+y 轴无刻度/图例逐通道条目+切走隐藏/
+25 通道分列 3/单段浏览→时频左轴无通道名残留且频率=自动刻度）；e2e_m8 13 项 + e2e_m81
+12 项**零回归** + smoke 全过；离屏渲染 25 通道（22 EEG+3 EOG 合成）四视图截图亲眼确认
+（堆叠/单段标签不再连片、蝶形图例 3 列带底框全可见、时频数字频率刻度+无残留+纵向铺满）。
+
+**下一步**：M9 连续导出（EDF/FIF 整段预处理结果落盘），任务拆解见 TODO.md。
+
+## 2026-08-30 — M8.3 特征结果图表区 + welch 逐通道语义（用户两点需求驱动）
+
+**背景**：用户梳理特征计算逻辑后提出两点——①PSD 曲线特征应可选时间窗和通道，都留空=
+全量数据逐通道各一条（原"留空=通道平均一条"语义废除）；②特征结果不能只有长表，PSD
+曲线应多通道画一张图，频带功率/时域统计等标量也要可视化。
+
+**做了什么**：
+
+1. **`features/spectral.py`**：窗校验循环从 BandPower extract 抽成模块级
+   `_resolve_spans(t_axis, spec)`（返回 `[(mask|None, "@lo-hi s"|"")]`），BandPower 改调
+   它行为零变、错误消息逐字保留（越界容差一采样周期/<2 采样点拒——测试钉死的护栏）；
+   `WelchPsdParams` 加 `time_windows`、channels 说明改"空=全部数据通道，逐通道各一条"；
+   `WelchPsdFeature.extract` 重写（pick_channels→get_data→t_axis 自建→`_resolve_spans`
+   循环→`array_welch`→逐通道 append `{"channel","window","freqs","psd"}`）——通道平均
+   分支与"(通道平均)"字面量删除，`mean_welch` 保留（对比 PSD 用）。
+2. **`batch/results.py` + `export/features_io.py`**：curve dict 加 `"window": str`（纯 str
+   不违反禁 Qt/跨线程规则）；宽表列头 `rec · ch{win} (µV²/Hz)`——window="" 时与旧格式
+   **逐字节同**（零回归）；HDF5 attrs 写 window、回读 `.get("window","")` 兜底旧文件。
+3. **`ui/widgets/feature_charts.py` 新建**（feature_table.py 只加编排，UI 不算数）：`PsdCurvesChart`
+   ——log-log、复用对比 PSD 轴标签 `S.PIPE_PSD_AXIS_X/Y`、mask=psd>0、`pg.intColor(i,hues=n)`
+   分色、蝶形同款 `_make_legend` 分列（每列 ≤12 行）、MAX_CURVES=60 截断+hint 含总数；
+   `FeatureBarGrid`——**每特征一格** 3 列网格（Y 量程独立——柱状图通用化裁决：长表
+   feature 列不带提取器身份，名字启发式特判脆弱，每特征一格天然解决时域 8 统计量
+   量纲不同）；分段行 `groupby([recording,event_code,channel,feature]).mean()` **按事件码
+   求均值聚合**（288 段画不了、类间比较是 BCI 常态——提示行说明口径），系列=event_code
+   （多录制 `rec · code`），BarGraphItem 组内并列错位，通道>12 隔名、特征>24/系列>12
+   截断+hint，QScrollArea 滚动；`self.aggregated`/`feature_names` 暴露——**测试数值断言
+   不解析像素**。`make_charts_area(table)` 三态：双有=QTabWidget 两 tab/单有=单图/全无=None
+   （空表零观感变化）。
+4. **`feature_table.py`**：`_build_ui` 拆 `_build_table_area`（原工具行+表格平移）+
+   QSplitter(上表下图 3:2)；构造签名/`_model`/`_proxy`/`_LongTableModel` 全不动（e2e
+   寻址安全）；teardown 对称 `_charts=None`。批处理结果 tab 同一 FeatureTableView——
+   改一处两入口受益。
+
+**测试改写**（语义变更的预期失败 4 项按计划改写）：`test_features_m4` 通道平均用例→
+默认 8 曲线+window=""+峰 10Hz；新增子窗（0-30→16 条）/越界拒/采样点不足拒；`test_export_m4`
+fixture 收窄 `channels=["EEG00"]` 保 1 条下游零改，新增窗进列头/attrs 往返；`test_ui_m4`
+新增 TestFeatureCharts 6 用例；e2e_m4 断言改"逐通道各一条"+50Hz 压制改**全曲线比值中位数**
+（原 curves[0] 单曲线）。
+
+**排障小记（视觉验证闭环再进一步）**：独立离屏截图脚本第一轮黑底——pg 全局白底在
+`MainWindow.__init__` 里 `setConfigOptions` 设置，脚本没走 MainWindow 须**手动复刻**；
+第二轮分析器仍报"黑底"，PIL 像素统计证伪（图表区中央 RGB=251 纯白、暗像素 0%）——
+同一分析器对图例"半透明 vs 不透明"也自相矛盾，**读图结论要像素级/代码级交叉验证**；
+合成数据 ch2-7 同形白噪声 PSD 曲线重叠属数据特性非配色 bug（真实数据各通道谱形有差异）。
+
+**验证**：pytest **271 绿**（+10）；e2e_m4 **19 项 ALL OK**（"PSD 曲线逐通道各一条
+(实际 8 条 / 8 个通道)"、50Hz/10Hz 比值中位数 0.00、104 行长表、288 段×25 通道×2 频段、
+分段 HDF5/FIF 往返、关 tab 释放）；smoke OK；三形态（raw 双窗 16 曲线 PSD 页/raw 柱状
+页/epochs 按码聚合柱状页）白底截图目视确认——布局比例/图例分列可读/轴标签正确/
+聚合提示行位置正确/每通道 3 组并列柱/图例只挂第一格。
+
+**下一步**：M9 连续导出（EDF/FIF 整段预处理结果落盘），任务拆解见 TODO.md。

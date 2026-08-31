@@ -178,6 +178,98 @@ class TestEpoching:
         assert "没有事件" in str(ei.value)
 
 
+# --------------------------------------------------- 锚定三模式（M8.1）
+class TestEpochingAnchors:
+    """固定窗滑窗/手动时刻：空事件表也可分段（synthetic_raw 250Hz/60s/15000 样本）.
+
+    样本域边界口径（mne 1.12 实测）：保留条件
+    ``anchor + round(tmin·fs) ≥ 0`` 且 ``anchor ≤ n_times − 1 − round(tmax·fs)``。
+    """
+
+    def _ctx(self, synthetic_raw) -> ProcessingContext:
+        return ProcessingContext(raw=synthetic_raw.copy(), events=EventTable())
+
+    def test_fixed_window_eventless(self, synthetic_raw):
+        """无事件 + 滑窗 [-1,4]s → 11 段；锚点样本 arange(250, 14000, 1250)."""
+        ctx = self._ctx(synthetic_raw)
+        apply_pipeline(ctx, [("epoching", STEP_REGISTRY["epoching"].make_params(
+            {"anchor": "固定窗滑窗", "tmin": -1.0, "tmax": 4.0}))])
+        assert ctx.stage == "epochs"
+        assert len(ctx.epochs) == 11
+        assert len(ctx.epochs.times) == int(5.0 * 250) + 1  # -1..4s 双端闭 1251
+        assert set(ctx.epochs.event_id) == {"滑窗"}
+        # 保留全部候选（无 reject 无静默丢弃——回归口径）
+        assert np.array_equal(ctx.epochs.events[:, 0],
+                              np.arange(250, 14000, 1250))
+
+    def test_fixed_overlap_step(self, synthetic_raw):
+        """步进 2.5s（半重叠）→ 22 段（arange(250,14000,625) 共 22 个）；差 625 样本."""
+        ctx = self._ctx(synthetic_raw)
+        apply_pipeline(ctx, [("epoching", STEP_REGISTRY["epoching"].make_params(
+            {"anchor": "固定窗滑窗", "tmin": -1.0, "tmax": 4.0, "step_s": 2.5}))])
+        assert len(ctx.epochs) == 22
+        assert np.all(np.diff(ctx.epochs.events[:, 0]) == 625)
+
+    def test_fixed_step_gt_window_refused(self, synthetic_raw):
+        """步进大于窗长（10s > 5s 窗）→ 参数校验中文报错."""
+        with pytest.raises((StepError, ValueError)) as ei:
+            STEP_REGISTRY["epoching"].make_params(
+                {"anchor": "固定窗滑窗", "tmin": -1.0, "tmax": 4.0, "step_s": 10.0})
+        assert "步进" in str(ei.value)
+
+    def test_fixed_window_too_long(self, synthetic_raw):
+        """窗长超过数据时长 → 报错含「不足」."""
+        ctx = self._ctx(synthetic_raw)
+        with pytest.raises(StepError) as ei:
+            apply_pipeline(ctx, [("epoching", STEP_REGISTRY["epoching"].make_params(
+                {"anchor": "固定窗滑窗", "tmin": 0.0, "tmax": 120.0}))])
+        assert "不足" in str(ei.value)
+
+    def test_manual_anchors_eventless(self, synthetic_raw):
+        """手动锚点 [10, 20, 30.5] → 3 段「手动」；相对窗从 -1s 起."""
+        ctx = self._ctx(synthetic_raw)
+        apply_pipeline(ctx, [("epoching", STEP_REGISTRY["epoching"].make_params(
+            {"anchor": "手动时刻", "anchors_s": [10.0, 20.0, 30.5],
+             "tmin": -1.0, "tmax": 4.0}))])
+        assert len(ctx.epochs) == 3
+        assert set(ctx.epochs.event_id) == {"手动"}
+        assert ctx.epochs.times[0] == pytest.approx(-1.0)
+        assert ctx.epochs.events[2, 0] == 7625  # 30.5 × 250 取整
+
+    def test_manual_out_of_range_refused(self, synthetic_raw):
+        """锚点窗口越界（右缘 59+4>60 / 左缘 0.5−1<0）→ 报错列出无效锚点."""
+        ctx = self._ctx(synthetic_raw)
+        with pytest.raises(StepError) as ei:
+            apply_pipeline(ctx, [("epoching", STEP_REGISTRY["epoching"].make_params(
+                {"anchor": "手动时刻", "anchors_s": [10.0, 59.0],
+                 "tmin": -1.0, "tmax": 4.0}))])
+        assert "59.0" in str(ei.value) and "超出" in str(ei.value)
+        with pytest.raises(StepError):
+            apply_pipeline(ctx, [("epoching", STEP_REGISTRY["epoching"].make_params(
+                {"anchor": "手动时刻", "anchors_s": [0.5],
+                 "tmin": -1.0, "tmax": 4.0}))])
+
+    def test_manual_empty_refused(self, synthetic_raw):
+        """手动时刻不给锚点 → 参数校验中文报错."""
+        with pytest.raises((StepError, ValueError)) as ei:
+            STEP_REGISTRY["epoching"].make_params({"anchor": "手动时刻"})
+        assert "锚点" in str(ei.value)
+
+    def test_default_anchor_is_events(self):
+        """默认锚定=事件锚定（旧参数 JSON 无 anchor 键零回归的根据）."""
+        assert STEP_REGISTRY["epoching"].make_params({}).anchor == "事件锚定"
+
+    def test_anchor_serialization_roundtrip(self):
+        """三新字段经 step_to_dict/from_dict 与 ensure_ascii=False 序列化往返."""
+        p = STEP_REGISTRY["epoching"].make_params(
+            {"anchor": "手动时刻", "anchors_s": [10.0], "step_s": 2.5})
+        d = step_to_dict("epoching", p)
+        import json
+        json.dumps(d, ensure_ascii=False)  # 中文 Literal 值可序列化
+        p2 = step_from_dict(d)[1]
+        assert p2.anchor == "手动时刻" and p2.anchors_s == [10.0] and p2.step_s == 2.5
+
+
 # ------------------------------------------------------------ 管线/序列化/阶段
 class TestPipeline:
     def test_full_chain_and_stage_guard(self, synthetic_raw):

@@ -2,10 +2,10 @@
 
 分层：
 - ``mean_welch`` / ``array_welch`` 是纯计算工具（M3 PSD 视图与 M4 特征共用；
-  UI 的 psd_view 调前者，特征提取器调后者）
+  UI 的 psd_view 调前者做通道平均对比，特征提取器一律调后者逐通道）
 - ``BandPowerFeature``：δ/θ/α/β/γ + 自定义频段的积分功率——**长表标量**，
   raw 全量一条/通道、epochs 逐段一条/通道（BCI 特征向量的主力）
-- ``WelchPsdFeature``：通道（或通道平均）的完整 PSD 曲线——**曲线行**，
+- ``WelchPsdFeature``：逐通道×逐时间窗的完整 PSD 曲线——**曲线行**，
   仅 raw 阶段（epochs 曲线量爆炸，段级频谱用 BandPower 标量表达）
 """
 
@@ -129,6 +129,59 @@ def parse_bands(spec: list[str]) -> dict[str, tuple[float, float]]:
     return out or dict(STANDARD_BANDS)  # 空列表=全部标准频段（表单清空场景兜底）
 
 
+# 时间窗语法：起-止（秒，支持负数——epochs 常见 -1 到 0 的事件前基线窗）
+_TIME_WIN_RE = re.compile(r"^\s*(-?\d+(?:\.\d+)?)\s*-\s*(-?\d+(?:\.\d+)?)\s*$")
+
+
+def parse_time_windows(spec: list[str]) -> list[tuple[float, float]]:
+    """时间窗参数 → [(起, 止), ...]（秒）.
+
+    语法 ``起-止``（如 ``0-1``、``-1-0``、``0.5-1.5``），逗号分隔多窗；
+    epochs 阶段窗相对事件锚点（= mne epochs.times 坐标），raw 阶段为
+    录制内绝对秒。空列表 = 整段一条（M4 以来现状，零回归）。
+
+    :raises FeatureError: 语法错/起不小于止/窗数超限（中文提示）。
+    """
+    out: list[tuple[float, float]] = []
+    for item in spec:
+        m = _TIME_WIN_RE.match(item)
+        if m is None:
+            raise FeatureError(
+                f"时间窗「{item}」无法解析，格式：起-止（秒，可负，如 0-1、-1-0）"
+            )
+        lo, hi = float(m.group(1)), float(m.group(2))
+        if not (lo < hi):
+            raise FeatureError(f"时间窗「{item}」必须满足 起 < 止")
+        out.append((lo, hi))
+    if len(out) > 50:
+        raise FeatureError(f"时间窗最多 50 个（收到 {len(out)}）——长表行数会爆炸")
+    return out
+
+
+def _resolve_spans(
+    t_axis: np.ndarray, spec: list[str]
+) -> list[tuple[np.ndarray | None, str]]:
+    """时间窗参数 → [(样本 mask|None=全量, 窗后缀 "@lo-hi s"|"")]（BandPower/WelchPsd 共用）.
+
+    越界容差=一个采样周期（离散语义：样本 t_i 代表 [t_i, t_i+dt) 的
+    信号，故窗 [0, dur) 天然合法——10s 录制输 0-10 不应被拒）；
+    窗内 <2 采样点拒。错误消息被 test_features_m4 钉死，改词须同步测试。
+    """
+    spans: list[tuple[np.ndarray | None, str]] = [(None, "")]
+    for lo, hi in parse_time_windows(spec):
+        dt = float(np.median(np.diff(t_axis)))
+        if lo < t_axis[0] - dt or hi > t_axis[-1] + dt:
+            raise FeatureError(
+                f"时间窗 {lo:g}-{hi:g}s 超出数据时间范围 "
+                f"[{t_axis[0]:g}, {t_axis[-1]:g}]s——请改窗或先调整分段窗长"
+            )
+        mask = (t_axis >= lo) & (t_axis < hi)
+        if int(mask.sum()) < 2:
+            raise FeatureError(f"时间窗 {lo:g}-{hi:g}s 内不足 2 个采样点")
+        spans.append((mask, f"@{lo:g}-{hi:g}s"))
+    return spans
+
+
 # ------------------------------------------------------------------ 频带功率特征
 
 class BandPowerParams(BaseModel):
@@ -170,6 +223,11 @@ class BandPowerParams(BaseModel):
         json_schema_extra={"unit": "s", "decimals": 1, "min": 0.5, "max": 30.0},
         description="Welch 每段长度（秒）——决定频率分辨率（2Hz 段长≈0.5Hz 分辨率）",
     )
+    time_windows: list[str] = Field(
+        default=[], title="时间窗（秒，空=整段）",
+        description="M8 时间分辨：逐窗各算一组频带功率，格式 起-止（可负，epochs 相对事件锚点/"
+                    "raw 绝对秒），逗号分隔（如 -1-0, 0-1, 1-2）；窗进特征名（bp_alpha@0-1s）",
+    )
 
 
 @register_feature
@@ -192,49 +250,69 @@ class BandPowerFeature(FeatureExtractor):
             data = ctx.raw.get_data(picks=picks)[None, ...]
             epoch_ids: list[int | None] = [None]
             codes: list[str | None] = [None]
+            # raw 的窗=录制内绝对秒；时间轴自建（等价 arange/sfreq）
+            t_axis = np.arange(data.shape[-1], dtype=float) / sfreq
         else:
             data = ctx.epochs.get_data(picks=picks)
             id2code = {v: k for k, v in ctx.epochs.event_id.items()}
             epoch_ids = list(range(len(ctx.epochs)))
             codes = [id2code.get(int(c)) for c in ctx.epochs.events[:, -1]]
-        freqs, psd = array_welch(data, sfreq, params.fmin, params.fmax, params.n_per_seg_s)
-        # µV²/Hz → 积分后 µV²（特征表以 µV 为基准单位，与浏览器/PSD 视图一致）
-        psd_uv = psd * 1e12
-        total = np.trapz(psd_uv, freqs, axis=-1)  # [n_epoch, n_ch] 分析带内总功率
+            # epochs 的窗=相对事件锚点（mne epochs.times 坐标，tmin 可为负）
+            t_axis = np.asarray(ctx.epochs.times, dtype=float)
+
+        # M8 时间分辨：逐窗各算一组频带功率；空=整段一条（M4 现状，零回归）。
+        # 窗标记拼进特征名（bp_alpha@0-1s）——长表/导出链零改动。
+        # 窗解析/越界/采样点校验与 WelchPsd 共用 _resolve_spans（M8.3 抽取）。
+        spans = _resolve_spans(t_axis, params.time_windows)
+
         result = ExtractorResult()
-        for name, (lo, hi) in bands.items():
-            sel = (freqs >= lo) & (freqs <= hi)
-            if not sel.any():
-                raise FeatureError(
-                    f"频段 {name}（{lo}-{hi} Hz）完全不在分析范围 "
-                    f"[{params.fmin:g}, {min(params.fmax, sfreq / 2):g}] Hz 内——"
-                    "请检查频段定义或数据采样率"
-                )
-            power = np.trapz(psd_uv[..., sel], freqs[sel], axis=-1)  # [n_epoch, n_ch]
-            values = power / total if params.relative else power
-            if params.log10:
-                values = np.log10(np.maximum(values, 1e-30))  # 下限防 log(0)
-            fname = name + ("_rel" if params.relative else "") + ("_log" if params.log10 else "")
-            for i_ep in range(values.shape[0]):
-                for i_ch, ch in enumerate(channels):
-                    result.scalars.append({
-                        "epoch_index": epoch_ids[i_ep],
-                        "event_code": codes[i_ep],
-                        "channel": ch,
-                        "feature": fname,
-                        "value": float(values[i_ep, i_ch]),
-                    })
+        for mask, suffix in spans:
+            sub = data if mask is None else data[..., mask]
+            freqs, psd = array_welch(
+                sub, sfreq, params.fmin, params.fmax, params.n_per_seg_s
+            )
+            # µV²/Hz → 积分后 µV²（特征表以 µV 为基准单位，与浏览器/PSD 视图一致）
+            psd_uv = psd * 1e12
+            total = np.trapz(psd_uv, freqs, axis=-1)  # [n_epoch, n_ch] 分析带内总功率
+            for name, (lo, hi) in bands.items():
+                sel = (freqs >= lo) & (freqs <= hi)
+                if not sel.any():
+                    raise FeatureError(
+                        f"频段 {name}（{lo}-{hi} Hz）完全不在分析范围 "
+                        f"[{params.fmin:g}, {min(params.fmax, sfreq / 2):g}] Hz 内——"
+                        "请检查频段定义或数据采样率"
+                    )
+                power = np.trapz(psd_uv[..., sel], freqs[sel], axis=-1)  # [n_epoch, n_ch]
+                values = power / total if params.relative else power
+                if params.log10:
+                    values = np.log10(np.maximum(values, 1e-30))  # 下限防 log(0)
+                fname = (name + ("_rel" if params.relative else "")
+                         + ("_log" if params.log10 else "") + suffix)
+                for i_ep in range(values.shape[0]):
+                    for i_ch, ch in enumerate(channels):
+                        result.scalars.append({
+                            "epoch_index": epoch_ids[i_ep],
+                            "event_code": codes[i_ep],
+                            "channel": ch,
+                            "feature": fname,
+                            "value": float(values[i_ep, i_ch]),
+                        })
         return result
 
 
 # ------------------------------------------------------------------ PSD 曲线特征
 
 class WelchPsdParams(BaseModel):
-    """PSD 曲线参数：通道留空=只输出一条通道平均曲线（跨文件对比最常用）."""
+    """PSD 曲线参数（M8.3：通道/时间窗都可留空=全量数据逐通道）."""
 
     channels: list[str] = Field(
-        default=[], title="通道（空=通道平均）",
-        description="留空=一条「通道平均」曲线；指定通道名=每通道各一条",
+        default=[], title="通道（空=全部数据通道）",
+        description="留空=全部数据通道，逐通道各一条曲线；指定通道名=仅这些通道",
+    )
+    time_windows: list[str] = Field(
+        default=[], title="时间窗（秒，空=全量）",
+        description="raw 绝对秒，格式 起-止（如 0-30），逗号分隔多窗；空=全量数据。"
+                    "窗进曲线 window 字段（导出列名/图例带 @起-止s 标记）",
     )
     fmin: float = Field(
         default=FMIN_DEFAULT, title="起始频率",
@@ -253,7 +331,12 @@ class WelchPsdParams(BaseModel):
 
 @register_feature
 class WelchPsdFeature(FeatureExtractor):
-    """Welch PSD 曲线（仅 raw 阶段）：文件级频谱摘要，导出为曲线行."""
+    """Welch PSD 曲线（仅 raw 阶段）：逐通道×逐时间窗一条，导出为曲线行.
+
+    M8.3 语义变更：通道留空不再走通道平均（那套口径保留在 M3 对比 PSD 视图
+    ``mean_welch``），改为与 BandPower/timedomain 一致的"空=全部数据通道"；
+    时间窗留空=全量数据，窗标记 "@lo-hi s" 进曲线 window 字段。
+    """
 
     feature_id = "welch_psd"
     label_zh = "PSD 曲线"
@@ -262,23 +345,19 @@ class WelchPsdFeature(FeatureExtractor):
 
     def extract(self, ctx: ProcessingContext, params: WelchPsdParams) -> ExtractorResult:
         result = ExtractorResult()
-        if not params.channels:
-            # 通道平均：直接复用 M3 的 mean_welch（与 PSD 对比视图同口径）
-            f, p = mean_welch(
-                ctx.raw, fmin=params.fmin, fmax=params.fmax, n_per_seg_s=params.n_per_seg_s
-            )
-            result.curves.append({
-                "channel": "(通道平均)", "freqs": f, "psd": p * 1e12,  # → µV²/Hz
-            })
-            return result
         channels = pick_channels(ctx, params.channels)
         picks = picks_indices(ctx, channels)
-        f, psd = array_welch(
-            ctx.raw.get_data(picks=picks), ctx.sfreq,
-            params.fmin, params.fmax, params.n_per_seg_s,
-        )
-        for i, ch in enumerate(channels):
-            result.curves.append({
-                "channel": ch, "freqs": f, "psd": psd[i] * 1e12,  # → µV²/Hz
-            })
+        data = ctx.raw.get_data(picks=picks)
+        # raw 的时间轴=录制内绝对秒（与 BandPower raw 分支同口径，自建等价 arange/sfreq）
+        t_axis = np.arange(data.shape[-1], dtype=float) / ctx.sfreq
+        for mask, suffix in _resolve_spans(t_axis, params.time_windows):
+            sub = data if mask is None else data[..., mask]
+            f, psd = array_welch(
+                sub, ctx.sfreq, params.fmin, params.fmax, params.n_per_seg_s,
+            )
+            for i, ch in enumerate(channels):
+                result.curves.append({
+                    "channel": ch, "window": suffix,
+                    "freqs": f, "psd": psd[i] * 1e12,  # → µV²/Hz
+                })
         return result

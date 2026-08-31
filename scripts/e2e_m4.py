@@ -113,14 +113,22 @@ def main() -> int:
         want = n_ch * (5 + 8)  # 8 数据通道 × (5 标准频段 + 8 时域统计量)
         check("特征行数正确（长表）", len(table) == want,
               f"(实际 {len(table)}，预期 {want} = {n_ch} 通道 × 13 特征)")
-        check("通道平均 PSD 曲线 1 条", len(table.curves) == 1)
-        # 陷波断言复用 M3 口径：处理后（含陷波）的 50Hz PSD 应低于 α——检查
-        # 曲线在 50Hz 处已无尖峰（羊数据工频在 50Hz）
-        c = table.curves[0]
-        i50 = abs(c["freqs"] - 50.0).argmin()
-        ialpha = abs(c["freqs"] - 10.0).argmin()
-        check("处理后 PSD：50Hz 不再是全局尖峰", c["psd"][i50] < 5 * c["psd"][ialpha],
-              f"(50Hz {c['psd'][i50]:.2e} vs 10Hz {c['psd'][ialpha]:.2e} µV²/Hz)")
+        # M8.3：留空=逐通道各一条（通道平均语义已废）——通道集合与数据通道一致
+        n_curve_ch = len({c["channel"] for c in table.curves})
+        check("PSD 曲线逐通道各一条", n_curve_ch == n_ch and len(table.curves) == n_ch,
+              f"(实际 {len(table.curves)} 条 / {n_curve_ch} 个通道，预期 {n_ch})")
+        # 陷波断言复用 M3 口径（M8.3 改全曲线）：处理后各曲线在 50Hz 处的谱值
+        # 应低于自身 10Hz 谱值的 5 倍——全曲线比值取中位数（羊数据工频在 50Hz）
+        import numpy as np
+
+        ratios = []
+        for c in table.curves:
+            i50 = abs(c["freqs"] - 50.0).argmin()
+            ialpha = abs(c["freqs"] - 10.0).argmin()
+            ratios.append(float(c["psd"][i50]) / max(float(c["psd"][ialpha]), 1e-30))
+        med = float(np.median(ratios))
+        check("处理后 PSD：50Hz 不再是全局尖峰", med < 5.0,
+              f"(50Hz/10Hz 比值中位数 {med:.2f}，共 {len(ratios)} 条曲线)")
         QTimer.singleShot(300, _stage2)
 
     # ------------------------------------------------- 阶段 2：视口预填（第④层）

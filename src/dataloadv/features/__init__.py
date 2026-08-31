@@ -22,7 +22,8 @@ from .base import (
 )
 
 # 提取器模块 import 触发注册（顺序即 UI"添加特征"菜单的展示顺序）
-from . import spectral, timedomain  # noqa: F401,E402
+# qc 排最前：先体检通道质量，再提取谱/时域特征——符合使用次序
+from . import qc, spectral, timedomain  # noqa: F401,E402
 
 __all__ = [
     "FEATURE_REGISTRY",

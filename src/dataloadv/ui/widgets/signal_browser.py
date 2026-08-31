@@ -50,6 +50,7 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QMenu,
+    QMessageBox,
     QPushButton,
     QSlider,
     QVBoxLayout,
@@ -57,6 +58,7 @@ from PySide6.QtWidgets import (
 )
 
 from ...core.recording import LoadPolicy, Recording
+from ...features.qc import QualityCheckParams, compute_channel_qc
 from ...workers.generic import run_in_thread
 from ..strings_zh import S
 from .event_lane import EventLane, event_color
@@ -146,6 +148,19 @@ def _fmt_offset_uv(v: float) -> str:
     return f"{v:+.1f}"
 
 
+# 质量体检三级 → 通道列表前缀 / 中文结论（M7；文案在 strings_zh，禁止写死）
+_QC_PREFIX = {
+    "good": S.QC_PREFIX_GOOD,
+    "suspect": S.QC_PREFIX_SUSPECT,
+    "bad": S.QC_PREFIX_BAD,
+}
+_QC_QUALITY = {
+    "good": S.QC_QUALITY_GOOD,
+    "suspect": S.QC_QUALITY_SUSPECT,
+    "bad": S.QC_QUALITY_BAD,
+}
+
+
 class _PanViewBox(pg.ViewBox):
     """滚轮平移的 ViewBox：竖滚=时间平移，Ctrl+滚轮=锚点缩放，y 轴锁定.
 
@@ -205,6 +220,12 @@ class SignalBrowserView(QWidget):
         # 坏道标记（raw 未加载时先记在这里，加载后一次性写入 info["bads"]）
         self._bad_names: set[str] = set()
         self._combo_lock = False  # 时长框程序化回写时不触发用户处理逻辑
+        # 质量体检结果（M7）：通道名 -> compute_channel_qc 的行 dict；
+        # None/空 = 尚未体检（列表行不显示前缀）。体检与偏移统计都只拼
+        # 通道列表文本，两者由 _refresh_ch_list_text 统一合成
+        self._qc: dict[str, dict] = {}
+        self._qc_running = False  # 防重入：计算期间禁用按钮
+        self._ch_offsets: np.ndarray | None = None  # 直流偏移（µV，行文本用）
 
         self._build_ui()
         self._populate_channels()
@@ -244,6 +265,11 @@ class SignalBrowserView(QWidget):
         self._window_combo.setMaximumWidth(72)
         self._window_combo.currentTextChanged.connect(self._on_window_changed)
 
+        # 质量体检（M7）：左组尾部——先体检通道质量再往下走分析
+        self._btn_qc = QPushButton(S.BTN_QC)
+        self._btn_qc.setToolTip(S.BTN_QC_TIP)
+        self._btn_qc.clicked.connect(self._run_qc)
+
         self._lbl_time = QLabel(S.BROWSER_NO_DATA)
         self._btn_prev = QPushButton(S.BTN_PREV_EVENT)
         self._btn_next = QPushButton(S.BTN_NEXT_EVENT)
@@ -275,6 +301,7 @@ class SignalBrowserView(QWidget):
         for w in (
             self._btn_first, self._btn_prev_page, self._btn_prev_s, self._btn_next_s,
             self._btn_next_page, self._btn_last, win_lbl, self._window_combo,
+            self._btn_qc,
         ):
             bar.addWidget(w)
         bar.addStretch(1)
@@ -414,21 +441,115 @@ class SignalBrowserView(QWidget):
         return np.median(medians, axis=0)
 
     def _apply_channel_offsets(self, offsets: np.ndarray) -> None:
-        """偏移统计完成（主线程）：拼进通道列表行文本.
-
-        ``blockSignals`` 必须有——``itemChanged`` 在 ``setText`` 时也触发，
-        不挡会连发 N 次 ``_on_channel_toggle`` → 无谓刷新。
-        """
+        """偏移统计完成（主线程）：存值后重拼通道列表行文本（见 _refresh_ch_list_text）."""
         self._ch_offsets = offsets
+        self._refresh_ch_list_text()
+
+    def _refresh_ch_list_text(self) -> None:
+        """按最新的偏移/体检结果重拼通道列表行文本与悬浮提示.
+
+        行文本 = [体检前缀] + 通道名 + [直流偏移]；体检前缀 ✓/?/✗ 只在
+        做过体检后出现，tooltip 携带问题明细与全部指标。名称权威源仍是
+        UserRole（M6.8 约定不变）。``blockSignals`` 必须有——
+        ``itemChanged`` 在 ``setText``/``setToolTip`` 时都触发，不挡会连发
+        N 次 ``_on_channel_toggle`` → 无谓刷新。
+        """
+        offsets = self._ch_offsets
         self._ch_list.blockSignals(True)
         try:
-            for i in range(min(len(offsets), self._ch_list.count())):
-                name = self._ch_list.item(i).data(Qt.ItemDataRole.UserRole)
-                self._ch_list.item(i).setText(
-                    f"{name}  {_fmt_offset_uv(float(offsets[i]))} {S.UNIT_UV}"
-                )
+            for i in range(self._ch_list.count()):
+                item = self._ch_list.item(i)
+                name = item.data(Qt.ItemDataRole.UserRole)
+                text = name
+                qc = self._qc.get(name)
+                if qc is not None:
+                    text = _QC_PREFIX[qc["quality"]] + text
+                if offsets is not None and i < len(offsets):
+                    text += f"  {_fmt_offset_uv(float(offsets[i]))} {S.UNIT_UV}"
+                item.setText(text)
+                item.setToolTip(self._qc_tooltip(name) if qc else "")
         finally:
             self._ch_list.blockSignals(False)
+
+    # ------------------------------------------------------------------ 质量体检（M7）
+
+    def _run_qc(self) -> None:
+        """「质量体检」按钮：后台算 compute_channel_qc，完成后标记列表+建议坏道.
+
+        防重入：计算期间禁用按钮；首帧未加载完直接忽略（按钮在加载完成前
+        点了也不该炸）。
+        """
+        if not self._loaded_once or self._qc_running:
+            return
+        self._qc_running = True
+        self._btn_qc.setEnabled(False)
+        run_in_thread(
+            self._compute_qc,
+            on_done=self._apply_qc,
+            on_error=self._on_qc_error,
+        )
+
+    def _compute_qc(self) -> list[dict]:
+        """逐通道体检（后台线程）：与偏移统计同款 get_window 分窗采样，不整载."""
+        names = list(self.rec.meta.channel_names)
+        return compute_channel_qc(
+            self.rec.get_window, names, self.rec.meta.sfreq,
+            self.rec.meta.duration_s, QualityCheckParams(),
+        )
+
+    def _on_qc_error(self, msg: str) -> None:
+        """体检失败（主线程）：恢复按钮并给出可见反馈（只打日志用户看不见）."""
+        self._qc_running = False
+        self._btn_qc.setEnabled(True)
+        logger.warning("质量体检失败 %s：%s", self.rec.meta.filename, msg)
+        QMessageBox.critical(self, S.QC_SUGGEST_TITLE, S.QC_FAIL_TEXT.format(msg=msg))
+
+    def _apply_qc(self, rows: list[dict]) -> None:
+        """体检完成（主线程）：存结果 → 重拼列表 → 坏道建议确认.
+
+        确认走 QMessageBox.question（e2e 须逐模块 patch 本模块的
+        QMessageBox——MainWindow 的 patch 罩不到这里）；「是」则逐个
+        ``toggle_bad`` 复用现有坏道机制（曲线灰显 + info["bads"] +
+        bads_changed 广播），不另造一套标记。
+        """
+        self._qc_running = False
+        self._btn_qc.setEnabled(True)
+        self._qc = {r["channel"]: r for r in rows}
+        self._refresh_ch_list_text()
+        bad_rows = [r for r in rows if r["quality"] == "bad"]
+        if not bad_rows:
+            QMessageBox.information(
+                self, S.QC_SUGGEST_TITLE, S.QC_ALL_GOOD.format(n=len(rows))
+            )
+            return
+        lines = "\n".join(
+            f"{S.QC_PREFIX_BAD}{r['channel']}——{'；'.join(r['reasons'])}"
+            for r in bad_rows
+        )
+        answer = QMessageBox.question(
+            self, S.QC_SUGGEST_TITLE,
+            S.QC_SUGGEST_TEXT.format(n=len(bad_rows), lines=lines),
+        )
+        if answer == QMessageBox.StandardButton.Yes:
+            for r in bad_rows:
+                if r["channel"] not in self._bad_names:
+                    self.toggle_bad(r["channel"])
+
+    def _qc_tooltip(self, name: str) -> str:
+        """体检行悬浮提示：质量结论 + 问题明细 + 全部指标（中文）."""
+        qc = self._qc.get(name)
+        if qc is None:
+            return ""
+        m = qc["metrics"]
+        stats = S.QC_TIP_STATS.format(
+            dc=_fmt_offset_uv(m["qc_dc_uv"]),
+            std=_fmt_offset_uv(m["qc_std_uv"]),
+            drift=f"{m['qc_drift_uv_min']:+.1f}",
+            flat=f"{m['qc_flat_pct']:.1f}",
+            rail=f"{m['qc_rail_pct']:.1f}",
+        )
+        body = "\n".join(qc["reasons"]) if qc["reasons"] else S.QC_NO_ISSUE
+        return f"{name} [{_QC_QUALITY[qc['quality']]}]\n{body}\n{stats}"
 
     def _schedule_refresh(self, *_a) -> None:
         """视口变化 → 防抖后刷新（拖动过程只在停顿时真正读数）."""

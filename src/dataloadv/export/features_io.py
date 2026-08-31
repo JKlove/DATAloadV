@@ -53,7 +53,8 @@ def _export_curves_csv(curves: list[dict], main_path: Path) -> list[Path]:
         p = stem.with_name(f"{stem.name}_psd{'' if gi == 0 else gi + 1}.csv")
         data = {"freq (Hz)": list(freqs)}
         for c in group:
-            data[f"{c['recording']} · {c['channel']} (µV²/Hz)"] = list(c["psd"])
+            # M8.3 列头带时间窗标记（window="" 时与旧格式逐字节一致，零回归）
+            data[f"{c['recording']} · {c['channel']}{c.get('window', '')} (µV²/Hz)"] = list(c["psd"])
         pd.DataFrame(data).to_csv(p, index=False, encoding="utf-8-sig")
         written.append(p)
     return written
@@ -83,6 +84,7 @@ def export_features_hdf5(table: FeatureTable, path: str | Path) -> Path:
                 d = cg.create_group(f"{i:04d}")
                 d.attrs["recording"] = c["recording"]
                 d.attrs["channel"] = c["channel"]
+                d.attrs["window"] = str(c.get("window", ""))  # M8.3 时间窗标记
                 d.create_dataset("freqs", data=c["freqs"])
                 d.create_dataset("psd", data=c["psd"])
     logger.info("特征 HDF5 已写出：%s（%d 行，%d 条曲线）", path, len(df), len(table.curves))
@@ -109,6 +111,8 @@ def read_features_hdf5(path: str | Path) -> tuple[pd.DataFrame, list[dict]]:
                 curves.append({
                     "recording": d.attrs["recording"],
                     "channel": d.attrs["channel"],
+                    # 旧文件无 window attrs → ""（等价全量），不炸回读
+                    "window": d.attrs.get("window", ""),
                     "freqs": np.asarray(d["freqs"]),
                     "psd": np.asarray(d["psd"]),
                 })

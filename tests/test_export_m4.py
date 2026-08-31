@@ -23,13 +23,17 @@ from dataloadv.core.recording import EventTable
 
 @pytest.fixture
 def raw_table(synthetic_raw) -> FeatureTable:
-    """raw 全量特征表（含一条通道平均曲线）."""
+    """raw 全量特征表（含 EEG00 一条 PSD 曲线）.
+
+    M8.3 后 welch_psd 留空=逐通道 8 条；fixture 收窄 channels=["EEG00"]
+    保 1 条，下游 4 断言零改。
+    """
     ctx = ProcessingContext(
         raw=synthetic_raw.copy(), events=EventTable.from_mne_annotations(synthetic_raw)
     )
     res = apply_features(ctx, [
         ("bandpower", FEATURE_REGISTRY["bandpower"].make_params({"bands": ["alpha", "beta"]})),
-        ("welch_psd", FEATURE_REGISTRY["welch_psd"].default_params()),
+        ("welch_psd", FEATURE_REGISTRY["welch_psd"].make_params({"channels": ["EEG00"]})),
     ])
     t = FeatureTable()
     t.add_result(res, "test.gdf", "S01")
@@ -86,11 +90,31 @@ class TestFeaturesCsv:
     def test_curves_grouped_by_freq_axis(self, tmp_path, raw_table):
         """两条频率轴不同的曲线 → 各写一个文件（不能混一张表）."""
         raw_table.curves.append({
-            "recording": "other.gdf", "channel": "(通道平均)",
+            "recording": "other.gdf", "channel": "EEG99",
             "freqs": np.linspace(0.5, 40, 77), "psd": np.linspace(1, 2, 77),
         })
         files = features_io.export_features_csv(raw_table, tmp_path / "f.csv")
         assert len([p for p in files if "_psd" in p.name]) == 2
+
+    def test_window_in_csv_header_and_h5_attrs(self, tmp_path):
+        """M8.3：时间窗标记进宽表列头（@起-止s）与 HDF5 attrs，往返保真."""
+        freqs = np.linspace(0.5, 40, 77)
+        t = FeatureTable()
+        t.curves.extend([
+            {"recording": "a.gdf", "channel": "EEG00", "window": "",
+             "freqs": freqs, "psd": np.linspace(1, 2, 77)},
+            {"recording": "a.gdf", "channel": "EEG00", "window": "@0-30s",
+             "freqs": freqs, "psd": np.linspace(2, 3, 77)},
+        ])
+        files = features_io.export_features_csv(t, tmp_path / "f.csv")
+        psd_csv = [p for p in files if "_psd" in p.name][0]
+        back = pd.read_csv(psd_csv, encoding="utf-8-sig")
+        # window="" 的列头与旧格式逐字节一致（零回归），带窗列追加 @0-30s
+        assert list(back.columns) == [
+            "freq (Hz)", "a.gdf · EEG00 (µV²/Hz)", "a.gdf · EEG00@0-30s (µV²/Hz)"]
+        h5 = features_io.export_features_hdf5(t, tmp_path / "f.h5")
+        _, curves = features_io.read_features_hdf5(h5)
+        assert [c["window"] for c in curves] == ["", "@0-30s"]
 
 
 # ------------------------------------------------------------------ 特征 HDF5
@@ -106,7 +130,8 @@ class TestFeaturesHdf5:
         assert len(curves) == 1
         assert np.allclose(curves[0]["psd"], raw_table.curves[0]["psd"])
         assert np.allclose(curves[0]["freqs"], raw_table.curves[0]["freqs"])
-        assert curves[0]["channel"] == "(通道平均)"
+        assert curves[0]["channel"] == "EEG00"
+        assert curves[0]["window"] == ""  # M8.3：全量窗往返仍为空串
 
     def test_epoch_roundtrip_none_preserved(self, tmp_path, synthetic_raw):
         """段序号 None（文件级）经 -1 编码往返仍为 <NA>."""

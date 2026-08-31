@@ -1,8 +1,10 @@
-"""特征结果视图（中央 tab）：长表浏览 + 导出（CSV / HDF5 / 分段数据）.
+"""特征结果视图（中央 tab）：长表浏览 + 图表区 + 导出（CSV / HDF5 / 分段数据）.
 
 数据流（架构规则 #2：UI 不做计算）：
 - 表格只读展示 ``FeatureTable.df``（QAbstractTableModel + 排序过滤代理，
   数万行级别流畅——288 段×22 通道×13 特征 ≈ 8 万行是常态）
+- 图表区（M8.3）：``make_charts_area`` 按内容组装——PSD 曲线多通道一图 +
+  标量特征柱状网格（feature_charts.py，展示聚合先例 _draw_average）
 - 导出按钮 → ``run_in_thread`` 里调 export 层写文件 + provenance sidecar
   → 主线程弹完成提示（文件清单）
 
@@ -24,6 +26,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QMessageBox,
     QPushButton,
+    QSplitter,
     QTableView,
     QVBoxLayout,
     QWidget,
@@ -33,6 +36,7 @@ from ...batch.results import COLUMNS, COLUMNS_ZH, FeatureTable
 from ...export import epochs_io, features_io, provenance
 from ...workers.generic import run_in_thread
 from ..strings_zh import S
+from .feature_charts import make_charts_area
 
 logger = logging.getLogger(__name__)
 
@@ -103,6 +107,7 @@ class FeatureTableView(QWidget):
         self._ctx = ctx
         self._pipeline_dicts = pipeline_dicts or []
         self._feature_dicts = feature_dicts or []
+        self._charts: QWidget | None = None
         self._build_ui()
 
     # ------------------------------------------------------------------ UI
@@ -110,6 +115,25 @@ class FeatureTableView(QWidget):
     def _build_ui(self) -> None:
         lay = QVBoxLayout(self)
         lay.setContentsMargins(4, 4, 4, 4)
+        # 图表区（M8.3）：有曲线/标量才有——空表 None，布局与旧版逐字节同
+        self._charts = make_charts_area(self._table)
+        if self._charts is None:
+            self._build_table_area(lay)
+            return
+        # 上=工具行+长表，下=图表区；可拖分隔条调比例（表 3 : 图 2）
+        splitter = QSplitter(Qt.Orientation.Vertical)
+        top = QWidget()
+        top_lay = QVBoxLayout(top)
+        top_lay.setContentsMargins(0, 0, 0, 0)
+        self._build_table_area(top_lay)
+        splitter.addWidget(top)
+        splitter.addWidget(self._charts)
+        splitter.setStretchFactor(0, 3)
+        splitter.setStretchFactor(1, 2)
+        lay.addWidget(splitter)
+
+    def _build_table_area(self, lay: QVBoxLayout) -> None:
+        """工具行 + 长表（原 _build_ui 主体，M8.3 抽出供 splitter 复用）."""
 
         top = QHBoxLayout()
         self._summary = QLabel(self._table.summary_zh() if len(self._table) else S.FEAT_TABLE_EMPTY)
@@ -225,8 +249,9 @@ class FeatureTableView(QWidget):
     # ------------------------------------------------------------------ 释放
 
     def teardown(self) -> None:
-        """tab 关闭：释放 ctx 数据（epochs 数组可达数十 MB）."""
+        """tab 关闭：释放 ctx 数据（epochs 数组可达数十 MB）与图表引用."""
         self._table = None
+        self._charts = None
         if self._ctx is not None:
             self._ctx.raw = None
             self._ctx.epochs = None
