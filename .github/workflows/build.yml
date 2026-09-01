@@ -1,0 +1,85 @@
+# DataloadV 双平台打包（M10-3）
+#
+# 设计依据 PACKAGING_HANDOFF.md：
+# - 本机只出 macOS 包；Windows 包经此 workflow 出（无 Windows 本机也能交付）
+# - runner 上不用 conda（慢）——setup-python 3.10 + pip 装齐，与 dlv conda 环境
+#   的核心栈版本等价性说明见 HANDOFF（mne/edfio/neo/pynwb/PySide6 pip 全有）
+# - 与本机共用同一份 dataloadv.spec（sys.platform 分支处理平台差异）
+# - 触发：workflow_dispatch（手动）+ push tag v*（发版）
+# - 产物：DataloadV-{version}-macOS-arm64.zip / DataloadV-{version}-win64.zip
+#   （onedir 压 zip，不解压安装；未签名——macOS 首开右键→打开，Windows 更多信息→仍要运行）
+
+name: build
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  build-macos:
+    name: macOS (arm64)
+    runs-on: macos-latest # Apple Silicon runner，与本机构建同架构
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: 安装依赖（pip，核心栈 + extra-readers + PyInstaller）
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[extra-readers]" pyinstaller
+
+      - name: PyInstaller 打包
+        run: python -m PyInstaller dataloadv.spec --noconfirm
+
+      - name: 压 zip（-y 保留符号链接，保证 .app bundle 结构完整）
+        id: zip
+        run: |
+          VER=$(python -c "import importlib.metadata; print(importlib.metadata.version('dataloadv'))")
+          cd dist && zip -r -y "DataloadV-${VER}-macOS-arm64.zip" DataloadV.app
+          echo "ver=${VER}" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: DataloadV-${{ steps.zip.outputs.ver }}-macOS-arm64
+          path: dist/DataloadV-*-macOS-arm64.zip
+          if-no-files-found: error
+
+  build-win:
+    name: Windows (x64)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      # PySide6/pyqtgraph 走 pip（runner 无 conda-forge Qt；pip 版在 win 正常）
+      - name: 安装依赖（pip，核心栈 + extra-readers + PyInstaller）
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[extra-readers]" pyinstaller
+
+      - name: PyInstaller 打包
+        run: python -m PyInstaller dataloadv.spec --noconfirm
+
+      - name: 压 zip
+        id: zip
+        shell: pwsh
+        run: |
+          $VER = python -c "import importlib.metadata; print(importlib.metadata.version('dataloadv'))"
+          Compress-Archive -Path dist\DataloadV -DestinationPath "DataloadV-$VER-win64.zip"
+          echo "ver=$VER" >> $env:GITHUB_OUTPUT
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: DataloadV-${{ steps.zip.outputs.ver }}-win64
+          path: dist/DataloadV-*-win64.zip
+          if-no-files-found: error

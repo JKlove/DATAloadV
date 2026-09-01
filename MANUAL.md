@@ -214,6 +214,35 @@ dataloadv            # 或 python -m dataloadv
 QT_QPA_PLATFORM=offscreen python scripts/e2e_m1.py   # CI/SSH 无显示器的跑法
 ```
 
+### 2.5 打包版运行（M10，免 Python/conda）
+
+**获取**：GitHub Actions 产物或本机构建——`DataloadV-{版本}-macOS-arm64.zip`（内含
+`DataloadV.app`）/ `DataloadV-{版本}-win64.zip`（内含 `DataloadV/` 目录，双击其中
+`DataloadV.exe`）。解压即用，无需安装任何环境。本机构建：`conda activate dlv` 后项目根
+`python -m PyInstaller dataloadv.spec --noconfirm`（全量约 40s，解压 293MB）。
+
+**与源码版行为一致**：日志/设置/工作区仍在 `~/.dataloadv/`（Windows：
+`C:\Users\<用户名>\.dataloadv\`）——与源码版共用同一份，互换启动无迁移；`data/` 只读原则
+不变（包内不含任何数据，打开文件时自行选择磁盘上的数据目录）。
+
+**首次打开（未签名，预期提示非故障）**：
+
+- macOS："无法验证开发者/含有恶意软件"提示 → **右键 .app → 打开 → "打开"**；或终端
+  `xattr -cr /路径/DataloadV.app` 后直接双击。本机构建的包在本机不触发提示（无隔离属性），
+  下载/拷贝到其他 Mac 才出现。
+- Windows：SmartScreen → **"更多信息" → "仍要运行"**。
+
+**自检**（可选，验证包完整性）：
+
+```bash
+QT_QPA_PLATFORM=offscreen <解压路径>/DataloadV.app/Contents/MacOS/DataloadV --smoke
+# 末行打印 SMOKE OK、退出码 0 即通过（Windows 对应 DataloadV\DataloadV.exe --smoke）
+```
+
+**已知限制**：macOS 包为 arm64（Apple Silicon；Intel mac 需 Universal2 构建，未做）；
+EDF/FIF 导出限制同 §3.10；包内 Python/库为构建时版本（升级需重新打包，版本号取
+pyproject.toml）。
+
 ---
 
 ## 3. 使用

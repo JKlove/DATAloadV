@@ -1,8 +1,21 @@
 # STATUS — 项目状态快照
 
-> 本文件回答"现在做到哪了"。每里程碑完成及重要提交后更新。最后更新：2026-08-31（M9 预处理后连续数据导出完成；v2 批准方向 M7→M8→M9 全部交付）
+> 本文件回答"现在做到哪了"。每里程碑完成及重要提交后更新。最后更新：2026-09-01（M10 双平台打包：macOS 本机包完成并机器验证全过；CI workflow 就绪未 push；人工五步验收与 Windows 真机验收待用户）
 
 ## 当前里程碑
+
+- **M10 双平台打包（PyInstaller）：🔶 机器验证全过，人工验收待办（2026-09-01）**——按
+  PACKAGING_HANDOFF.md 执行。**macOS 本机**：`dataloadv.spec`（单份跨平台，darwin 出 .app /
+  win32 出 onedir）+ `packaging/entry.py`（console_script 等价 shim）+ app 新增 `--smoke`
+  自检分支（smoke_gui.py 等价逻辑，打包产物无头验证）。全量构建 **42s / 解压 293MB / zip
+  119MB**（预判的 1.2–1.8GB 未发生，M10-4 瘦身取消——体积远低于 ≤900MB 目标）。
+  验证：offscreen `--smoke` **SMOKE OK**、真窗口拉起存活+AppleScript 优雅退出、
+  `~/.dataloadv/` 日志/工作区读写正常、PYZ 核实 neo/pynwb/edfio/mne.export 等延迟依赖全部
+  入包、pytest **287 绿**零回归。**Windows（GitHub Actions）**：`.github/workflows/build.yml`
+  双 job（macos-latest arm64 + windows-latest，setup-python 3.10 + pip 装齐 + 同一份 spec），
+  actionlint 通过；**未 push（外发动作待用户批准）**。待办：用户亲眼过 macOS 真窗口五步
+  流程（羊数据导入→浏览→预览→特征→导出 CSV+EDF）、push 后 CI 首跑、Windows 真机双击验收。
+
 
 - **M9 预处理后连续数据导出：✅ 完成（2026-08-31）**——补齐与 pipelineMotor 的连续数据互操作
   （此前只能导特征 CSV/H5 与分段 HDF5/FIF，"带通+陷波后的干净数据"无法落盘）。新模块
@@ -90,6 +103,7 @@
 | M8.2 视图观感精修 | ✅ 完成 | 2026-08-28 | 堆叠系通道名行首内嵌标签（y 轴刻度挤叠根除）+蝶形图图例（自动分列）+切时频 ticks 残留清理（左上角飘字根因）；离屏截图目视确认；pytest 261 |
 | M8.3 特征结果图表区 | ✅ 完成 | 2026-08-30 | welch_psd 逐通道+时间窗（通道平均语义废除）+结果 tab 表+图表（PSD log-log/特征柱状网格、分段按事件码聚合）；批处理同享；pytest 271 / e2e_m4 19 项 |
 | M9 预处理后连续数据导出 | ✅ 完成 | 2026-08-31 | continuous_io（EDF channelwise 16-bit/FIF float32 _raw 后缀+类型白名单·标签长度前置守卫）；单文件面板/菜单+批处理逐文件（epoching 跳过+失败降级+只勾 raw 不写特征文件）；pytest 287 / e2e_m9 16 项 |
+| M10 双平台打包 | 🔶 机器验证过 | 2026-09-01 | PyInstaller 6.22.2 单份 spec 跨平台 + entry.py shim + app `--smoke` 自检；macOS .app 293MB/zip 119MB/构建 42s，offscreen 冒烟+真窗口存活+PYZ 依赖核实全过、pytest 287 零回归；CI workflow 就绪 actionlint 过**未 push**；瘦身取消（293MB≪900MB 目标）；待人工五步验收+Windows 真机验收 |
 
 ## 环境
 
@@ -257,7 +271,51 @@
 5. **中文 Literal 兼作 pydantic 枚举值三处实测通过**：pydantic 精确匹配校验 / 旧 JSON 缺键默认回填 / QComboBox 往返原值——且值即**冻结的序列化格式**（换词=旧 pipeline JSON 全不兼容），词表一次定稿；`ensure_ascii=False` 下中文值可直接 `json.dumps`
 6. **PSD 两链路定论**（用户问梳理）：对比 PSD（M3，mean_welch 通道平均、固定参数取前 120s、独立窗口看图、仅 raw 阶段）vs PSD 曲线特征（M4，参数可调进特征表导出）——同底层纯函数不同职责**不冲突不重叠**；对比 PSD 支持 epochs 可作后续增强（用户指示后开工）。**M8.3 更新**：特征链 welch 已改逐通道语义（通道平均废除），对比 PSD 仍是 mean_welch 通道平均不受影响——两链路差异从此更明确（特征链=逐通道参数化，对比链=快速总览）
 
+## M10 关键实证结论（打包实测，避免踩坑）
+
+1. **PyInstaller 6.22.2 的 spec 全局变量是 `SPECPATH`（str）**——没有 `SPECDIR`（写它直接
+   NameError 秒退）；跨 6.x 稳定写法 `ROOT = Path(SPECPATH)`
+2. **mne 1.12 的 lazy_loader 惰性子模块必须 `collect_submodules('mne')` 收全**——静态分析
+   扫不到 `mne.utils._logging` 等运行期导入，不收全则冻结环境 `import mne` 即崩
+   （`No module named 'mne.utils._logging'`）；只收子模块**名字**（纯代码进 PYZ）不像
+   `collect_all` 连测试数据几百 MB 一起拖，`mne.tests`/`mne.testing` 显式剔除
+3. **neo.rawio 后端按格式名动态分发、pynwb/hdmf 也有惰性导入**——同款 `collect_submodules`
+   一并收（neo/pynwb/hdmf 四包全收，纯代码体积代价可忽略）
+4. **warn-DataloadV.txt 里 `mne.utils.warn/verbose/logger`"missing" 是 lazy_loader 噪音**
+   ——真正的提供者（`mne.utils._logging` 等）已在 PYZ 里，冒烟通过是实证；warn 文件的
+   missing 条目对 delayed/optional 导入不构成问题清单，别按它逐个补
+5. **数据文件最小集 = `collect_data_files('mne'/'pynwb'/'hdmf')`**（通道模板/montage、NWB
+   命名空间 schema JSON）；实测无需 `collect_all`
+6. **全量打包实测 293MB**（PyInstaller 6 比预判干净得多，PACKAGING_HANDOFF 预估 1.2–1.8GB
+   未发生）——**瘦身（M10-4）据此取消**：体积优先级低于可用性，excludes 保持空
+7. **本机构建的 .app 无 quarantine 属性**——本机双击不触发 Gatekeeper；提示只出现在
+   下载/他机拷贝的包上（`spctl -a` rejected = 未签名预期，非故障）。首次打开路径：
+   macOS 右键→打开（或 `xattr -cr DataloadV.app`）；Windows "更多信息→仍要运行"
+
 ## 最近变更记录（新条目加在最上面）
+
+- 2026-09-01（M10，按 PACKAGING_HANDOFF.md 执行）：**双平台打包（PyInstaller）**。
+  **①macOS 本机**：conda-forge 装 PyInstaller 6.22.2（dlv）；`packaging/entry.py`
+  （console_script 等价 5 行 shim，不走 app.py 直接 Analysis）；`dataloadv.spec` 单份跨平台
+  （darwin 出 .app/Info.plist 含版本+高 DPI，win32 出 onedir .exe；hiddenimports 收
+  dataloadv.io.neo_reader/nwb_reader 延迟 import + 四包 collect_submodules；datas 收
+  mne/pynwb/hdmf 数据文件；excludes 留空=全量）。踩坑两枚（SPECDIR 不存在→SPECPATH；
+  mne lazy_loader→collect_submodules，见上方实证结论与 HANDOFF 坑 #59）。
+  **②app `--smoke` 自检分支**（HANDOFF 文档预授权的可选增强，改动最小化）：argparse 一个
+  flag，main 走 smoke_gui.py 等价逻辑（起主窗口→2.5s 自检→自动退出，回调 try/finally
+  保 quit），打包产物无头验证 `QT_QPA_PLATFORM=offscreen <二进制> --smoke`。
+  **③验证**：offscreen 冒烟 SMOKE OK 退出码 0；真窗口 open 拉起存活+osascript 优雅退出；
+  冻结二进制日志正常写 `~/.dataloadv/logs/`；PYZ 清单核实 neo.rawio/pynwb.file/hdmf.common/
+  edfio/mne.export/mne.utils._logging 全在；pytest **287 绿**零回归；构建 42s、.app 293MB、
+  zip（`zip -r -y` 保符号链接）119MB。**④CI**：`.github/workflows/build.yml` 双 job
+  （macos-latest/windows-latest，setup-python 3.10，`pip install -e ".[extra-readers]"
+  pyinstaller`，同一份 spec，产物 zip 命名 `DataloadV-{ver}-macOS-arm64/-win64.zip`，
+  触发 workflow_dispatch+push tag v*），actionlint 通过，**未 push**。**⑤瘦身取消**：
+  全量 293MB 远低于 ≤900MB 目标，不动 excludes（体积让位可用性）。**待办**：用户真窗口
+  五步流程亲眼验收（羊导入→浏览→预览→特征→CSV+EDF 导出）、push 触发 CI、Windows 真机
+  双击验收（CI 绿≠Windows 能跑，须真人一次）。治理七文件同步（STATUS/TODO/HANDOFF/
+  README/MANUAL/plan/PACKAGING_HANDOFF+review）。
+
 
 - 2026-08-31（M9 完成，"推进 M9 开发"指令，单文件+批处理一起做）：**预处理后连续数据导出**。
   **①`export/continuous_io`**（照 epochs_io 样板）：EDF 走 `mne.export.export_raw`

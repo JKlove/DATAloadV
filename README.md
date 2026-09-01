@@ -15,6 +15,21 @@
 
 ## 快速开始
 
+### 免安装包（M10，推荐终端用户）
+
+从发布页下载对应平台 zip（`DataloadV-{版本}-macOS-arm64.zip` / `DataloadV-{版本}-win64.zip`，
+或本机 `dataloadv.spec` 自行打包）→ 解压 → 双击 `DataloadV.app`（macOS）/ `DataloadV/DataloadV.exe`
+（Windows）。**无需安装 Python/conda**；日志/设置/工作区照常写 `~/.dataloadv/`。
+
+- **首次打开（未签名包的预期提示，不是故障）**：macOS 弹"无法验证开发者"→ **右键 .app →
+  打开 → 再点"打开"**（或终端 `xattr -cr DataloadV.app` 后直接双击）；Windows SmartScreen →
+  **更多信息 → 仍要运行**。
+- 包完整性自检（可选）：终端运行
+  `QT_QPA_PLATFORM=offscreen <解压路径>/DataloadV.app/Contents/MacOS/DataloadV --smoke`，
+  末行 `SMOKE OK` 即通过。
+
+### 从源码运行（开发）
+
 ```bash
 conda activate dlv
 dataloadv          # 或 python -m dataloadv

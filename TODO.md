@@ -304,6 +304,23 @@ Qt 6.x 后续版本须换 `filterInvalidated` 信号或 `beginFilterChange`，�
 - [x] 验证：pytest **287 绿**（+16）+ e2e_m9 **16 项**（50Hz 压制随导出保真 0.0000、
       FIF 往返 2.9e-11V、批处理 3 羊文件全 ok）+ e2e_m3/m5/smoke 零回归（见 review.md M9 节）
 
+## M10 双平台打包（🔶 2026-09-01 机器验证全过，人工验收与 CI push 待办，按 PACKAGING_HANDOFF.md 执行）
+
+- [x] M10-1 macOS 本机打包：dlv 装 PyInstaller 6.22.2（conda-forge）+ `packaging/entry.py`
+      shim + `dataloadv.spec` 单份跨平台（darwin .app / win32 onedir .exe）；全量构建 42s、
+      解压 293MB、zip 119MB
+- [x] M10-2 冒烟（机器可验部分）：offscreen `--smoke` SMOKE OK；真窗口拉起存活+优雅退出；
+      `~/.dataloadv/` 日志写入正常；PYZ 核实延迟依赖（neo/pynwb/edfio/mne.export）入包；
+      pytest 287 零回归；Gatekeeper/spctl 状态记录（未签名预期）
+- [x] M10-3 CI：`.github/workflows/build.yml` 双 job + actionlint 通过（**未 push**）
+- [x] M10-4 瘦身：**裁决取消**——全量 293MB 远低于 ≤900MB 目标，excludes 留空（体积让位
+      可用性，PACKAGING_HANDOFF 预估 1.2–1.8GB 未发生）
+- [ ] **用户亲眼验收**：真窗口五步流程（导入 data/sheep 羊数据 → 浏览 → bandpass+notch
+      预览 → 特征计算 → 导出 CSV + 连续 EDF）——PACKAGING_HANDOFF 硬要求，不许只看退出码
+- [ ] **push 触发 CI**（外发动作，须用户批准）→ 首跑下载 win artifact
+- [ ] **Windows 真机双击验收**（CI 绿 ≠ Windows 能跑，须真人一次并记录）
+- [ ] 全部验收后：STATUS M10 翻 ✅；commit（等用户指令）
+
 ## 已知问题 / Backlog（v1 收官后暂缓项）
 
 - .edf.event WFDB 边车解析：M1 实测 PhysioNet EDF 内嵌注释已完整，边车为冗余副本，暂不需要；若未来遇到只有边车、无内嵌注释的数据集再补

@@ -45,6 +45,7 @@ pip install -e ".[dev]"
 | mne / edfio | 1.12.0 / 0.4.16 | pip |
 | pydantic / h5py | 2.13.4 / 3.16.0 | conda-forge |
 | neo / pynwb（M5，可选） | 0.14.5 / 4.1.0 | pip / conda-forge |
+| PyInstaller（M10 打包） | 6.22.2 | conda-forge（`conda install -n dlv -c conda-forge pyinstaller`） |
 
 > neo/pynwb 是**可选依赖**（import-guard）：缺失时应用照常运行，只是 NWB/Blackrock/OE/Intan 格式不可用。
 
@@ -66,6 +67,25 @@ python scripts/e2e_m2.py                     # M2 端到端：4.9GB 扫描+六�
 python scripts/e2e_m3.py                     # M3 端到端：预览/PSD 压制/分段/tab 释放（幂等，可反复跑）
 python scripts/e2e_m4.py                     # M4 端到端：特征计算/视口预填/导出/分段回读（幂等，可反复跑）
 python scripts/e2e_m5.py                     # M5 端到端：45 文件批处理+取消+扩展格式（幂等，可反复跑）
+```
+
+## 打包（M10）
+
+```bash
+# 本机 macOS 包（dlv 环境、项目根；产物 dist/DataloadV.app + onedir 目录 dist/DataloadV/）
+python -m PyInstaller dataloadv.spec --noconfirm          # 全量 ~40s，解压 293MB
+cd dist && zip -r -y DataloadV-0.1.0-macOS-arm64.zip DataloadV.app   # -y 保符号链接
+
+# 打包产物无头自检（app 内置 --smoke 分支：起主窗口自检后自动退出）
+QT_QPA_PLATFORM=offscreen dist/DataloadV.app/Contents/MacOS/DataloadV --smoke   # 末行 SMOKE OK
+
+# Windows 包：push 后 GitHub Actions 出（.github/workflows/build.yml，
+#   workflow_dispatch 手动触发或 push tag v* 发版；产物 DataloadV-{ver}-win64.zip）
+#   CI runner 用 setup-python 3.10 + pip install -e ".[extra-readers]" pyinstaller——
+#   PySide6/mne/edfio/neo/pynwb 全走 pip（runner 无 conda-forge Qt；pip 版 PySide6 在
+#   win 正常）。与 dlv conda 环境等价性：核心包同名同主版本（PySide6/pyqtgraph/mne/
+#   edfio/neo/pynwb/numpy/scipy/pandas/h5py/pydantic），来源渠道不同（conda-forge vs
+#   PyPI wheel）——二进制同为官方发布，行为等价；Windows 侧首跑后须真人双击验收
 ```
 
 ## 架构导览（M6.8 后的实际结构）
@@ -118,6 +138,9 @@ src/dataloadv/
 │   ├── continuous_io.py     # 处理后连续 raw → EDF（channelwise 16-bit）/ FIF（float32 _raw 后缀）（M9）
 │   └── provenance.py        # <名>.pipeline.json：app/pipeline/features/recordings/library_versions/extra
 ├── workers/generic.py       # run_in_thread：后台任务→_MainRelay 主线程回调（见坑 #7/#13）
+├── packaging/entry.py       # PyInstaller 入口 shim（console_script 等价 5 行；spec 指向它）（M10）
+│                            #   dataloadv.spec（仓库根）：单份跨平台——darwin 出 .app/win32 出
+│                            #   onedir .exe；hiddenimports+collect_submodules+数据文件（坑 #59）
 └── ui/                      # 全部 Qt 代码
     ├── main_window.py       # 主窗口：导入/浏览/特征/批处理结果 tab、设置、采样率询问
     ├── state.py             # SessionState 信号中枢（recording_opened 等）
@@ -218,8 +241,11 @@ src/dataloadv/
 57. **M8.2 pyqtgraph 0.14 刻度与图例的五则**（离屏实测）：①`AxisItem.setTicks` 三态——`[[...]]` 自定义刻度、`[]` **空刻度（无任何刻度）**、`None` **恢复默认自动刻度系统**；内部 `_tickLevels` 可读（自定义=列表、空/自动后=None/[]，断言"无自定义刻度"用 `not _tickLevels` 兼容两态）。**切换视图不复位 ticks 就是残留**（通道名 ticks 经 invertY 翻到左上角飘字的根因）。②`plot.clear()` **会**清 LegendItem 条目（`leg.items` 变空——M8 "不用 legend 防 clear 状态残留"的顾虑在 0.14 不成立），但**图例框本身不清**（空框仍显示）——须手动 `legend.hide()`。③LegendItem 0.14 默认 **NoBrush 无底框**（文字直压曲线），`setBrush(mkBrush(255,255,255,210))`+`setPen` 加底；**`columnCount` 是 int 属性不是方法**（`setColumnCount(n)` 是方法）——单列条目多时矮窗口排不到底被截断，`setColumnCount(ceil(n/12))` 分列。④`TextItem` 有 `setFont` 无 `font()` getter——取回走内部 `t.textItem.font()`（QGraphicsTextItem）；堆叠行内嵌标签在矮窗口（500px/25 行）默认字号**盒高≥行距相邻相触**，显式 8pt 压盒高（M6 全高浏览器不受此限保持默认）。⑤离屏 `QFont()` 默认族在 macOS offscreen 有一次性 50ms 字体族别名告警（无害）。⑥**全量 pytest 期间别并发 e2e/smoke 等 QT 重活**：曾出现 pytest 死等（主线程 QEventLoop::exec、后台线程全 cond_wait，CPU 归零）——kill 重跑即过（-v 日志同批测试全绿），属并发负载下的偶发竞态非测试问题；macOS 抓 Python 栈 py-spy 要 sudo，用系统 `sample <pid> 2 -file` 看特征帧（exec/cond_wait）即可判"挂"还是"慢"。
 58. **M9 连续数据导出的五则**（mne 1.12 / edfio 0.4.16 实测）：①**`mne.export.export_raw` 的 `physical_range` 默认 "auto" 按通道类型统一量程**——录制里混一个 ±375000µV 开路饱和通道（羊数据 CH5-8 就是），该类型 16-bit 步长被拖到 ≈11.4µV/LSB，正常 20µV 信号直接被量化抹平；**必须 "channelwise"**（每通道按自身 min/max 用足量程）。②**EDF 按整秒数据记录写盘**：`crop(0, 30)` 含端点 7501 样本 → 读回 7750（补到 31 记录）——断言时长用「≤1 记录补齐」口径，不能写死 `n_times == 30*fs`。③**FIF 文件名规约**：缺 `.fif` 后缀 `raw.save` 抛 OSError、缺 `_raw` 只是 warning——wrapper 主动补 `_raw` 保干净；mne≥1.9 `raw.save` 返回 fnames **列表**（2GB split），取 `[0]`。④**白名单外通道类型是 mne 导出的静默硬伤**：misc 等类型数据留 V 却标 µV（单位错标），必须在 wrapper 前置拒绝（eeg/ecog/seeg/eog/ecg/emg/bio/dbs/stim 之外）；通道名 >16 字符抛英文 RuntimeError、非 ASCII 时 edfio 编码直接炸——都前置转中文 ValueError。⑤**`QAction.triggered` 直连带参方法会把 `checked=False` 传进去**：`menu.addAction(text, method)` 的 method 签名带可选参（如 `export_processed(fmt=None)`）时 False 非 None、格式守卫失效——lambda 包一层；面板按钮 `clicked` 同理（M9 全部 lambda 接线）。
 
-## 当前接手要点（2026-08-31，M9 预处理后连续数据导出已完成）
+59. **M10 PyInstaller 打包的七则**（PyInstaller 6.22.2 / mne 1.12 / macOS arm64 实测）：①**spec 全局变量是 `SPECPATH`（str）没有 `SPECDIR`**——写 SPECDIR 是 NameError 秒退；用 `ROOT = Path(SPECPATH)`。②**mne 1.12 用 lazy_loader 惰性加载子模块，静态分析扫不到**——不处理则冻结环境 `import mne` 当场崩（`No module named 'mne.utils._logging'`，从 `mne.set_log_level` 的 lazy 属性链触发）；解法 `collect_submodules('mne')` 收全子模块**名字**（纯代码进 PYZ，几 MB），并剔除 `mne.tests`/`mne.testing`；neo（rawio 后端按格式名动态分发）/pynwb/hdmf 同款处理。③**`collect_data_files('mne'/'pynwb'/'hdmf')` 收数据文件最小集**（mne 通道模板/montage、pynwb/hdmf 命名空间 schema JSON）——实测够用，**不要 `collect_all`**（连测试数据几百 MB 一起拖）。④**warn-<名>.txt 的 "missing module named mne.utils.warn/verbose/logger" 是 lazy_loader 噪音**——真提供者（mne.utils._logging）已在 PYZ，冒烟通过是实证；delayed/optional 的 missing 条目不是待办清单。⑤**本机构建 .app 无 quarantine 属性**——本机双击不出 Gatekeeper 提示（`xattr` 无 com.apple.quarantine）；提示只在下载/他机拷贝的包上出现，`spctl -a` rejected 是未签名**预期**。mac 压分发包必须 `zip -r -y`（保 .app 内符号链接），Windows 用 Compress-Archive。⑥**CI runner 不用 conda**——setup-python 3.10 + `pip install -e ".[extra-readers]" pyinstaller` 装齐（pip 版 PySide6 在 win 正常），与 dlv conda 环境核心包同名同主版本、渠道不同但等价；CI 绿≠Windows 能跑，**必须真人双击验收一次**。⑦**app 内置 `--smoke` 分支**（main 里 argparse flag → smoke_gui.py 等价逻辑自检退出）——打包产物无头验证用 `QT_QPA_PLATFORM=offscreen <二进制> --smoke`；改动遵循"最小化"（不动 MainWindow、不加新模块）。另：全量打包实测仅 293MB（预判 1.2–1.8GB 未发生），瘦身不值得冒险动 excludes——体积让位可用性。
 
+## 当前接手要点（2026-09-01，M10 双平台打包机器验证完成、人工验收与 CI push 待办）
+
+- **M10 双平台打包（按 PACKAGING_HANDOFF.md 执行）**：①**本机 macOS 包已可用**——`dataloadv.spec`（仓库根，单份跨平台）+ `packaging/entry.py` shim + `app.py --smoke` 自检分支；构建命令与产物自检见上方"打包"节；踩坑七则见坑 #59。②**验证状态**：offscreen 冒烟/真窗口存活退出/PYZ 延迟依赖核实/pytest 287 零回归全过；**用户真窗口五步流程（羊导入→浏览→带通+陷波预览→特征→CSV+EDF 导出）尚未亲眼验收**——这是 PACKAGING_HANDOFF 的硬要求，收尾前必须做。③**CI（.github/workflows/build.yml）已写好、actionlint 过、未 push**——push 是外发动作须用户批准；首跑后下载 win artifact 找真人双击验收（CI 绿≠能跑）。④**瘦身（M10-4）已裁决取消**：全量 293MB≪900MB 目标，excludes 留空。⑤发版路径：push → workflow_dispatch 或打 tag `v*` → Actions 页下载两平台 zip；版本号取 pyproject（改版本先改 pyproject）。未签名分发说明（右键打开/更多信息仍要运行）已写进 README/MANUAL。
 - **M9 连续数据导出（"推进 M9 开发"，v2 第三里程碑收官）**：①**`export/continuous_io.export_continuous(raw, path, fmt)`**——EDF 走 `mne.export.export_raw(physical_range="channelwise")`（动机与陷阱见坑 #58①②），FIF 走 `raw.save(fmt="single")` 强制 `_raw` 后缀（坑 #58③）；类型白名单+标签 ≤16 ASCII 前置中文守卫（坑 #58④）。②**单文件双入口**：面板第 4 按钮 `_btn_export` + 处理菜单（均 lambda 接线——坑 #58⑤）；`export_processed(fmt=None)` 参数化（e2e/单测绕过模态菜单直调走完整 guard+dialog+worker 路径）；挂靠 `panel._last_ctx`（预览产物，`_last_src_name` 记默认名——ctx 自身不带源名）；stage≠raw 中文指引指向分段导出。③**批处理**：JobSpec `export_raw_edf/fif` + `_export_continuous` 内嵌 `_process_one`（**apply_pipeline 后 apply_features 前**——epoching 会把 ctx.raw 换成 epochs；失败降级日志不杀特征）；**run() 尾部已改序**——「勾 csv/h5 之一且表非空才调 _export，`_raw_written` 独立并入」，修了只勾 raw 误写特征 CSV 的旧分支漏洞（回归哨兵用例钉死）；批级 sidecar extra 加 raw_files_written。④验证：pytest **287 绿**（+16）+ e2e_m9 **16 项**（50Hz 压制随导出保真 0.0000 / FIF 往返 2.9e-11V / 批处理 3 羊文件全 ok）+ e2e_m3/m5/smoke 零回归。限制（EDF 16-bit ~1e-4 相对误差/整秒补齐/注解仅 description·onset·duration/FIF float32）已写 MANUAL §3.10 限制小节。
 - **M8.3 特征结果图表区（用户两点需求驱动）**：①**`welch_psd` 逐通道语义**——channels 留空=全部数据通道各一条（通道平均分支删除、"(通道平均)"字面量不再存在；`mean_welch` 保留给对比 PSD）；新增 `time_windows`（raw 绝对秒多窗）；curve dict 加 `"window"`（纯 str，`@起-止s`/空=全量）→ results/`features_io` 透传（宽表列头带窗标记、HDF5 attrs、回读兜底旧文件）。窗校验抽 `_resolve_spans(t_axis, spec)`（spectral.py 模块级）BandPower/WelchPsd 共用，错误消息逐字保留（测试钉死）。②**`ui/widgets/feature_charts.py` 新建**——`PsdCurvesChart`（log-log、`intColor(i,hues=n)`、蝶形同款分列图例 `_make_legend`、MAX_CURVES=60 截断+hint）；`FeatureBarGrid`（**每特征一格** 3 列网格 Y 独立、分段 `groupby(recording,event_code,channel,feature).mean()` 按事件码聚合、系列=code（多录制 `rec · code`）、MAX_FEATURES=24/MAX_SERIES=12、通道>12 隔名、QScrollArea；`self.aggregated`/`feature_names` 暴露给测试数值断言）；`make_charts_area(table)` 三态（双有=QTabWidget 两 tab/单有=单图/全无=None）。feature_table `_build_ui` 拆 `_build_table_area` + QSplitter 3:2，构造签名/`_model`/`_proxy` 全不动（e2e 寻址安全）；teardown 加 `_charts=None`。批处理结果 tab 同一控件。验证：pytest **271 绿**（+10）+ e2e_m4 **19 项** + smoke + 三形态白底截图确认。**新坑**：①pg 全局白底在 `MainWindow.__init__` 里 `setConfigOptions` 设置——独立离屏截图脚本必须手动复刻，否则黑底、且图像分析器会跟着误报"黑白割裂"（本次靠 PIL 像素统计证伪）；②视觉验证结论要交叉验证：同一分析器对同一图可自相矛盾（图例"半透明"vs"不透明"），色一致性靠代码层同源保证（图例 symbolBrush 与柱 brush 同 `intColor(k,hues)` 参数）比靠读图可靠。
 - **M8.2 视图观感精修（用户三截图反馈驱动）**：①**堆叠系通道名行首内嵌**——各通道平均/单段浏览两视图的通道名从 y 轴 setTicks（25 导联必挤叠，用户截图证实）改 `_draw_stacked` 里 TextItem（`anchor=(0,0.5)`+半透明白底+行首行基线 `setPos(times[0], i*spacing)`，M6 浏览器同款）；预览 tab 矮，显式 **8pt** 压盒高（默认字号盒高≥行距相邻相触——坑 #57④）。②**蝶形图图例**——`_legend` 惰性建（`addLegend(labelTextSize="8pt")`+白底+灰框+`setColumnCount(ceil(n/12))` 分列）；`_redraw` 统一 `legend.clear()+hide()`（clear 清条目不清框——坑 #57②）。③**切视图 ticks 残留清理**——`_make_plot` 预置+`_redraw` 统一 `getAxis("left").setTicks([])`，`_draw_tfr` 里 `setTicks(None)` 恢复自动频率刻度（单段浏览→时频左上角飘通道名的根因+蝶形→时频频率刻度被砍暗病——坑 #57①）。验证：pytest **261 绿**（+4）+ e2e_m8 13 项 + e2e_m81 12 项零回归 + smoke + 离屏渲染 25 通道四视图截图亲眼确认（分析器辅助读图：标签盒高<行距/图例 3 列全可见/时频无残留）。

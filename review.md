@@ -959,3 +959,53 @@ fixture 收窄 `channels=["EEG00"]` 保 1 条下游零改，新增窗进列头/a
   patch、tries 上限、幂等工作区、flush=True、逆序关 tab）。
 
 **下一步**：v2 批准方向 M7→M8→M9 全部交付；后续待新需求排队（backlog 见 TODO.md）。
+
+## M10 — 双平台打包（2026-09-01 机器验证全过；人工验收与 CI push 待办，按 PACKAGING_HANDOFF.md 执行）
+
+### 交付物
+
+- `dataloadv.spec`（仓库根）：单份跨平台 spec——darwin 出 .app（Info.plist 版本/高 DPI）、
+  win32 出 onedir .exe；hiddenimports 收 `dataloadv.io.neo_reader/nwb_reader`（函数内延迟
+  import）+ mne/neo/pynwb/hdmf 四包 `collect_submodules`（mne 剔除 tests/testing）；datas 收
+  三包数据文件；excludes 留空（全量）。
+- `packaging/entry.py`：console_script 等价 5 行 shim（不直接 Analysis app.py）。
+- `src/dataloadv/app.py`：`--smoke` 自检分支（argparse flag → smoke_gui.py 等价逻辑；
+  main(argv) 参数化保持 console_script 兼容）。
+- `.github/workflows/build.yml`：双 job（macos-latest arm64 / windows-latest），setup-python
+  3.10 + `pip install -e ".[extra-readers]" pyinstaller`，同一份 spec，zip 产物
+  `DataloadV-{ver}-macOS-arm64.zip` / `-win64.zip`，触发 workflow_dispatch + push tag v*。
+
+### 验证执行（机器可验部分）
+
+| 项 | 结果 |
+|---|---|
+| 事实卡核对 | Python 3.10.20 / 全部关键包版本一致 / remote JKlove/DATAloadV / commit 4bdf905 ✓ |
+| PyInstaller 安装 | conda-forge 6.22.2（铁律#1 conda 优先）✓ |
+| 构建 | 全量 42s（修坑后重建 28s）；.app 293MB；`zip -r -y` 分发包 119MB |
+| offscreen 冒烟 | `QT_QPA_PLATFORM=offscreen <app 二进制> --smoke` → SMOKE OK，退出码 0（首版崩在 mne.utils._logging，collect_submodules 修复后过） |
+| 真窗口 | `open dist/DataloadV.app` → 8s 后进程存活（PID 10769）→ osascript 优雅退出 ✓ |
+| `~/.dataloadv/` | 冻结二进制日志写入（dataloadv.log 时间戳 11:06/11:08）+ 工作区加载正常 ✓ |
+| PYZ 依赖核实 | dataloadv.io.neo_reader / nwb_reader / neo.rawio / pynwb.file / hdmf.common / edfio / mne.export / mne.utils._logging 各 1 处 ✓ |
+| warn 文件噪音 | mne.utils.warn/verbose/logger "missing" = lazy_loader 噪音（真提供者已入包，冒烟实证）——不按它补 |
+| Gatekeeper | `spctl -a` rejected（未签名预期）；本机构建无 quarantine 属性（本机双击不提示，下载/他机拷贝才有）——已写 README/MANUAL 首开步骤 |
+| workflow 语法 | YAML 解析 + actionlint 1.7.12（brew 安装）双过 |
+| pytest 全量 | **287 passed**（app.py 加 --smoke 后零回归，5.91s） |
+| 冒烟脚本源码版 | `python -m dataloadv --smoke` → SMOKE OK（开发环境同样可用） |
+
+### 踩坑与裁决
+
+1. **SPECDIR 不存在**（PyInstaller 6.22.2 spec 全局是 `SPECPATH`）——NameError 秒退，改
+   `Path(SPECPATH)`。
+2. **mne lazy_loader 静态分析盲区**——首包起不来（`No module named 'mne.utils._logging'`）；
+   `collect_submodules('mne')` 收名字+剔除 tests 解决；neo/pynwb/hdmf 一并收（neo.rawio
+   后端动态分发同理）。
+3. **瘦身（M10-4）裁决取消**：全量 293MB ≪ ≤900MB 目标（PACKAGING_HANDOFF 预估 1.2–1.8GB
+   未发生，PyInstaller 6 收得干净）——按"体积优先级低于可用性"不动 excludes。
+4. **数据只读铁律**：spec 不收 data/（hiddenimports/datas 全来自 site-packages），dist 在
+   .gitignore 内。
+
+### 待办（人工，未执行）
+
+- 用户真窗口五步流程亲眼验收（羊导入→浏览→带通+陷波预览→特征→CSV+EDF 导出）——
+  PACKAGING_HANDOFF M10-2 硬要求"不许只看退出码"。
+- push（外发动作待批准）→ CI 首跑 → Windows 真机真人双击验收（CI 绿 ≠ 能跑）。
