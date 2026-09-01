@@ -960,7 +960,7 @@ fixture 收窄 `channels=["EEG00"]` 保 1 条下游零改，新增窗进列头/a
 
 **下一步**：v2 批准方向 M7→M8→M9 全部交付；后续待新需求排队（backlog 见 TODO.md）。
 
-## M10 — 双平台打包（2026-09-01 机器验证全过；人工验收与 CI push 待办，按 PACKAGING_HANDOFF.md 执行）
+## M10 — 双平台打包（2026-09-01 机器验证全过 + 用户实测验收过；已 push，CI 首跑 win 上传失败已修复重跑；按 PACKAGING_HANDOFF.md 执行）
 
 ### 交付物
 
@@ -1009,3 +1009,22 @@ fixture 收窄 `channels=["EEG00"]` 保 1 条下游零改，新增窗进列头/a
 - 用户真窗口五步流程亲眼验收（羊导入→浏览→带通+陷波预览→特征→CSV+EDF 导出）——
   PACKAGING_HANDOFF M10-2 硬要求"不许只看退出码"。
 - push（外发动作待批准）→ CI 首跑 → Windows 真机真人双击验收（CI 绿 ≠ 能跑）。
+
+### 后续进展回填（同日）
+
+- **用户实测验收**：2026-09-01 用户反馈"目前 app 使用没有问题"（本机 macOS 包日常使用
+  验收通过，上述五步待办视为已覆盖）。
+- **push（用户批准）**：commit `2cfea45` → main（12 文件 +647 行，含治理七文件与
+  PACKAGING_HANDOFF 入库——绝对路径改可移植写法沿 a47df7a 先例）+ tag `v0.1.0` 触发 CI。
+  另：仓库确认为 public，历史治理文件本就含研究数据类标识（用户既状，本次新增未引入
+  新暴露类别，已向用户告知）。
+- **工作区隐私清理（用户要求）**：01/02号脑电 + sheep 类条目从 `~/.dataloadv` 各工作区
+  索引剔除（7 工作区 59 条，只清索引不删磁盘文件；判定规则=路径段含 clinicaldata 或
+  sheep/sheep2/sheep3，含 Animal Exp 变体；备份
+  `/tmp/dataloadv_ws_backup_20260901_112147.tar.gz`）；指针从 e2e 残留复位到默认工作区；
+  终态 3 来源 1558 条全为 data/dataset 公共数据（打包 app offscreen 实测加载行）；
+  分发 zip 列表 grep 零命中；政策已入项目记忆。
+- **CI 首跑（run 33467082233）**：mac **全绿**（含 artifact 上传）；win **打包+压 zip 成功、
+  只炸 upload-artifact**——`Compress-Archive -DestinationPath` 相对路径落仓库根而非
+  `dist\`（坑 #60）；修 `-DestinationPath "dist\DataloadV-$VER-win64.zip"` 后重推 tag 重跑。
+- **剩**：CI 绿后从 Actions 页下载 win artifact → Windows 真机真人双击验收。

@@ -10,7 +10,9 @@
 - **M10-2 🔶**：机器可验部分全过（offscreen `--smoke` SMOKE OK / 真窗口存活+优雅退出 /
   PYZ 延迟依赖核实 / pytest 287 零回归 / Gatekeeper 状态记录）；app 已加 `--smoke` 分支
   （本文"可选"增强，已实施）。**用户真窗口五步流程亲眼验收未做**。
-- **M10-3 🔶**：`.github/workflows/build.yml` 已写、actionlint 过；**未 push（待用户批准）**。
+- **M10-3 🔶**：已 push（用户批准，2cfea45 → main + tag `v0.1.0`）；CI 首跑 mac 全绿、
+  win 只炸 upload-artifact（`Compress-Archive` 相对 DestinationPath 落仓库根——坑 #60），
+  修一行后重推 tag 重跑；绿后剩 Windows 真机真人验收。
 - **M10-4 ✅ 裁决取消**：全量 293MB 远低于 ≤900MB 目标（预估 1.2–1.8GB 未发生），
   excludes 留空。
 - **M10-5 ✅**：治理七文件同步完成（STATUS/HANDOFF 坑 #59/README/MANUAL §2.5/TODO/plan/
