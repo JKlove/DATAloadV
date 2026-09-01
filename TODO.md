@@ -325,7 +325,8 @@ Qt 6.x 后续版本须换 `filterInvalidated` 信号或 `beginFilterChange`，�
 - [x] 收官：STATUS M10 翻 ✅ + 治理同步提交
 - [x] **后续修复（同日，Windows 真机反馈）**：小屏（1366×768/125% 缩放）初始窗口
       1440×900 超屏 → 右侧处理 Dock 被裁；修为按屏收口+居中 + 首显示 resizeDocks
-      （坑 #61；pytest 290 绿 +3）。**待发新版包给用户 Windows 复验**（版本号待定）
+      （坑 #61；pytest 290 绿 +3）。**已发 v0.1.1**（用户指示）——待用户 Windows
+      笔记本复验小屏布局后闭环
 
 ## 已知问题 / Backlog（v1 收官后暂缓项）
 

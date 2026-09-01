@@ -11,4 +11,4 @@
 - ui/      全部 Qt 界面代码（唯一允许 import PySide6/pyqtgraph 的地方）
 """
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"

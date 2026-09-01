@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "dataloadv"
-version = "0.1.0"
+version = "0.1.1"
 description = "DataloadV 电生理数据平台：读取、浏览、预处理与特征提取桌面工作台"
 readme = "README.md"
 requires-python = ">=3.10"
