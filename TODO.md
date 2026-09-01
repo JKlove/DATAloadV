@@ -288,10 +288,21 @@ Qt 6.x 后续版本须换 `filterInvalidated` 信号或 `beginFilterChange`，�
   + 三形态白底截图目视确认（像素统计证伪分析器"黑底"幻觉——独立截图须复刻 MainWindow
   的 pg 全局主题）
 
-## M9 处理后连续数据导出（排队，视需求开工，2026-08-28 批准）
+## M9 处理后连续数据导出（✅ 完成 2026-08-31，"推进 M9 开发"指令，单文件+批处理一起做）
 
-- [ ] 预处理后的 raw 导出 EDF/FIF（现在只能导特征与 epochs）
-- [ ] 与 pipelineMotor 互操作验证（sidecar 记录全管线；导出回读一致）
+- [x] `export/continuous_io`：EDF（`mne.export` + **physical_range="channelwise"**——auto 按类型
+      统一量程会被羊 ±375000µV 开路饱和通道拖到步长 11.4µV/LSB 抹掉正常信号）/ FIF
+      （`raw.save(fmt="single")` 强制 `_raw` 后缀）；通道类型白名单 + 标签 ≤16 ASCII 前置中文守卫
+- [x] 单文件双入口：管线面板第 4 按钮 + 处理菜单（lambda 接线防 triggered 传参坑）；
+      `export_processed(fmt=None)` 参数化——无 ctx / stage≠raw 中文指引，默认名
+      `{文件名}_proc.edf/_proc_raw.fif`，sidecar 记 ctx.history 全管线
+- [x] 批处理：JobSpec `export_raw_edf/fif` + `_export_continuous` 内嵌 `_process_one`
+      （apply_pipeline 后 apply_features 前——epoching 会换掉 ctx.raw；跳过/失败均降级
+      日志不杀特征）；**run() 尾部改序修旧分支漏洞**（只勾 raw 时误写特征 CSV/HDF5）
+- [x] 与 pipelineMotor 互操作凭据：每份导出自带 sidecar（pipeline 全参数 + kind=raw +
+      recordings + 库版本）；e2e 断 sidecar 管线 == [bandpass,notch,crop]
+- [x] 验证：pytest **287 绿**（+16）+ e2e_m9 **16 项**（50Hz 压制随导出保真 0.0000、
+      FIF 往返 2.9e-11V、批处理 3 羊文件全 ok）+ e2e_m3/m5/smoke 零回归（见 review.md M9 节）
 
 ## 已知问题 / Backlog（v1 收官后暂缓项）
 

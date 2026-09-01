@@ -205,6 +205,14 @@ class S:
     PIPE_EPOCHS_PER_CODE = "各类分段数"
     PIPE_EPOCHS_AVG_PLOT = "各通道分段平均波形（跨段平均，µV）"
     PIPE_EPOCHS_NO_PLOT = "（无分段可画）"
+    # M9：单文件连续数据导出（最近一次预览的管线产物）
+    PIPE_BTN_EXPORT_RAW = "导出连续数据…"  # 面板按钮 + 处理菜单项共用
+    PIPE_EXPORT_RAW_TITLE = "导出连续数据"
+    PIPE_EXPORT_RAW_EDF = "EDF（跨工具通用）"
+    PIPE_EXPORT_RAW_FIF = "FIF（mne 无损）"
+    PIPE_MSG_EXPORT_NO_CTX = "尚无可导出的连续数据——请先「预览当前文件」跑完管线"
+    PIPE_MSG_EXPORT_NOT_RAW = "当前管线包含分段步骤，没有连续数据产物——请在特征结果 tab 使用「导出分段…」"
+    PIPE_MSG_EXPORTING = "正在写出连续数据…"
 
     # ===== M3：浏览器坏道标记 =====
     MENU_MARK_BAD = "标记为坏道"
@@ -255,6 +263,9 @@ class S:
     BATCH_LBL_EXPORT = "完成后导出"
     BATCH_CB_CSV = "CSV（Excel 可开）"
     BATCH_CB_H5 = "HDF5"
+    # M9：批处理逐文件连续数据导出（含 epoching 的管线自动跳过）
+    BATCH_CB_RAW_EDF = "连续数据 EDF（每文件一个）"
+    BATCH_CB_RAW_FIF = "连续数据 FIF（每文件一个）"
     BATCH_LBL_NAME = "导出名"
     BATCH_LBL_DIR = "导出目录"
     BATCH_BTN_BROWSE = "浏览…"

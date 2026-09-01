@@ -102,3 +102,21 @@ def make_hdf5(path: Path, shape: tuple[int, int], time_axis: int = 0,
         if fs is not None:
             d.attrs[fs_attr] = fs
     return path
+
+
+def make_synth_edf(path: Path, seed: int = 0, n_seconds: float = 20.0,
+                   n_ch: int = 4, fs: float = 250.0) -> Path:
+    """合成连续 EDF（M9 批处理导出测试用）：10µV 白噪声 + 10Hz 正弦.
+
+    经 mne.export 写盘——edfio 产出的真实 EDF 结构，io 注册表读回路径
+    与真件一致（合成能过 = 真件能过，本文件总约定）。
+    """
+    import mne
+
+    rng = np.random.default_rng(seed)
+    t = np.arange(int(n_seconds * fs)) / fs
+    data = (rng.normal(0, 10e-6, (n_ch, len(t)))  # V（mne 约定）
+            + 20e-6 * np.sin(2 * np.pi * 10 * t)[None, :])
+    raw = mne.io.RawArray(data, mne.create_info(n_ch, fs, "eeg"), verbose="ERROR")
+    raw.export(path, fmt="edf", overwrite=True, verbose="ERROR")
+    return path

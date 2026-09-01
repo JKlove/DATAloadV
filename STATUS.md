@@ -1,8 +1,24 @@
 # STATUS — 项目状态快照
 
-> 本文件回答"现在做到哪了"。每里程碑完成及重要提交后更新。最后更新：2026-08-30（M8.3 特征图表区完成；下一 M9 连续导出）
+> 本文件回答"现在做到哪了"。每里程碑完成及重要提交后更新。最后更新：2026-08-31（M9 预处理后连续数据导出完成；v2 批准方向 M7→M8→M9 全部交付）
 
 ## 当前里程碑
+
+- **M9 预处理后连续数据导出：✅ 完成（2026-08-31）**——补齐与 pipelineMotor 的连续数据互操作
+  （此前只能导特征 CSV/H5 与分段 HDF5/FIF，"带通+陷波后的干净数据"无法落盘）。新模块
+  `export/continuous_io.export_continuous(raw, path, fmt)`：EDF 走 `mne.export`（内部 edfio，
+  **physical_range="channelwise"**——默认 auto 按类型统一量程会被羊 ±375000µV 开路饱和通道
+  拖到 16-bit 步长 ≈11.4µV/LSB 直接抹掉正常 20µV 信号）；FIF 走 `raw.save(fmt="single")`
+  并强制 `_raw` 规约后缀；通道类型白名单（µV 换算有定义的 9 类）+ 标签 ≤16 ASCII 两个
+  mne/edfio 硬伤前置转中文报错。双入口：管线面板「导出连续数据…」（最近一次预览产物，
+  fmt 参数化直调可绕过模态菜单）+ 处理菜单同款；批处理导出组两复选框逐文件
+  `{名}_proc.edf/_raw.fif`+sidecar——`_export_continuous` 内嵌 `_process_one` 在 apply_pipeline
+  后 apply_features 前（epoching 会换掉 ctx.raw，之后再导就没有连续数据；导出失败降级为
+  该文件日志不杀特征计算）；顺带修 run() 尾部旧分支漏洞（只勾 raw 时 `wants_export()` 一票
+  通过会误写特征 CSV/HDF5）。pytest **287 绿**（+16）+ e2e_m9 **16 项**（羊 EDF 导出读回
+  通道/采样率/时长一致、**50Hz 压制随导出保真（PSD 比值中位数 0.0000）**、FIF 往返最大偏差
+  2.9e-11 V、sidecar 含全管线+kind=raw、批处理 3 羊文件全 ok 每文件产物+sidecar）+
+  e2e_m3/m5/smoke 零回归
 
 - **M8.3 特征结果图表区：✅ 完成（2026-08-30）**——用户两点需求：①`welch_psd` 语义升级
   （**逐通道各一条**——通道平均语义废除；可选 `时间窗`，两参留空=全量逐通道；窗标记
@@ -50,7 +66,7 @@
 
 - **M6.6 工作区移除条目 + 羊通道质量定论 / M6.5 读取派发魔数校验：✅ 完成（2026-08-24）**——
   树右键/Del 移除（只清索引不删磁盘文件）；羊 .edf 实为 BDF 的魔数优先纠正（详见下方变更记录）
-- **v1 全部里程碑（M0–M5）+ M6–M6.8 浏览与读取系列优化 + M7 质量体检 + M8 分段可视化完成**——**下一里程碑：M9 处理后连续数据导出（方向 M7→M8→M9 见 plan.md §8，任务拆解见 TODO.md）**
+- **v1 全部里程碑（M0–M5）+ M6–M6.8 浏览与读取系列优化 + M7 质量体检 + M8 分段可视化系列 + M9 连续导出完成**——v2 批准方向 M7→M8→M9 已全部交付（见 plan.md §8；后续待新需求排队）
 
 ## 里程碑总览
 
@@ -73,6 +89,7 @@
 | M8.1 三锚定分段+时频观感+单段浏览 | ✅ 完成 | 2026-08-28 | 分段锚定三模式（事件锚定/固定窗滑窗/手动时刻——无事件数据可分段）+时频 Y 铺满修复/jet·hot 配色/按通道缓存+第五视图单段浏览（◀▶ 翻段）；pytest 257 / e2e_m81 12 项 |
 | M8.2 视图观感精修 | ✅ 完成 | 2026-08-28 | 堆叠系通道名行首内嵌标签（y 轴刻度挤叠根除）+蝶形图图例（自动分列）+切时频 ticks 残留清理（左上角飘字根因）；离屏截图目视确认；pytest 261 |
 | M8.3 特征结果图表区 | ✅ 完成 | 2026-08-30 | welch_psd 逐通道+时间窗（通道平均语义废除）+结果 tab 表+图表（PSD log-log/特征柱状网格、分段按事件码聚合）；批处理同享；pytest 271 / e2e_m4 19 项 |
+| M9 预处理后连续数据导出 | ✅ 完成 | 2026-08-31 | continuous_io（EDF channelwise 16-bit/FIF float32 _raw 后缀+类型白名单·标签长度前置守卫）；单文件面板/菜单+批处理逐文件（epoching 跳过+失败降级+只勾 raw 不写特征文件）；pytest 287 / e2e_m9 16 项 |
 
 ## 环境
 
@@ -81,13 +98,15 @@
 
 ## 测试
 
-- `QT_QPA_PLATFORM=offscreen pytest`：**261 passed**（M7 后 213 + M8 净增 29：tfr 纯函数 17 含真实 A01T 黄金（频率轴 2/计算 6/时间窗解析 6/真实 gdf 1）+ 四视图 widget 8（堆叠数值断言/蝶形/单通道按码分色/时频 ImageItem·色标·y 反转/切走残留复位/teardown 幂等/迟到回调丢弃）+ bandpower time_windows 4（raw 绝对窗数值/epochs 相对窗密度不变式/越界拒绝/采样点不足拒绝）；**M8.1 净增 15**：epoching 锚定 9（滑窗 11 段样本序列 `arange(250,14000,1250)`/半重叠 22 段差 625/步进>窗长拒/窗超长拒/手动 3 段锚点样本 7625/越界列全部无效锚点/空锚点拒/默认=事件锚定/序列化往返）+ 预览 6（Y 残留修复/配色 LUT 换色 levels 不扰动/缓存零重算/控件随视图启停/单段浏览数值断言+跳段 clamp）；**M8.2 净增 4**：行内嵌标签文本+8pt+y 轴无刻度/图例逐通道条目+切走隐藏/25 通道图例分列 3/单段浏览→时频左轴无通道名残留且频率=自动刻度；**M8.3 净增 10**：welch 语义 5（默认 8 曲线+通道名单+window 空+EEG00 峰 10Hz/逐通道曲线/子窗 0-30→16 条+全量 8 条 window 空+窗 8 条 @0-30s+峰仍 10Hz/越界拒/不足 2 采样点拒）+ 导出 2（窗进宽表列头+HDF5 attrs 往返）+ 图表区 3（PSD 曲线数/60 截断+hint 含总数/柱格按事件码聚合 T1=(1+3)/2=2、T2=10 走 aggregated 数值断言）。**须 offscreen：MainWindow 级测试在 macOS 真窗口模式会挂住**）
+- `QT_QPA_PLATFORM=offscreen pytest`：**287 passed**（M8.3 后 271 + **M9 净增 16**：连续导出 8（EDF 往返 rtol 1e-3/prefiltering 头 highpass=1 往返/FIF 往返 rtol 1e-6+annotations 3 条/未知 fmt 拒/超长名拒/非 ASCII 名拒/misc 类型拒/平坦通道可导/单通道双格式）+ 面板守卫 2（无 ctx 提示/stage=epochs 指向分段导出）+ 批处理 5（wants_export 四开关语义/epochs 管线跳过+日志/引擎级 3 文件每文件 _proc.edf+sidecar kind=raw+files_written 汇总/导出失败降级日志特征照算/**只勾 raw 不产特征 CSV·H5——run() 分支修正的回归哨兵**）。历史累计：M7 后 213 + M8 净增 29：tfr 纯函数 17 含真实 A01T 黄金（频率轴 2/计算 6/时间窗解析 6/真实 gdf 1）+ 四视图 widget 8（堆叠数值断言/蝶形/单通道按码分色/时频 ImageItem·色标·y 反转/切走残留复位/teardown 幂等/迟到回调丢弃）+ bandpower time_windows 4（raw 绝对窗数值/epochs 相对窗密度不变式/越界拒绝/采样点不足拒绝）；**M8.1 净增 15**：epoching 锚定 9（滑窗 11 段样本序列 `arange(250,14000,1250)`/半重叠 22 段差 625/步进>窗长拒/窗超长拒/手动 3 段锚点样本 7625/越界列全部无效锚点/空锚点拒/默认=事件锚定/序列化往返）+ 预览 6（Y 残留修复/配色 LUT 换色 levels 不扰动/缓存零重算/控件随视图启停/单段浏览数值断言+跳段 clamp）；**M8.2 净增 4**：行内嵌标签文本+8pt+y 轴无刻度/图例逐通道条目+切走隐藏/25 通道图例分列 3/单段浏览→时频左轴无通道名残留且频率=自动刻度；**M8.3 净增 10**：welch 语义 5（默认 8 曲线+通道名单+window 空+EEG00 峰 10Hz/逐通道曲线/子窗 0-30→16 条+全量 8 条 window 空+窗 8 条 @0-30s+峰仍 10Hz/越界拒/不足 2 采样点拒）+ 导出 2（窗进宽表列头+HDF5 attrs 往返）+ 图表区 3（PSD 曲线数/60 截断+hint 含总数/柱格按事件码聚合 T1=(1+3)/2=2、T2=10 走 aggregated 数值断言）。**须 offscreen：MainWindow 级测试在 macOS 真窗口模式会挂住**）
 - `python scripts/e2e_m1.py`：**ALL OK（22 项）**——sheep + S001 真实导入 → 浏览 → 释放（幂等总量断言）；M6 追加 5 项 + M6.5 追加 1 项（羊数据按 BDF 解码：魔数优先于扩展名）+ M6.8 追加 3 项（±1s 平移/绝对模式 y 自适配/总览滑块跟随视口）
 - `python scripts/e2e_m7.py`：**ALL OK（16 项）×2 幂等**——羊浏览器体检（4 bad 全复用→Yes 自动标坏道→列表 ✗/✓ 前缀→tooltip 明细→按钮恢复）/ TPDJ-位置1 八通道全坏 / 特征链（注册表→FeatureTable→CSV·HDF5 回读分级一致）；**须逐模块 patch signal_browser.QMessageBox**（该模块 M7 起有模块级引用，MainWindow 的 patch 罩不到）
 - `python scripts/e2e_m2.py`：**ALL OK（17 项）**——4.9GB dataset 扫描 5.2s / 识别 1606 条 / 3 条已知结构报错 / 六格式（EDF/GDF 2a/GDF 2b/ds1/ds4/CSV）逐个打开均有真实曲线 / GDF 中文标签 / 六 tab 关闭释放
 - `python scripts/e2e_m3.py`：**ALL OK（10 项）**——羊 BDF（.edf 误标）三步预览（带通+陷波+重参考）50Hz PSD 压制比 0.0001、坏道标记联动、A01T 分段预览 288 段、tab 释放
 - `python scripts/e2e_m4.py`：**ALL OK（18 项）**——羊 EDF 管线（带通+陷波+裁剪前 30s）+三特征 104 行（8 导×13 特征）、处理后 PSD 50Hz 峰已消（0.4 vs 7130 µV²/Hz）、「用当前显示窗口」预填 crop=视口 [125,145]s、CSV BOM+中文表头 104 行、sidecar 含全管线、A01T 逐段特征 288 段×25 导×2 频段=14400 行、事件码 769-772 逐段带入、分段 HDF5 形状一致、FIF 回读 288 段
 - `python scripts/e2e_m5.py`：**ALL OK（19 项）**——45 个 2b GDF + 1 损坏文件批处理（分段 769/770/783 + bandpower 双频段）：45 成功 1 失败不杀整批、78240 行特征 8.5s（2 worker）、UI 心跳 86 次≈9s 全程响应、失败行红显+tooltip+日志对话框、批处理结果 tab、CSV BOM 中文表头 78240 行一致、sidecar 含 epoching+bandpower(params.bands=αβ)+45 文件+batch extra(n_files=46/n_workers=2)、中途取消（4 成功/41 已取消/0 误跑）、neo/nwb 四读取器注册、tab 关闭释放；**m1/m2/m3/m4 + smoke_gui 回归全绿**
+- `python scripts/e2e_m9.py`：**ALL OK（16 项）**——羊 EDF 打开→bandpass+notch+crop(0,30) 预览 `_last_ctx.stage=="raw"`→面板导出 EDF（fmt 参数化直调）读回通道 8/采样率 250/时长整秒补齐 ≤1 记录（裁剪窗 7501 样本读回 7750）、50Hz 压制随导出保真（PSD 比值中位数 0.0000）、sidecar 管线 [bandpass,notch,crop]+kind=raw、按钮恢复；同一 ctx 导 FIF `_raw` 后缀+往返最大偏差 2.9e-11V；批处理直构 JobSpec（3 羊文件×bandpass+notch+bandpower、export_raw_edf、2 worker）同步直跑全 ok、每文件 `_proc.edf`+sidecar、任一读回 50Hz 压制；逆序关 tab+工作区幂等
+
 - `python scripts/e2e_m8.py`：**ALL OK（13 项）**——A01T 分段预览四视图矩阵（288 段/堆叠 25 曲线/蝶形+零线/单通道 288 细线+4 按码平均+4 标注/时频 ImageItem+色标+y 反转/切走复位）+ 时间分辨特征（21600 行=288×25×3、特征名带窗标记、**守恒式中位误差 8.2%<12%**）+ 导出 CSV 回读 21600 行一致；**分段预览后 active tab 是预览视图，特征面板要 active browser——切回浏览器 tab 再算**（e2e_m4 路径差异）
 - `python scripts/e2e_m81.py`：**ALL OK（12 项）**——A01T 手动锚点 [10,20,30.5,350]→4 段「手动」零静默丢弃；蝶形→时频 Y span 47.5Hz 铺满（残留时压成一条）；切 jet 查找表换色且 levels 不扰动；切走切回缓存命中秒显（零线程零重算）；固定窗滑窗 [-1,4]s→**538 段**（样本域公式现算 `arange(250, 672528-1000, 1250)`，不硬编码）；第五视图 25 通道堆叠+段号跳段/▶ 翻段
 - `python scripts/smoke_gui.py`：SMOKE OK
@@ -239,6 +258,33 @@
 6. **PSD 两链路定论**（用户问梳理）：对比 PSD（M3，mean_welch 通道平均、固定参数取前 120s、独立窗口看图、仅 raw 阶段）vs PSD 曲线特征（M4，参数可调进特征表导出）——同底层纯函数不同职责**不冲突不重叠**；对比 PSD 支持 epochs 可作后续增强（用户指示后开工）。**M8.3 更新**：特征链 welch 已改逐通道语义（通道平均废除），对比 PSD 仍是 mean_welch 通道平均不受影响——两链路差异从此更明确（特征链=逐通道参数化，对比链=快速总览）
 
 ## 最近变更记录（新条目加在最上面）
+
+- 2026-08-31（M9 完成，"推进 M9 开发"指令，单文件+批处理一起做）：**预处理后连续数据导出**。
+  **①`export/continuous_io`**（照 epochs_io 样板）：EDF 走 `mne.export.export_raw`
+  （内部 edfio——V→µV 换算/prefiltering 头/annotations→EDF+C/整秒块 edge-padding 官方维护）
+  且 **physical_range="channelwise"**——默认 auto 按通道类型统一量程，羊数据 ±375000µV
+  开路饱和通道会把 16-bit 步长拖到 ≈11.4µV/LSB 直接抹掉正常 20µV 信号；FIF 走
+  `raw.save(fmt="single")` 且强制 `_raw` 后缀（缺 .fif 是 OSError、缺 _raw 是 warning；
+  mne≥1.9 返回 fnames 列表取 [0]）；两个 mne/edfio 硬伤前置转中文 ValueError：通道类型
+  不在 µV 换算白名单（eeg/ecog/seeg/eog/ecg/emg/bio/dbs/stim——越界类型数据留 V 却标
+  µV 属单位错标）、通道名 >16 字符或非 ASCII（edfio 编码直接炸）。**②单文件双入口**：
+  管线面板第 4 按钮「导出连续数据…」+ 处理菜单同款（**lambda 包一层**——QAction
+  triggered 带 checked=False 参数，直连签名带 fmt 的方法会把 False 传进 fmt、非 None
+  守卫失效）；`export_processed(fmt=None)` fmt 参数化——无 ctx/stage≠raw 中文指引、
+  fmt None 弹格式菜单、默认名 `{文件名}_proc.edf/_proc_raw.fif`、worker 写盘+sidecar
+  （pipeline=ctx.history、kind=raw）。**③批处理**：JobSpec 加 `export_raw_edf/fif`；
+  `_export_continuous` 内嵌 `_process_one` 在 apply_pipeline 后 apply_features 前
+  （epoching 步骤会把 ctx.raw 换成 epochs——之后再导就没有连续数据；含分段步骤记
+  「已跳过」日志；导出异常降级为该文件日志不杀特征）；**run() 尾部改序修旧分支漏洞**
+  ——旧 `wants_export() and len(table)>0` 在只勾 raw 时一票通过会误写特征 CSV/HDF5，
+  改为「勾 csv/h5 之一且表非空才调 _export，raw 产物独立并入」；批级 sidecar extra 加
+  raw_files_written。验证：pytest **287 绿**（+16：往返 8+守卫 2+面板 guard 2+批 5——
+  含「只勾 raw 不产特征 CSV」回归哨兵）+ e2e_m9 **16 项**（羊 EDF 预览 bandpass+notch+
+  crop→导出读回通道 8/采样率 250/时长含整秒补齐口径、**50Hz 压制随导出保真（PSD 比值
+  中位数 0.0000）**、FIF 往返最大偏差 2.9e-11V、sidecar 管线 [bandpass,notch,crop]+kind
+  =raw、批处理 3 羊文件全 ok 每文件 _proc.edf+sidecar）+ e2e_m3/m5/smoke 零回归。
+  EDF 整秒数据记录补齐（crop 7501 样本→读回 7750）为 mne 官方行为，e2e 断言按
+  「≤1 记录补齐」口径、MANUAL §3.10 限制小节注明。
 
 - 2026-08-30（M8.3 完成，用户两点需求驱动）：**特征结果图表区 + welch 逐通道语义**。
   **①`welch_psd` 参数化**：`channels` 留空从"通道平均一条"改为**逐通道各一条**（语义废除，

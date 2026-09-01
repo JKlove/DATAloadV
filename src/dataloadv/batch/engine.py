@@ -36,6 +36,7 @@ from pathlib import Path
 from typing import Callable, Optional
 
 from ..core.recording import LoadPolicy, LoadedRawCache, Recording
+from ..export.continuous_io import export_continuous
 from ..export.features_io import export_features_csv, export_features_hdf5
 from ..export.provenance import write_provenance
 from ..features.base import FeatureError, apply_features
@@ -86,6 +87,9 @@ class BatchEngine:
         self._cancel = threading.Event()  # 取消信号：跨线程 set，worker 逐步骤查
         self._table = FeatureTable()
         self._table_lock = threading.Lock()  # 多 worker 并发 add_result 的互斥
+        # M9：逐文件连续导出的产物汇集（run() 尾部并入 summary.files_written）
+        self._raw_written: list[str] = []
+        self._raw_lock = threading.Lock()  # 多 worker 并发追加的互斥
         self._done_count = 0
         self._count_lock = threading.Lock()
 
@@ -153,9 +157,14 @@ class BatchEngine:
             elapsed_s=time.perf_counter() - t0,
             cancelled=cancelled,
         )
-        # 末尾导出（整批一次；文件级字段 recording 已在长表里，跨文件可区分）
-        if job.wants_export() and len(self._table) > 0:
-            summary.files_written = self._export(job)
+        # 末尾导出（整批一次；文件级字段 recording 已在长表里，跨文件可区分）。
+        # 特征表导出与连续数据导出相互独立：只勾连续格式时不得误写特征文件
+        # （旧逻辑 wants_export() 一票通过就进 _export，会把 CSV/HDF5 都写出去）
+        files: list[str] = []
+        if (job.export_csv or job.export_hdf5) and len(self._table) > 0:
+            files += self._export(job)
+        files += self._raw_written  # 逐文件连续导出已在 _process_one 内完成
+        summary.files_written = files
         logger.info(
             "批处理「%s」结束：%s", job.name, summary.summary_zh()
         )
@@ -199,6 +208,10 @@ class BatchEngine:
             try:
                 if steps:
                     apply_pipeline(ctx, steps, cancel_check=self._cancel.is_set)
+                # M9：连续导出须紧跟管线（epoching 步骤会把 ctx.raw 换成
+                # epochs——之后再导就没有连续数据了）；放在 apply_features
+                # 之前且自成 try（见 _export_continuous）：导出失败不连累特征
+                self._export_continuous(path, ctx, logs)
                 result = apply_features(ctx, feats, cancel_check=self._cancel.is_set)
             finally:
                 if pinned:
@@ -246,6 +259,44 @@ class BatchEngine:
 
     # ------------------------------------------------------------------ 导出
 
+    def _export_continuous(self, path: str, ctx: ProcessingContext,
+                           logs: list[str]) -> list[str]:
+        """逐文件连续数据导出（M9；worker 线程内，紧跟 apply_pipeline 之后）.
+
+        - 未勾任何连续格式 / 未给导出目录：无事发生，返回 []
+        - 管线含 epoching（ctx.stage != "raw"）：日志记「已跳过」——分段产物
+          请走特征结果 tab 的「导出分段…」，此处没有连续数据可写
+        - 导出/溯源任一异常：只降级为该文件日志（status 仍 ok）——连续导出
+          是附加产物，不应连累特征计算的成败
+        :returns: 本文件实际写出的路径（含 sidecar；已同时汇集进 _raw_written）
+        """
+        job = self._job
+        fmts = [f for f, on in (("edf", job.export_raw_edf),
+                                ("fif", job.export_raw_fif)) if on]
+        if not fmts or not job.export_dir:
+            return []
+        if ctx.stage != "raw" or ctx.raw is None:
+            logs.append("—— 连续导出已跳过：管线含分段步骤，无连续数据产物 ——")
+            return []
+        stem = Path(path).stem
+        written: list[str] = []
+        try:
+            out_dir = Path(job.export_dir)
+            out_dir.mkdir(parents=True, exist_ok=True)
+            for fmt in fmts:
+                out = export_continuous(ctx.raw, out_dir / f"{stem}_proc.{fmt}", fmt=fmt)
+                sidecar = write_provenance(
+                    out, pipeline=ctx.history, recordings=[path],
+                    extra={"exported": out.name, "format": fmt, "kind": "raw"})
+                written += [str(out), str(sidecar)]
+                logs.append(f"连续 {fmt.upper()} 已写出：{out.name}")
+            with self._raw_lock:
+                self._raw_written += written
+        except Exception as e:  # noqa: BLE001 - 导出失败降级为日志，不杀特征计算
+            logs.append(f"—— 连续导出失败：{e} ——")
+            logger.exception("批处理连续导出失败：%s", path)
+        return written
+
     def _export(self, job: JobSpec) -> list[str]:
         """整批结束后导出特征表 + sidecar（在 run() 调用线程执行）.
 
@@ -270,7 +321,9 @@ class BatchEngine:
                 recordings=self._table.recording_names(),
                 extra={"batch": {"n_files": len(job.paths),
                                  "n_workers": job.n_workers,
-                                 "files_written": [Path(p).name for p in written]}},
+                                 "files_written": [Path(p).name for p in written],
+                                 "raw_files_written": [Path(p).name
+                                                       for p in self._raw_written]}},
             )
             written.append(str(sidecar))
         except Exception as e:  # noqa: BLE001 - 导出失败不吞：记日志并在结果里可见

@@ -85,6 +85,9 @@ class JobSpec(BaseModel):
     - ``n_workers``：并发线程数（默认 2——瓶颈是内存带宽而非 GIL，
       plan.md §4；上限 8 防误配）
     - ``export_csv`` / ``export_hdf5``：完成后是否导出特征表
+    - ``export_raw_edf`` / ``export_raw_fif``：M9——逐文件把处理后的连续
+      raw 落盘（每文件一个 ``<文件名>_proc.edf/_raw.fif`` + 各自 sidecar；
+      管线含 epoching 的文件自动跳过并在日志注明）
     - ``export_dir``：导出目录；空串 = 不写文件（结果只在 FeatureTable，
       用户可事后在特征结果 tab 里手动导出）
     """
@@ -95,11 +98,15 @@ class JobSpec(BaseModel):
     n_workers: int = Field(default=2, ge=1, le=8)
     export_csv: bool = False
     export_hdf5: bool = False
+    export_raw_edf: bool = False
+    export_raw_fif: bool = False
     export_dir: str = ""
 
     def wants_export(self) -> bool:
-        """是否需要在批处理结束后写文件."""
-        return bool(self.export_dir) and (self.export_csv or self.export_hdf5)
+        """是否需要在批处理结束后写文件（特征表与连续数据任一勾选即算）."""
+        return bool(self.export_dir) and (
+            self.export_csv or self.export_hdf5
+            or self.export_raw_edf or self.export_raw_fif)
 
 
 class FileStatus(str, Enum):

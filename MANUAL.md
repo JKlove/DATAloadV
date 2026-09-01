@@ -8,7 +8,7 @@
 > **版本基线**：v1（里程碑 M0–M5 全部完成）+ M6 浏览体验优化（2026-08-18）+ M6.5 读取派发魔数校验（2026-08-24）
 > + v2 方向：M7 信号质量体检（2026-08-28）+ M8 分段分析可视化（2026-08-28）
 > + M8.1 三锚定分段+时频观感+单段浏览（2026-08-28）+ M8.2 视图观感精修（2026-08-28）；
-> 验证口径：pytest 261 绿 + e2e_m1–m8·m81 共 127 项 + GUI 冒烟全过。
+> 验证口径：pytest 287 绿 + e2e_m1–m9·m81 共 143 项 + GUI 冒烟全过。
 
 ---
 
@@ -38,7 +38,7 @@ DataloadV 是面向**介入式 BCI 研究**的电生理数据桌面工作台（m
 | 预处理 | 7 种步骤组成链（自上而下执行）、pydantic 参数自动表单、当前文件预览（处理副本新 tab）、原始 vs 处理后 PSD 对比 | 右侧「处理」Dock |
 | 特征提取 | 4 种提取器（**信号质量体检**/频带功率/PSD 曲线/时域统计）、raw 全量摘要或 epochs 逐段、「用当前显示窗口」一键预填时间窗；PSD 曲线逐通道+可选时间窗，结果 tab 表格+图表（log-log 曲线/特征柱状网格） | 右侧「处理」Dock → 计算特征 |
 | 批处理 | 面板管线+特征链批量套到工作区任意文件子集；2–8 线程并行、逐文件进度/日志、单文件失败不杀整批、随时取消、UI 全程响应 | 处理菜单 → 批处理… |
-| 导出 | 特征 CSV（UTF-8 BOM，Excel 直开）/HDF5、分段数据 HDF5/FIF、每次导出自动随写 sidecar | 特征结果 tab → 导出按钮 |
+| 导出 | 特征 CSV（UTF-8 BOM，Excel 直开）/HDF5、分段数据 HDF5/FIF、**连续数据 EDF/FIF（M9，单文件+批处理）**、每次导出自动随写 sidecar | 特征结果 tab → 导出按钮；管线面板 → 导出连续数据… |
 | 设置 | 批处理默认线程数、数据缓存预算（GB）、默认导出目录 | 文件菜单 → 设置… |
 
 ### 1.3 支持的数据格式
@@ -203,7 +203,7 @@ dataloadv            # 或 python -m dataloadv
 
 | 命令 | 预期 |
 |---|---|
-| `pytest` | 261 passed（含真实数据项；含 MainWindow 级 UI 测试，**须 `QT_QPA_PLATFORM=offscreen`**） |
+| `pytest` | 287 passed（含真实数据项；含 MainWindow 级 UI 测试，**须 `QT_QPA_PLATFORM=offscreen`**） |
 | `python scripts/smoke_gui.py` | 末行 SMOKE OK（真窗口自检后自动退出） |
 | `python scripts/e2e_m1.py` … `e2e_m8.py` | 各打印 ALL OK（真实数据端到端，幂等可反复跑；m1 含 M6 浏览交互 22 项） |
 | `python scripts/e2e_m7.py` | ALL OK（16 项；质量体检真实黄金标准：羊/TPDJ 浏览器路径 + 特征/导出链，幂等） |
@@ -363,6 +363,11 @@ CSV/TXT/HDF5、BCI-IV ds1/ds4 评估集等无事件数据用后两种即可分�
 - **对比 PSD**：独立窗口，双对数坐标，**红线=原始、蓝线=处理后**（通道平均 Welch，取前 120s；
   浅色主题下原始=红/处理后=蓝，与浏览器波形深蓝区分）。
   典型验收：羊数据 带通+陷波 后 50Hz 峰消失。
+- **导出连续数据…（M9）**：把**最近一次预览**的管线产物（处理后的连续 raw）落盘——
+  格式菜单二选一：EDF（跨工具通用）/ FIF（mne 无损）；默认名 `{文件名}_proc.edf` /
+  `{文件名}_proc_raw.fif`，写盘自动随写 sidecar（记全管线步骤参数，kind=raw）。
+  处理菜单 → 导出连续数据… 是同一入口。尚未预览过 / 管线含分段步骤（产物是 Epochs
+  不是连续数据）时给中文指引，不会写半截文件。限制与精度见 §3.10。
 
 ### 3.8 特征提取（4 种提取器）
 
@@ -407,15 +412,19 @@ raw 阶段为录制内**绝对秒**。每窗各出一组频带功率，窗标记
 处理菜单 → **批处理…**（或右 Dock 底部按钮）：
 
 1. **选择页**：过滤框 + 可勾选文件清单（全选/全不选）；管线摘要行（面板当前链的快照）；
-   导出组（CSV/HDF5 勾选、文件名、导出目录、线程数 1–8 默认 2）。
+   导出组（CSV/HDF5 勾选、**连续数据 EDF/FIF 勾选（M9，每文件一个）**、文件名、
+   导出目录、线程数 1–8 默认 2）。
 2. **运行页**：逐文件表格（等待中/处理中/成功/失败/已取消 + 耗时 + 特征值数，状态着色）；
    进度条；**取消批处理**按钮（请求后引擎在当前步骤边界停止，未开始文件标记「已取消」）；
    **双击任意行弹该文件逐行日志**（失败行含【错误】原因；失败行悬停 tooltip 亦可直接看原因）。
 3. **结束**：摘要行显示 成功/失败/取消/总特征值数/用时/写出文件；至少一个文件成功即自动开
    「批处理 · {name}」结果 tab（与其他特征 tab 一样可排序、可导出）。
 
-行为要点：单文件失败（文件损坏/格式不识别/未设采样率）**不杀整批**；导出自动带 sidecar
-（extra.batch 记 n_files/n_workers/files_written）；运行中关闭对话框=请求取消（不强杀线程）。
+行为要点：单文件失败（文件损坏/格式不识别/未设采样率）**不杀整批**；连续数据导出（M9）
+与特征表导出**相互独立**——只勾前者不会误写特征文件；管线含分段步骤的文件自动跳过
+连续导出并在日志注明；单文件连续导出失败只降级为该文件日志（特征计算照常）。导出自动带
+sidecar（extra.batch 记 n_files/n_workers/files_written/raw_files_written）；运行中关闭
+对话框=请求取消（不强杀线程）。
 
 ### 3.10 导出（产物一览）
 
@@ -425,10 +434,28 @@ raw 阶段为录制内**绝对秒**。每窗各出一组频带功率，窗标记
 | `*.h5` 特征 | /features 长表 + /psd/<i> 曲线 | h5py/pandas/HDFView |
 | `epochs.h5` 分段 | /epochs/data(N段×N导×N点) + times + event_codes + info attrs | h5py；形状与界面一致 |
 | `epochs-epo.fif` 分段 | mne Epochs 无损 | `mne.read_epochs()` |
+| `*_proc.edf` 连续（M9） | 处理后连续 raw，16-bit channelwise 定点，µV | 任何 EDF 阅读器 / `mne.io.read_raw_edf()` |
+| `*_proc_raw.fif` 连续（M9） | 处理后连续 raw，float32 | `mne.io.read_raw_fif()`，mne 生态无损往返 |
 | `*.pipeline.json` sidecar | 步骤+特征全参数/文件清单/库版本/batch 信息 | 任何 JSON 阅读器；复现凭据 |
 
-导出入口都在特征/批处理结果 tab 右上（「导出分段…」仅分段阶段出现，二选一 HDF5/FIF）；
-每次导出 sidecar 自动随写。
+导出入口：特征/批处理结果 tab 右上（「导出分段…」仅分段阶段出现，二选一 HDF5/FIF）；
+**连续数据**在管线面板「导出连续数据…」（单文件，最近一次预览的产物）或批处理导出组
+勾选 EDF/FIF（逐文件 `{文件名}_proc.*`）；每次导出 sidecar 自动随写。
+
+**连续导出的限制与精度（M9，选格式前值得知道）**：
+
+- EDF 是 16-bit 定点格式：每通道按自身 min/max 用足量程（channelwise），量化步长 =
+  (max−min)/65535，往返相对误差 ~1e-4 量级——对浏览与下游特征提取无感，但**不是**
+  逐位无损（要逐位一致选 FIF）。channelwise 是有意选择：默认的按类型统一量程会被
+  羊数据 ±375000µV 开路饱和通道拖垮，16-bit 步长 ≈11.4µV/LSB 直接抹掉正常 20µV 信号。
+- EDF 按整秒数据记录写盘：裁剪窗非整秒时读回长度向上补齐 ≤1 秒（边缘补齐值非数据）。
+- EDF 头的 prefiltering 字段记 highpass/lowpass/line_freq；annotations 转为 EDF+C
+  （仅 description/onset/duration 保真）。通道类型须在 µV 换算白名单内（eeg/ecog/seeg/
+  eog/ecg/emg/bio/dbs/stim），通道名 ≤16 个 ASCII 字符——越界给中文报错（mne/edfio
+  的英文报错不可读，且 edfio 编码会直接炸）。
+- FIF 写 float32：mne 生态内往返相对误差 ~6e-8；文件名强制 `_raw` 后缀（mne 命名规约）。
+- 超大文件注意：导出时数据已在内存（preload 管线产物），EDF/FIF 写盘短暂多一份缓冲；
+  数百 MB 级录制无压力，回放级 TB 数据不在本工具场景内。
 
 ### 3.11 设置（文件 → 设置…）
 
@@ -479,7 +506,7 @@ raw 阶段为录制内**绝对秒**。每窗各出一组频带功率，窗标记
 ### 4.3 测试体系
 
 ```bash
-QT_QPA_PLATFORM=offscreen pytest   # 全部 261 项（有 MainWindow 级测试，须 offscreen）
+QT_QPA_PLATFORM=offscreen pytest   # 全部 287 项（有 MainWindow 级测试，须 offscreen）
 pytest -m real            # 仅真实数据冒烟（data/sheep 缺失自动跳过）
 pytest tests/test_proc_m3.py -k "epoching"   # 单文件/单关键字
 QT_QPA_PLATFORM=offscreen python scripts/e2e_m5.py   # 无头跑端到端

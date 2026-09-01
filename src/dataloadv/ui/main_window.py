@@ -154,6 +154,10 @@ class MainWindow(QMainWindow):
         menu_proc.addSeparator()
         menu_proc.addAction(S.FEAT_BTN_VIEWPORT, self.pipeline_panel.use_viewport_window)
         menu_proc.addAction(S.FEAT_BTN_RUN, self.pipeline_panel.start_features)
+        menu_proc.addAction(
+            # lambda 包一层：QAction.triggered 会带 checked=False 参数，
+            # 直连方法会把 False 传进 fmt（非 None，格式守卫失效）
+            S.PIPE_BTN_EXPORT_RAW, lambda: self.pipeline_panel.export_processed())
         menu_proc.addSeparator()
         menu_proc.addAction(S.BATCH_MENU_ACT, self._open_batch_dialog)
 

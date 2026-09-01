@@ -17,11 +17,14 @@
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 from typing import Callable, Optional
 
 import numpy as np
 from PySide6.QtCore import Signal
+from PySide6.QtGui import QCursor
 from PySide6.QtWidgets import (
+    QFileDialog,
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -37,6 +40,7 @@ from PySide6.QtWidgets import (
 
 from ...batch import FeatureTable
 from ...core.recording import LoadPolicy
+from ...export import continuous_io, provenance
 from ...features import (
     FEATURE_REGISTRY,
     apply_features,
@@ -79,7 +83,8 @@ class PipelinePanel(QWidget):
         self._get_active = get_active_browser
         self._steps: list[dict] = []    # [{"step": id, "params": 模型}]
         self._features: list[dict] = []  # [{"feature": id, "params": 模型}]
-        self._last_ctx: Optional[ProcessingContext] = None  # 最近一次预览结果（PSD 对比用）
+        self._last_ctx: Optional[ProcessingContext] = None  # 最近一次预览结果（PSD 对比/连续导出用）
+        self._last_src_name: Optional[str] = None  # 最近一次预览的源文件名（导出默认名用，ctx 自身不带）
         self._form: Optional[ParamsForm] = None
         self._form_kind: Optional[str] = None  # 当前表单属于 "step" | "feature"
         self._selected_row: Optional[int] = None
@@ -150,12 +155,15 @@ class PipelinePanel(QWidget):
         self._btn_preview = QPushButton(S.PIPE_BTN_PREVIEW)
         self._btn_psd = QPushButton(S.PIPE_BTN_PSD)
         self._btn_run_feat = QPushButton(S.FEAT_BTN_RUN)
+        self._btn_export = QPushButton(S.PIPE_BTN_EXPORT_RAW)
         self._btn_preview.clicked.connect(self.start_preview)
         self._btn_psd.clicked.connect(self.start_psd)
         self._btn_run_feat.clicked.connect(self.start_features)
+        self._btn_export.clicked.connect(lambda: self.export_processed())
         actions.addWidget(self._btn_preview)
         actions.addWidget(self._btn_psd)
         actions.addWidget(self._btn_run_feat)
+        actions.addWidget(self._btn_export)
         lay.addLayout(actions)
 
     def _build_add_menu(self) -> QMenu:
@@ -365,6 +373,7 @@ class PipelinePanel(QWidget):
         except ValueError as e:
             QMessageBox.warning(self, S.PIPE_PREVIEW_FAIL_TITLE, str(e))
             return
+        self._last_src_name = rec.meta.filename  # 连续导出默认名用（ctx 自身不带源名）
         self._btn_preview.setEnabled(False)
         self.window().statusBar().showMessage(S.PIPE_MSG_PREVIEW_RUNNING)
 
@@ -421,6 +430,66 @@ class PipelinePanel(QWidget):
         self._psd_view.set_series(series)
         self._psd_view.show()
         self._psd_view.raise_()
+
+    # ------------------------------------------------------------------ 连续导出（M9）
+
+    def export_processed(self, fmt: Optional[str] = None) -> None:
+        """导出最近一次预览的连续管线产物（EDF/FIF）+ sidecar（worker 写盘）.
+
+        :param fmt: "edf" | "fif"；None（按钮/菜单入口）时先弹格式选择菜单。
+            参数化是为了 e2e/测试能绕过模态菜单走完整 guard+dialog+worker 路径。
+        """
+        ctx = self._last_ctx
+        if ctx is None:
+            QMessageBox.information(self, S.PIPE_EXPORT_RAW_TITLE, S.PIPE_MSG_EXPORT_NO_CTX)
+            return
+        if ctx.stage != "raw" or ctx.raw is None:
+            # 含 epoching 的管线：连续数据在分段那一步已释放（ctx.raw=None）
+            QMessageBox.information(self, S.PIPE_EXPORT_RAW_TITLE, S.PIPE_MSG_EXPORT_NOT_RAW)
+            return
+        if fmt is None:
+            menu = QMenu(self)
+            edf_act = menu.addAction(S.PIPE_EXPORT_RAW_EDF)
+            fif_act = menu.addAction(S.PIPE_EXPORT_RAW_FIF)
+            act = menu.exec(QCursor.pos())
+            if act not in (edf_act, fif_act):
+                return
+            fmt = "edf" if act is edf_act else "fif"
+        stem = Path(self._last_src_name).stem if self._last_src_name else "processed"
+        default = f"{stem}_proc.edf" if fmt == "edf" else f"{stem}_proc_raw.fif"
+        path, _ = QFileDialog.getSaveFileName(
+            self, S.PIPE_EXPORT_RAW_TITLE, default,
+            "EDF (*.edf)" if fmt == "edf" else "FIF (*.fif)")
+        if not path:
+            return
+        self._set_actions_enabled(False)
+        self.window().statusBar().showMessage(S.PIPE_MSG_EXPORTING)
+
+        def job(path=path, fmt=fmt, ctx=ctx, src=self._last_src_name or ""):
+            out = continuous_io.export_continuous(ctx.raw, path, fmt=fmt)
+            sidecar = provenance.write_provenance(
+                out, pipeline=ctx.history, recordings=[src],
+                extra={"exported": out.name, "format": fmt, "kind": "raw"})
+            return [out, sidecar]
+
+        run_in_thread(
+            job,
+            on_done=self._on_export_done,
+            on_error=lambda m: (self._set_actions_enabled(True),
+                                QMessageBox.critical(self, S.PIPE_EXPORT_RAW_TITLE, m)),
+        )
+
+    def _on_export_done(self, files: list) -> None:
+        self._set_actions_enabled(True)
+        self.window().statusBar().showMessage(S.STATUS_READY)
+        QMessageBox.information(
+            self, S.FEAT_EXPORT_DONE_TITLE,
+            S.FEAT_EXPORT_DONE_FMT.format(n=len(files), files="\n".join(str(f) for f in files)))
+
+    def _set_actions_enabled(self, enabled: bool) -> None:
+        """统一翻转四个动作按钮（单一动作进行中时防误触其它动作）."""
+        for btn in (self._btn_preview, self._btn_psd, self._btn_run_feat, self._btn_export):
+            btn.setEnabled(enabled)
 
     # ------------------------------------------------------------------ 视口预填（M4 第④层）
 

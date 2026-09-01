@@ -888,3 +888,74 @@ fixture 收窄 `channels=["EEG00"]` 保 1 条下游零改，新增窗进列头/a
 聚合提示行位置正确/每通道 3 组并列柱/图例只挂第一格。
 
 **下一步**：M9 连续导出（EDF/FIF 整段预处理结果落盘），任务拆解见 TODO.md。
+
+---
+
+## M9 — 预处理后连续数据导出（2026-08-31 完成，"推进 M9 开发"指令，单文件+批处理一起做）
+
+### 做了什么
+
+1. **`export/continuous_io.py` 新建**：`export_continuous(raw, path, fmt="edf") -> Path`（照
+   epochs_io 样板——Path 化、with_suffix 规范化、未知 fmt 中文 ValueError）。EDF 走
+   `mne.export.export_raw(fmt="edf", physical_range="channelwise", overwrite=True)`；FIF 走
+   `raw.save(fmt="single")` 且文件名强制 `_raw` 规约后缀（缺 .fif 是 OSError、缺 _raw 是
+   warning，主动补齐保干净；mne≥1.9 返回 fnames 列表取 [0]）。
+2. **两个 mne/edfio 硬伤前置转中文 ValueError**：①通道类型不在 µV 换算白名单
+   （`_EDF_TYPES` 9 类——越界类型数据留 V 却标 µV，单位错标）；②通道名 >16 字符或非
+   ASCII（mne 英文 RuntimeError / edfio 编码直接炸）。
+3. **单文件双入口**：管线面板第 4 按钮「导出连续数据…」+ 处理菜单同款（**均 lambda 接线**
+   ——QAction.triggered/clicked 直连带参方法会把 checked=False 传进 fmt，非 None 守卫失效）；
+   `export_processed(fmt=None)` fmt 参数化（e2e/单测直调绕过模态菜单走完整 guard+dialog+
+   worker 路径）；挂靠 `panel._last_ctx`（预览产物）+ `_last_src_name`（默认名——ctx 自身
+   不带源名）；guard：无 ctx → 提示先预览；stage≠raw → 指向特征 tab 的分段导出。
+4. **批处理**：JobSpec 加 `export_raw_edf/export_raw_fif`；`BatchEngine._export_continuous`
+   内嵌 `_process_one` 在 **apply_pipeline 后 apply_features 前**（epoching 步骤会把
+   ctx.raw 换成 epochs——之后再导就没有连续数据；含分段步骤记「已跳过」日志；导出异常
+   降级为该文件日志、status 仍 ok 不杀特征计算）；`_raw_written` + Lock 汇集多 worker 产物。
+5. **run() 尾部改序修旧分支漏洞**：旧 `if job.wants_export() and len(table)>0: _export(job)`
+   在只勾 raw 时（wants_export 已含 raw 标志）一票通过、`_export` 无条件写特征 CSV——
+   改为「勾 csv/h5 之一且表非空才调 _export，raw 产物独立 extend」；批级 sidecar extra 加
+   raw_files_written。batch_dialog 导出组 grid (0,2)/(0,3) 两复选框 + 目录校验/JobSpec 组装
+   两处条件扩展。
+6. **strings_zh 9 条**（PIPE_BTN_EXPORT_RAW 等单文件 7 条 + BATCH_CB_RAW_EDF/FIF 2 条）。
+
+### 验证
+
+- pytest **287 绿**（+16，tests/test_export_m9.py 三组）：TestContinuousExport 9（EDF 往返
+  rtol 1e-3/prefiltering 头 highpass==1.0 往返/FIF 往返 rtol 1e-6+annotations 3 条/未知 fmt
+  拒/超长名拒/非 ASCII 名拒/misc 类型拒/平坦通道可导/单通道双格式）+ TestPanelGuard 2
+  （无 ctx/stage=epochs 中文指引不崩溃）+ TestBatchRawExport 5（wants_export 四开关语义/
+  epochs 管线跳过+日志/引擎级 3 文件每文件 _proc.edf+sidecar kind=raw+files_written 汇总/
+  导出失败降级日志特征照算/**只勾 raw 不产特征 CSV·H5——run() 分支修正的回归哨兵**）。
+- e2e_m9 **16 项 ALL OK**（scripts/e2e_m9.py，M4 规约：逐模块 patch + getSaveFileName 定向
+  临时目录 + fmt 参数化直调）：羊 EDF 打开→bandpass+notch+crop(0,30) 预览 `_last_ctx.stage
+  =="raw"`→导出 EDF 读回通道 8/采样率 250（browser.rec.meta 动态值）/时长整秒补齐 ≤1 记录
+  （裁剪窗 7501 样本读回 7750）/50Hz 压制随导出保真（PSD 比值中位数 **0.0000**）/sidecar
+  管线 [bandpass,notch,crop]+kind=raw/按钮恢复；FIF `_raw` 后缀+往返最大偏差 **2.9e-11 V**；
+  批处理直构 JobSpec（3 羊文件×bandpass+notch+bandpower、export_raw_edf、2 worker）同步
+  直跑全 ok、每文件 _proc.edf+sidecar、任一读回 50Hz 压制；逆序关 tab+工作区幂等。
+- 回归：e2e_m3（预览/PSD 路径）+ e2e_m5（批处理含 run() 改序）+ smoke 全过。
+
+### 计划偏离（实证/规则驱动）
+
+1. **Plan agent 初稿两处漏洞、主会话复核修正后才实施**：①菜单 addAction 直连会把
+   triggered 的 checked=False 传进 fmt（lambda 包）；②只勾 raw 时 wants_export()=True 误入
+   无条件写特征文件的 _export（run() 尾部改序）——第②项升级为带回归哨兵的正式修复。
+2. **EDF 整秒数据记录补齐**（e2e 首跑实证）：crop(0,30) 含端点 7501 样本 → 读回 7750
+   （mne 官方 edge-padding 行为）——断言从「n_times==30*fs」改为「≤1 记录补齐」口径，
+   并写进 MANUAL §3.10 限制小节。
+
+### 发现的问题与修正（全部有测试或 e2e 复现）
+
+- sidecar 命名是**后缀替换**不是追加（`x_proc.edf` → `x_proc.pipeline.json`）——引擎级用例
+  首跑失败后核对 provenance.py docstring 修正断言。
+- ctx.history 记录**完整参数**（bandpass 含默认 method="fir"）——sidecar 断言按字段核对
+  而非裸 dict 相等。
+
+### 架构规则自查
+
+- 规则 #1：continuous_io 禁 import Qt ✓（纯 mne/Path）；#2 UI 只编排 ✓（面板只做 guard/
+  菜单/worker 调度）；#3 跨线程传纯对象 ✓（ctx.raw/str/Path）；#4 e2e 规约 ✓（逐模块
+  patch、tries 上限、幂等工作区、flush=True、逆序关 tab）。
+
+**下一步**：v2 批准方向 M7→M8→M9 全部交付；后续待新需求排队（backlog 见 TODO.md）。

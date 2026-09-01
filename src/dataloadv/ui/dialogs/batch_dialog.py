@@ -132,6 +132,11 @@ class BatchDialog(QDialog):
         self._cb_csv.setChecked(True)
         grid.addWidget(self._cb_csv, 0, 0)
         grid.addWidget(self._cb_h5, 0, 1)
+        # M9：逐文件连续数据导出（特征表导出相互独立，可只勾其一）
+        self._cb_raw_edf = QCheckBox(S.BATCH_CB_RAW_EDF)
+        self._cb_raw_fif = QCheckBox(S.BATCH_CB_RAW_FIF)
+        grid.addWidget(self._cb_raw_edf, 0, 2)
+        grid.addWidget(self._cb_raw_fif, 0, 3)
         grid.addWidget(QLabel(S.BATCH_LBL_NAME), 1, 0)
         self._name = QLineEdit("batch_features")
         grid.addWidget(self._name, 1, 1)
@@ -238,7 +243,9 @@ class BatchDialog(QDialog):
             QMessageBox.warning(self, S.BATCH_DLG_TITLE, S.BATCH_MSG_NO_FEATURES)
             return
         export_dir = self._dir.text().strip()
-        if (self._cb_csv.isChecked() or self._cb_h5.isChecked()) and not export_dir:
+        wants_feat = self._cb_csv.isChecked() or self._cb_h5.isChecked()
+        wants_raw = self._cb_raw_edf.isChecked() or self._cb_raw_fif.isChecked()
+        if (wants_feat or wants_raw) and not export_dir:
             QMessageBox.warning(self, S.BATCH_DLG_TITLE, S.BATCH_MSG_NO_EXPORT_DIR)
             return
 
@@ -249,8 +256,9 @@ class BatchDialog(QDialog):
             n_workers=self._workers.value(),
             export_csv=self._cb_csv.isChecked(),
             export_hdf5=self._cb_h5.isChecked(),
-            export_dir=export_dir if (self._cb_csv.isChecked()
-                                      or self._cb_h5.isChecked()) else "",
+            export_raw_edf=self._cb_raw_edf.isChecked(),
+            export_raw_fif=self._cb_raw_fif.isChecked(),
+            export_dir=export_dir if (wants_feat or wants_raw) else "",
         )
         # 记住本次导出目录（下次对话框直接带上）
         if export_dir:
