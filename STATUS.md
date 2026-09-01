@@ -1,6 +1,6 @@
 # STATUS — 项目状态快照
 
-> 本文件回答"现在做到哪了"。每里程碑完成及重要提交后更新。最后更新：2026-09-01（M10 双平台打包：macOS 本机包机器验证全过+用户实测验收过；已 push（2cfea45 + tag v0.1.0）；CI 首跑 mac 全绿、win 炸 upload-artifact 已修复重跑；剩 Windows 真机验收）
+> 本文件回答"现在做到哪了"。每里程碑完成及重要提交后更新。最后更新：2026-09-01（M10 双平台打包：macOS 本机包机器验证全过+用户实测验收过；已 push；CI 重跑双绿，win64 136MB/macOS 94MB artifacts 已上传；剩 Windows 真机真人验收）
 
 ## 当前里程碑
 
@@ -14,9 +14,10 @@
   入包、pytest **287 绿**零回归。**Windows（GitHub Actions）**：`.github/workflows/build.yml`
   双 job（macos-latest arm64 + windows-latest，setup-python 3.10 + pip 装齐 + 同一份 spec），
   actionlint 通过；**已 push（用户批准，commit 2cfea45 → main + tag v0.1.0 触发）**。
-  CI 首跑（run 33467082233）：mac **全绿**；win 打包+压 zip 成功、只炸 upload-artifact
-  （`Compress-Archive` 相对 DestinationPath 落仓库根——坑 #60），修一行后重推 tag 重跑。
-  用户实测验收："目前 app 使用没有问题"（2026-09-01）。待办：CI 绿后 Windows 真机双击验收。
+  CI 首跑 win 只炸 upload-artifact（`Compress-Archive` 相对 DestinationPath 落仓库根——
+  坑 #60），修一行（d684e11，tag 移到新提交重触发）；**重跑双绿（run 33474440346）**：
+  artifacts `DataloadV-0.1.0-win64`（136MB）/ `DataloadV-0.1.0-macOS-arm64`（94MB）已上传。
+  用户实测验收："目前 app 使用没有问题"（2026-09-01）。待办：Windows 真机双击验收后 M10 翻 ✅。
 
 
 - **M9 预处理后连续数据导出：✅ 完成（2026-08-31）**——补齐与 pipelineMotor 的连续数据互操作
@@ -105,7 +106,7 @@
 | M8.2 视图观感精修 | ✅ 完成 | 2026-08-28 | 堆叠系通道名行首内嵌标签（y 轴刻度挤叠根除）+蝶形图图例（自动分列）+切时频 ticks 残留清理（左上角飘字根因）；离屏截图目视确认；pytest 261 |
 | M8.3 特征结果图表区 | ✅ 完成 | 2026-08-30 | welch_psd 逐通道+时间窗（通道平均语义废除）+结果 tab 表+图表（PSD log-log/特征柱状网格、分段按事件码聚合）；批处理同享；pytest 271 / e2e_m4 19 项 |
 | M9 预处理后连续数据导出 | ✅ 完成 | 2026-08-31 | continuous_io（EDF channelwise 16-bit/FIF float32 _raw 后缀+类型白名单·标签长度前置守卫）；单文件面板/菜单+批处理逐文件（epoching 跳过+失败降级+只勾 raw 不写特征文件）；pytest 287 / e2e_m9 16 项 |
-| M10 双平台打包 | 🔶 已 push，CI 修复重跑中 | 2026-09-01 | PyInstaller 6.22.2 单份 spec 跨平台 + entry.py shim + app `--smoke` 自检；macOS .app 293MB/zip 119MB/构建 42s，offscreen 冒烟+真窗口存活+PYZ 依赖核实全过、pytest 287 零回归、用户实测验收过；已 push（2cfea45 + tag v0.1.0）；CI 首跑 mac 全绿/win 只炸 upload（坑 #60 已修重跑）；瘦身取消；工作区隐私清理（01/02号脑电·羊数据 59 条清出索引）；剩 Windows 真机验收 |
+| M10 双平台打包 | 🔶 CI 双绿，剩 Win 真机验收 | 2026-09-01 | PyInstaller 6.22.2 单份 spec 跨平台 + entry.py shim + app `--smoke` 自检；macOS .app 293MB/zip 119MB/构建 42s，offscreen 冒烟+真窗口存活+PYZ 依赖核实全过、pytest 287 零回归、用户实测验收过；已 push（2cfea45 + tag v0.1.0）；CI 修复后重跑双绿（win64 136MB/macOS 94MB）；瘦身取消；工作区隐私清理（01/02号脑电·羊数据 59 条清出索引）；剩 Windows 真机验收后翻 ✅ |
 
 ## 环境
 

@@ -1027,4 +1027,5 @@ fixture 收窄 `channels=["EEG00"]` 保 1 条下游零改，新增窗进列头/a
 - **CI 首跑（run 33467082233）**：mac **全绿**（含 artifact 上传）；win **打包+压 zip 成功、
   只炸 upload-artifact**——`Compress-Archive -DestinationPath` 相对路径落仓库根而非
   `dist\`（坑 #60）；修 `-DestinationPath "dist\DataloadV-$VER-win64.zip"` 后重推 tag 重跑。
-- **剩**：CI 绿后从 Actions 页下载 win artifact → Windows 真机真人双击验收。
+- **剩**：CI 已双绿（run 33474440346；artifacts `DataloadV-0.1.0-win64` 136MB /
+  `-macOS-arm64` 94MB，登录 GitHub 从运行页下载）→ Windows 真机真人双击验收。

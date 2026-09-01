@@ -304,7 +304,7 @@ Qt 6.x 后续版本须换 `filterInvalidated` 信号或 `beginFilterChange`，�
 - [x] 验证：pytest **287 绿**（+16）+ e2e_m9 **16 项**（50Hz 压制随导出保真 0.0000、
       FIF 往返 2.9e-11V、批处理 3 羊文件全 ok）+ e2e_m3/m5/smoke 零回归（见 review.md M9 节）
 
-## M10 双平台打包（🔶 2026-09-01 用户实测验收过、已 push（2cfea45 + tag v0.1.0）；CI 首跑 win 上传失败已修复重跑；剩 Windows 真机验收）
+## M10 双平台打包（🔶 2026-09-01 用户实测验收过、已 push；CI 修复后重跑双绿，win64 136MB/macOS 94MB artifacts 已上传；剩 Windows 真机真人验收后翻 ✅）
 
 - [x] M10-1 macOS 本机打包：dlv 装 PyInstaller 6.22.2（conda-forge）+ `packaging/entry.py`
       shim + `dataloadv.spec` 单份跨平台（darwin .app / win32 onedir .exe）；全量构建 42s、
@@ -313,9 +313,8 @@ Qt 6.x 后续版本须换 `filterInvalidated` 信号或 `beginFilterChange`，�
       `~/.dataloadv/` 日志写入正常；PYZ 核实延迟依赖（neo/pynwb/edfio/mne.export）入包；
       pytest 287 零回归；Gatekeeper/spctl 状态记录（未签名预期）
 - [x] M10-3 CI：`.github/workflows/build.yml` 双 job + actionlint 通过；**已 push**（用户批准，
-      commit 2cfea45 → main + tag `v0.1.0` 触发）；首跑 mac 全绿、win 打包+压 zip 成功但炸在
-      upload-artifact（Compress-Archive 相对 DestinationPath 落仓库根——坑 #60），修一行
-      `-DestinationPath "dist\…"` 后重推 tag 重跑
+      commit 2cfea45 → main + tag `v0.1.0` 触发）；首跑 win 只炸 upload-artifact（坑 #60），
+      d684e11 修一行后重跑**双绿**（run 33474440346；artifacts win64 136MB / macOS 94MB）
 - [x] M10-4 瘦身：**裁决取消**——全量 293MB 远低于 ≤900MB 目标，excludes 留空（体积让位
       可用性，PACKAGING_HANDOFF 预估 1.2–1.8GB 未发生）
 - [x] **用户亲眼验收**：2026-09-01 用户实测反馈"目前 app 使用没有问题"（本机 macOS 包
