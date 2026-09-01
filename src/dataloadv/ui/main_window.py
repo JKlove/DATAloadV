@@ -17,6 +17,7 @@ import logging
 
 import pyqtgraph as pg
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import (
     QInputDialog,
     QLabel,
@@ -52,7 +53,16 @@ class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle(S.APP_TITLE)
-        self.resize(1440, 900)
+        # 初始尺寸自适应屏幕（M10 后续修复）：此前硬编 1440×900，在 1366×768
+        # 笔记本或 1080p@125% 缩放（有效逻辑高 864）上超出屏幕，右侧处理 Dock
+        # 被屏幕边缘裁掉（全屏→还原会触发整体重排所以"恢复"）——按主屏可用
+        # 区域收口并居中；大屏保持 1440×900 不变
+        avail = QGuiApplication.primaryScreen().availableGeometry()
+        w, h = min(1440, avail.width()), min(900, avail.height())
+        self.resize(w, h)
+        self.move(avail.x() + (avail.width() - w) // 2, avail.y() + (avail.height() - h) // 2)
+        # 首次显示后按面板当时（已过 DPI/字体 polish 的）尺寸提示显式定 Dock 宽
+        self._docks_sized = False
 
         # pyqtgraph 全局浅色（白底）主题（M6 按用户要求由深色更换；
         # antialias=True（M6.7 恢复）：信号浏览器两档绘制把每条曲线点数
@@ -347,6 +357,28 @@ class MainWindow(QMainWindow):
         SettingsDialog(self).exec()
 
     # ------------------------------------------------------------------ 其他
+
+    def showEvent(self, event) -> None:  # noqa: N802 - Qt 命名约定
+        """首次显示时显式定左右 Dock 宽（M10 后续修复）.
+
+        QMainWindow 首布局用构建期的 sizeHint——Windows 高 DPI 下面板真实
+        最小宽度（构建后经字体/DPI polish 才稳定）可能更大，首布局会把
+        右侧处理面板内容截断，直到用户手动全屏/改变窗口大小才重排。
+        这里在首次 show 时按面板**当时**的尺寸提示 resizeDocks 一次，使
+        初始布局与后续重排一致（resizeDocks 自带下限=面板最小宽，不会压瘪）。
+        """
+        super().showEvent(event)
+        if self._docks_sized:
+            return
+        self._docks_sized = True
+        w = self.width()
+        left = min(self.workspace_tree.sizeHint().width(), int(w * 0.22))
+        right = min(self.pipeline_panel.sizeHint().width(), int(w * 0.32))
+        self.resizeDocks(
+            [self._dock_workspace, self._dock_pipeline],
+            [left, right],
+            Qt.Orientation.Horizontal,
+        )
 
     def _show_about(self) -> None:
         QMessageBox.about(self, S.ACT_ABOUT, S.ABOUT_TEXT)

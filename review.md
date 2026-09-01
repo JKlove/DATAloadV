@@ -1029,3 +1029,18 @@ fixture 收窄 `channels=["EEG00"]` 保 1 条下游零改，新增窗进列头/a
   `dist\`（坑 #60）；修 `-DestinationPath "dist\DataloadV-$VER-win64.zip"` 后重推 tag 重跑。
 - **Windows 真机真人双击验收：通过**（2026-09-01，用户下载 CI artifact win64 实测
   "可运行使用，目前没有发现问题"）——**M10 全项收官**（双平台包均真人验收过）。
+
+### 后续修复（同日，Windows 真机反馈）
+
+- **小屏初始布局截断**：初始窗口硬编 1440×900 超出笔记本屏幕（1366×768，或 1080p@125%
+  缩放有效逻辑高 864），右侧处理 Dock（面板最小宽 419、@125% ≈524）被屏幕边缘裁掉；
+  "全屏→恢复"触发 QMainWindow 整体重排所以能恢复——根因两枚（窗口超屏 + Dock 首布局
+  用构建期 sizeHint），详见 HANDOFF 坑 #61。
+- 修复（main_window.py）：①初始尺寸 `min(1440×900, 主屏 availableGeometry)` 收口+居中；
+  ②`showEvent` 首显示 `resizeDocks` 按面板当时 hint 定左右 Dock 宽（自动下限=最小宽）。
+- 验证：offscreen 双场景实测（800×800 屏窗口收口、处理 Dock 右缘 799<800、面板 419≥419
+  不截断）+ 回归测试 test_ui_window_sizing.py 3 项（小屏/大屏打桩 1920×1080/1536×864
+  三档）+ **pytest 290 绿**（287+3）零回归。
+- 测试坑：本 PySide6 6.11 构建 offscreen 忽略 `screenSize=WxH` 参数（实测恒 800×800），
+  大屏用例打桩模块级 `QGuiApplication`。
+- 待办：发新版（版本号+tag）出包 → 用户 Windows 笔记本复验小屏布局。
