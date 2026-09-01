@@ -7,12 +7,13 @@
 
 - **M10-1 ✅**：PyInstaller 6.22.2（conda-forge）+ `packaging/entry.py` + `dataloadv.spec`
   已交付；全量构建 42s / .app 293MB / zip 119MB。
-- **M10-2 🔶**：机器可验部分全过（offscreen `--smoke` SMOKE OK / 真窗口存活+优雅退出 /
+- **M10-2 ✅**：机器可验部分全过（offscreen `--smoke` SMOKE OK / 真窗口存活+优雅退出 /
   PYZ 延迟依赖核实 / pytest 287 零回归 / Gatekeeper 状态记录）；app 已加 `--smoke` 分支
-  （本文"可选"增强，已实施）。**用户真窗口五步流程亲眼验收未做**。
-- **M10-3 🔶（收尾就差真人验收）**：已 push（2cfea45 → main + tag `v0.1.0`）；CI 首跑 win
-  只炸 upload-artifact（坑 #60），d684e11 修复后重跑**双绿**（run 33474440346，artifacts
-  win64 136MB / macOS 94MB）；剩 Windows 真机真人双击验收后 M10 翻 ✅。
+  （本文"可选"增强，已实施）。用户验收：macOS 本机实测"使用没有问题"。
+- **M10-3 ✅**：已 push（2cfea45 → main + tag `v0.1.0`）；CI 首跑 win 只炸 upload-artifact
+  （坑 #60），d684e11 修复后重跑**双绿**（run 33474440346，artifacts win64 136MB /
+  macOS 94MB）；**Windows 真机真人双击验收通过**（2026-09-01，用户实测可运行、未发现
+  问题）——M10 全项完成。
 - **M10-4 ✅ 裁决取消**：全量 293MB 远低于 ≤900MB 目标（预估 1.2–1.8GB 未发生），
   excludes 留空。
 - **M10-5 ✅**：治理七文件同步完成（STATUS/HANDOFF 坑 #59/README/MANUAL §2.5/TODO/plan/

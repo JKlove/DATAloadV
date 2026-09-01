@@ -960,7 +960,7 @@ fixture 收窄 `channels=["EEG00"]` 保 1 条下游零改，新增窗进列头/a
 
 **下一步**：v2 批准方向 M7→M8→M9 全部交付；后续待新需求排队（backlog 见 TODO.md）。
 
-## M10 — 双平台打包（2026-09-01 机器验证全过 + 用户实测验收过；已 push，CI 首跑 win 上传失败已修复重跑；按 PACKAGING_HANDOFF.md 执行）
+## M10 — 双平台打包（✅ 2026-09-01 完成：双平台真人验收过；按 PACKAGING_HANDOFF.md 执行）
 
 ### 交付物
 
@@ -1027,5 +1027,5 @@ fixture 收窄 `channels=["EEG00"]` 保 1 条下游零改，新增窗进列头/a
 - **CI 首跑（run 33467082233）**：mac **全绿**（含 artifact 上传）；win **打包+压 zip 成功、
   只炸 upload-artifact**——`Compress-Archive -DestinationPath` 相对路径落仓库根而非
   `dist\`（坑 #60）；修 `-DestinationPath "dist\DataloadV-$VER-win64.zip"` 后重推 tag 重跑。
-- **剩**：CI 已双绿（run 33474440346；artifacts `DataloadV-0.1.0-win64` 136MB /
-  `-macOS-arm64` 94MB，登录 GitHub 从运行页下载）→ Windows 真机真人双击验收。
+- **Windows 真机真人双击验收：通过**（2026-09-01，用户下载 CI artifact win64 实测
+  "可运行使用，目前没有发现问题"）——**M10 全项收官**（双平台包均真人验收过）。

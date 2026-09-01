@@ -304,7 +304,7 @@ Qt 6.x 后续版本须换 `filterInvalidated` 信号或 `beginFilterChange`，�
 - [x] 验证：pytest **287 绿**（+16）+ e2e_m9 **16 项**（50Hz 压制随导出保真 0.0000、
       FIF 往返 2.9e-11V、批处理 3 羊文件全 ok）+ e2e_m3/m5/smoke 零回归（见 review.md M9 节）
 
-## M10 双平台打包（🔶 2026-09-01 用户实测验收过、已 push；CI 修复后重跑双绿，win64 136MB/macOS 94MB artifacts 已上传；剩 Windows 真机真人验收后翻 ✅）
+## M10 双平台打包（✅ 完成 2026-09-01：macOS 本机包与 CI Windows 包均真人验收过）
 
 - [x] M10-1 macOS 本机打包：dlv 装 PyInstaller 6.22.2（conda-forge）+ `packaging/entry.py`
       shim + `dataloadv.spec` 单份跨平台（darwin .app / win32 onedir .exe）；全量构建 42s、
@@ -320,8 +320,9 @@ Qt 6.x 后续版本须换 `filterInvalidated` 信号或 `beginFilterChange`，�
 - [x] **用户亲眼验收**：2026-09-01 用户实测反馈"目前 app 使用没有问题"（本机 macOS 包
       日常使用验收通过）
 - [x] **push 触发 CI**（外发动作，用户已批准）→ CI 绿后下载 win artifact
-- [ ] **Windows 真机双击验收**（CI 绿 ≠ Windows 能跑，须真人一次并记录）
-- [ ] 全部验收后：STATUS M10 翻 ✅；commit（等用户指令）
+- [x] **Windows 真机双击验收**：用户实测 CI artifact win64 可运行使用、未发现问题
+      （2026-09-01）——"CI 绿 ≠ Windows 能跑"的真人把关已过
+- [x] 收官：STATUS M10 翻 ✅ + 治理同步提交
 
 ## 已知问题 / Backlog（v1 收官后暂缓项）
 
