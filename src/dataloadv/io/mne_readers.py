@@ -18,6 +18,13 @@
    同路径，1.12 实测可用）——扩展名与内容不符时（sheep 系列 .edf 实为
    BDF）传文件对象走公共入口重读。代价：file-like 要求整载（preload=True），
    仅误标文件承担。见 _read_mne_robust。
+5.（2026-09-07，sheep4 'AuV' 坑 #62）mne 1.12 对 EDF 头 physical_dimension
+   的换算白名单只有 µV 三种码位变体/uV（×1e-6）与 mV（×1e-3），**其余
+   单位串一律 factor=1 按伏特解读**——'AuV' 这类导出笔误使幅值显示放大
+   10⁶ 倍。EdfReader 检出头非标单位后按 µV 兜底缩放并打 meta 标记
+   （UI 弹一次告知框，见 main_window._notify_edf_unit_fallback）；read_raw_edf
+   的 units= 参数不能覆盖已写单位（文件有单位且与传入不同直接 ValueError），
+   故走读后缩放路线。
 """
 
 from __future__ import annotations
@@ -40,6 +47,51 @@ mne.set_log_level("ERROR")
 _LATIN1_HINT = "invalid byte"
 # mne _check_args 扩展名硬检查的报错文案片段（识别"该绕过包装层"的场景）
 _EXT_HINT = "files are supported"
+
+# EDF 头 physical_dimension 的"会被 mne 正确换算"的标准单位集合（mne 1.12
+# _read_edf_header 源码实证：µV 三种码位变体/uV → ×1e-6、mV → ×1e-3、其余
+# 一律 factor=1 当伏特；"V" 本义就是伏特，也归标准）。白名单外的单位串
+# （如 sheep4 的 'AuV' 笔误）会让幅值显示放大 10⁶ 倍——见 EdfReader 兜底。
+_STANDARD_EDF_UNITS = {"uV", "µV", "μV", "\x83\xcaV", "mV", "V"}
+# meta.notes 里的"按 µV 兜底待提示"标记：UI 打开 tab 时检测弹一次告知框后
+# 清除（与 io.table.FS_UNSET_NOTE 同款机制；说明文本本体留在 notes 供查档）
+EDF_UNIT_FLAG = "[EDF单位非标待提示]"
+# 兜底缩放系数：按微伏解释。EEG EDF 生态物理单位绝对主流是 µV，导出笔误
+# 几乎都是 µV 量纲（'AuV' 后缀即证据）；空单位不兜底（语义未知不猜测）。
+_UNIT_FALLBACK_SCALE = 1e-6
+
+
+def _scan_nonstandard_edf_units(path) -> dict[str, str]:
+    """读 EDF 头（仅头几百字节，不碰数据区），返回单位非标的数据通道.
+
+    返回 ``{通道名: 单位串}``；无问题返回空 dict。EDF 信号子头是**字段主序**
+    （坑 #44/#62）：所有 label 连续（每通道 16B），物理单位字段区在
+    ``256 + ns*96``（每通道 8B）。EDF Annotations 注释通道与空单位通道
+    不报（前者非数据，后者语义未知不做猜测）。
+
+    仅由 EdfReader 调用（registry 魔数派发已保证文件确为 EDF）；头解析
+    出任何异常都按"未检出"返回——兜底检测绝不阻断正常读取路径。
+    """
+    try:
+        with open(Path(path), "rb") as f:
+            main = f.read(256)
+            ns = int(main[252:256])
+            f.seek(256)
+            labels = f.read(ns * 16)
+            f.seek(256 + ns * 96)
+            dims = f.read(ns * 8)
+        bad: dict[str, str] = {}
+        for i in range(ns):
+            label = labels[i * 16:(i + 1) * 16].decode("latin-1", "replace").strip()
+            unit = dims[i * 8:(i + 1) * 8].decode("latin-1", "replace").strip()
+            if not unit or label.lower() == "edf annotations":
+                continue
+            if unit not in _STANDARD_EDF_UNITS:
+                bad[label] = unit
+        return bad
+    except Exception:  # noqa: BLE001 - 兜底检测失败 = 不兜底，不挡主流程
+        logger.debug("EDF 单位字段扫描未完成（按未检出处理）：%s", path, exc_info=True)
+        return {}
 
 
 def _detach_file_handles(raw, path_str: str):
@@ -143,6 +195,15 @@ class _MneRawReader(BaseReader):
         """从已构造的 raw 抽事件表（默认 annotations 直转）."""
         return EventTable.from_mne_annotations(raw)
 
+    def _postprocess_raw(self, path: Path, raw):
+        """读取后的数据级修正钩子（默认原样返回；子类按需覆盖）.
+
+        在 load_raw 返回前调用，可对 raw 就地修正（如 EdfReader 的非标
+        单位兜底缩放）；必须返回 raw 本体，不得换新对象（缓存/线程持有的
+        引用要保持有效）。
+        """
+        return raw
+
     # ------------------------------------------------------------------ 契约
     def read_meta(self, path: Path) -> RecordingMeta:
         """仅解析头（preload=False 时 mne 只读头与注释，不搬数据）."""
@@ -151,11 +212,17 @@ class _MneRawReader(BaseReader):
         return self._meta_from_raw(path, raw, events)
 
     def load_raw(self, path: Path, policy: LoadPolicy):
-        """按策略加载：PRELOAD 整载 / LAZY 仅句柄."""
-        return self._read(path, preload=policy is not LoadPolicy.LAZY)
+        """按策略加载：PRELOAD 整载 / LAZY 仅句柄；加载后过修正钩子."""
+        raw = self._read(path, preload=policy is not LoadPolicy.LAZY)
+        return self._postprocess_raw(path, raw)
 
     def open(self, path: Path, policy: LoadPolicy = LoadPolicy.HEADER_ONLY) -> Recording:
-        """打开：头 + 事件一次读出（事件在头里，不增加数据 IO）."""
+        """打开：头 + 事件一次读出（事件在头里，不增加数据 IO）.
+
+        path 先归一为 Path（坑 #9：调用方可能传 str，如 meta.path 从
+        JSON 反序列化回来——common_meta_fields 的 stat() 对 str 会炸）。
+        """
+        path = Path(path)
         raw = self._read(path, preload=False)
         events = self.events_from_raw(raw)
         meta = self._meta_from_raw(path, raw, events)
@@ -181,10 +248,14 @@ class _MneRawReader(BaseReader):
 
 @register_reader
 class EdfReader(_MneRawReader):
-    """EDF / EDF+（PhysioNet 临床 EEG 等）——latin1 自动回退.
+    """EDF / EDF+（PhysioNet 临床 EEG 等）——latin1 自动回退 + 非标单位兜底.
 
     注意：内容为 BDF 的 .edf 文件不会到这里——registry 魔数派发会直接
     给 BdfReader（sheep 系列即此情况）。
+
+    非标单位兜底（坑 #62）：头 physical_dimension 写成白名单外单位串
+    （如 sheep4 新设备的 'AuV'）时 mne 按伏特解读、幅值放大 10⁶——本类
+    在 load_raw 后按 µV 缩放受影响通道，并经 meta.notes 打待提示标记。
     """
 
     reader_id = "edf"
@@ -193,6 +264,50 @@ class EdfReader(_MneRawReader):
     _read_fn = staticmethod(mne.io.read_raw_edf)
     _robust = True
     _extra = {"stim_channel": "auto"}
+
+    def _postprocess_raw(self, path: Path, raw):
+        """检出非标单位的数据通道后按 µV 兜底缩放（详见类 docstring）.
+
+        LAZY 请求也强制整载——lazy raw 数据按需从文件读，无法原地修正；
+        非标单位文件属异常件（罕见），整载换正确性值得。通道名映射不上
+        （被 mne exclude/unique 改名）的通道跳过并仅记 debug 日志。
+        """
+        bad = _scan_nonstandard_edf_units(path)
+        if not bad:
+            return raw
+        index = {name: i for i, name in enumerate(raw.ch_names)}
+        hits = [(n, u) for n, u in bad.items() if n in index]
+        if not hits:
+            logger.debug("EDF 非标单位通道未出现在 raw 通道表中，跳过缩放：%s", bad)
+            return raw
+        if not raw.preload:
+            raw.load_data()
+        for name, _unit in hits:
+            raw._data[index[name]] *= _UNIT_FALLBACK_SCALE
+        detail = "、".join(f"{n}「{u}」" for n, u in hits[:4])
+        if len(hits) > 4:
+            detail += " 等"
+        logger.warning(
+            "EDF 物理单位字段非标（%s，共 %d 通道）：mne 不识别该单位会按伏特"
+            "解读（幅值大 10⁶ 倍），已按微伏(µV)兜底缩放 ×1e-6；请复核量纲，"
+            "根治可用 scripts/fix_edf_unit.py 生成修正副本", detail, len(hits),
+        )
+        return raw
+
+    def _meta_from_raw(self, path: Path, raw, events: EventTable) -> RecordingMeta:
+        """meta 构建上叠加"非标单位已兜底"标记（UI 弹一次告知框后清除标记）."""
+        meta = super()._meta_from_raw(path, raw, events)
+        bad = _scan_nonstandard_edf_units(path)
+        if bad:
+            detail = "、".join(f"{n}「{u}」" for n, u in list(bad.items())[:3])
+            if len(bad) > 3:
+                detail += " 等"
+            note = (
+                f"{EDF_UNIT_FLAG}单位字段非标（{detail}，共 {len(bad)} 通道），"
+                "已按 µV 兜底"
+            )
+            meta.notes = f"{meta.notes}；{note}" if meta.notes else note
+        return meta
 
 
 @register_reader

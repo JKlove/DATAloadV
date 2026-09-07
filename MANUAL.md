@@ -8,7 +8,7 @@
 > **版本基线**：v1（里程碑 M0–M5 全部完成）+ M6 浏览体验优化（2026-08-18）+ M6.5 读取派发魔数校验（2026-08-24）
 > + v2 方向：M7 信号质量体检（2026-08-28）+ M8 分段分析可视化（2026-08-28）
 > + M8.1 三锚定分段+时频观感+单段浏览（2026-08-28）+ M8.2 视图观感精修（2026-08-28）；
-> 验证口径：pytest 287 绿 + e2e_m1–m9·m81 共 143 项 + GUI 冒烟全过。
+> 验证口径：pytest 298 绿 + e2e_m1–m9·m81 共 143 项 + GUI 冒烟全过。
 
 ---
 
@@ -203,7 +203,7 @@ dataloadv            # 或 python -m dataloadv
 
 | 命令 | 预期 |
 |---|---|
-| `pytest` | 287 passed（含真实数据项；含 MainWindow 级 UI 测试，**须 `QT_QPA_PLATFORM=offscreen`**） |
+| `pytest` | 298 passed（含真实数据项；含 MainWindow 级 UI 测试，**须 `QT_QPA_PLATFORM=offscreen`**） |
 | `python scripts/smoke_gui.py` | 末行 SMOKE OK（真窗口自检后自动退出） |
 | `python scripts/e2e_m1.py` … `e2e_m8.py` | 各打印 ALL OK（真实数据端到端，幂等可反复跑；m1 含 M6 浏览交互 22 项） |
 | `python scripts/e2e_m7.py` | ALL OK（16 项；质量体检真实黄金标准：羊/TPDJ 浏览器路径 + 特征/导出链，幂等） |
@@ -288,6 +288,11 @@ pyproject.toml）。
 - **工作区**：导入来源 → 录制 两级树；关窗自动保存，下次启动原样恢复；重复导入自动去重。
 - **采样率询问**：CSV/TXT/HDF5 等文件内不含采样率时，打开浏览会弹「设定采样率」输入框
   （默认 250 Hz）——**同一文件只需输一次**，选择记住后此后直接使用（存 `~/.dataloadv/table_fs.json`）。
+- **EDF 单位兜底告知**：某些设备导出的 EDF 头物理单位字段写错（如 sheep4 新设备的
+  `AuV`，本意微伏）——mne 不识别会按伏特解读、幅值显示放大 10⁶ 倍。应用读取时
+  **自动按微伏（µV）兜底缩放**，打开时弹一次「EDF 单位字段非标准」告知框（之后不再
+  提示，说明留在元数据 notes 与日志）。若幅值仍与预期不符，可用仓库脚本
+  `scripts/fix_edf_unit.py` 生成字节级修正副本（数据零改动）。
 
 ### 3.4 元数据表与工作区树
 
@@ -535,7 +540,7 @@ sidecar（extra.batch 记 n_files/n_workers/files_written/raw_files_written）�
 ### 4.3 测试体系
 
 ```bash
-QT_QPA_PLATFORM=offscreen pytest   # 全部 287 项（有 MainWindow 级测试，须 offscreen）
+QT_QPA_PLATFORM=offscreen pytest   # 全部 298 项（有 MainWindow 级测试，须 offscreen）
 pytest -m real            # 仅真实数据冒烟（data/sheep 缺失自动跳过）
 pytest tests/test_proc_m3.py -k "epoching"   # 单文件/单关键字
 QT_QPA_PLATFORM=offscreen python scripts/e2e_m5.py   # 无头跑端到端

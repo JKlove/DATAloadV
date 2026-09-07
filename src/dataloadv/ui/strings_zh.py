@@ -175,6 +175,14 @@ class S:
         "请输入该数据的采样率（Hz）。\n（记住一次，之后直接使用）"
     )
 
+    # ===== EDF 非标单位兜底告知（坑 #62，sheep4 'AuV'；io.EDF_UNIT_FLAG 配套）=====
+    EDF_UNIT_TITLE = "EDF 单位字段非标准"
+    EDF_UNIT_MSG_FMT = (
+        "「{name}」{detail}。\n\n"
+        "若幅值与预期不符，可用仓库脚本 scripts/fix_edf_unit.py\n"
+        "生成修正副本（字节级只改头内单位字段，数据零改动）。"
+    )
+
     # ===== M3：处理管线面板 =====
     PIPE_BTN_ADD = "添加步骤"
     PIPE_BTN_REMOVE = "删除"

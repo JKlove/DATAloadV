@@ -29,6 +29,7 @@ from PySide6.QtWidgets import (
 
 from .. import __version__
 from ..core.fs_store import FsStore
+from ..io.mne_readers import EDF_UNIT_FLAG
 from ..io.registry import open_file
 from ..io.table import FS_UNSET_NOTE
 from ..proc.context import ProcessingContext
@@ -230,6 +231,8 @@ class MainWindow(QMainWindow):
         if FS_UNSET_NOTE in rec.meta.notes and not self._ask_sample_rate(rec):
             self.statusBar().showMessage(S.STATUS_READY)
             return
+        if EDF_UNIT_FLAG in rec.meta.notes:
+            self._notify_edf_unit_fallback(rec)
         self.state.attach_open(rec)
         self.statusBar().showMessage(S.STATUS_READY)
 
@@ -255,6 +258,25 @@ class MainWindow(QMainWindow):
             self.meta_view.refresh(self.state.workspace.all_metas())
         logger.info("采样率已设定：%s → %s Hz（已记忆）", rec.meta.filename, fs)
         return True
+
+    def _notify_edf_unit_fallback(self, rec) -> None:
+        """EDF 非标单位兜底的一次性告知（io 层已在读取时按 µV 缩放）.
+
+        弹一次 information 后从 meta.notes 清掉待提示标记（说明文本本体
+        留档），工作区同名 meta 同步——与 _ask_sample_rate 的清标记同款。
+        """
+        body = rec.meta.notes.replace(EDF_UNIT_FLAG, "").strip("；; ")
+        QMessageBox.information(
+            self, S.EDF_UNIT_TITLE,
+            S.EDF_UNIT_MSG_FMT.format(name=rec.meta.filename, detail=body),
+        )
+        rec.meta.notes = body
+        ws_meta = self.state.workspace.find_by_path(rec.meta.path)
+        if ws_meta is not None:
+            ws_meta.notes = body
+            self.state.workspace.save()
+            self.meta_view.refresh(self.state.workspace.all_metas())
+        logger.info("已告知 EDF 非标单位兜底：%s", rec.meta.filename)
 
     def _on_recording_opened(self, rec) -> None:
         """建浏览 tab（SessionState.recording_opened 的唯一消费者）."""
