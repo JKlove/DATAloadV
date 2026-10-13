@@ -100,6 +100,13 @@ class S:
     TIME_FMT = "{t:.2f} s / {total:.1f} s"
     LOAD_FAILED_TITLE = "打开失败"
 
+    # ===== M11：事件 marker 列表（浏览器底部横条，双击行跳转波形）=====
+    COL_EVENT_IDX = "#"
+    COL_EVENT_NAME = "名称"
+    COL_EVENT_TIME = "时间 (s)"
+    COL_EVENT_SAMPLE = "样本点"
+    COL_EVENT_DURATION = "持续 (s)"
+
     # ===== M6：浏览器窗口导航 + 浅色主题配色 =====
     BTN_GO_FIRST = "|◀ 最前"
     BTN_PREV_PAGE = "◀ 上一屏"

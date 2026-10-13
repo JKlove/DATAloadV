@@ -338,3 +338,22 @@ Qt 6.x 后续版本须换 `filterInvalidated` 信号或 `beginFilterChange`，�
 - 2b GDF 头自带 highpass 100 > lowpass 0.5 触发 mne RuntimeWarning（每文件两条，无害）；如需清净可在读取器预处理 info（暂缓——不改数据语义，仅日志噪音）
 - **白底对比度人工目检**：M6 换色均按白底可辨原则挑选并有测试覆盖存在性，但整体观感（如网格浓度、事件色区分度）未做截图级人工评审——用户日常使用中如有个别颜色不顺眼，改 strings_zh/各控件色值即可（均为一处常量）
 - **clinicaldata 事件通道核查**（2026-08-28 更新）：通道质量诊断已完成且**可复跑**——M6.7b 手工定论（DATA_NOTES §8）+ M7 质量体检自动复现并精化（TPDJ-位置1 全坏、02号脑电 2 文件已入册诊断）；仅剩 BDF TAL 注释/事件有无待用到的场合再核查
+
+## M11 事件 marker 列表（✅ 完成 2026-09-24：浏览器底部横条 + 双击行跳转波形）
+
+- [x] M11-1 `ui/widgets/event_list.py`：EventListView（QTableView+Model+Proxy 照 meta_table
+      先例）——5 列 #/名称/时间(s)/样本点 round(onset×fs)/持续(s)；名称优先 label（GDF 已
+      中文）退化 code，前景色与波形事件竖线同源 event_color；数值列 UserRole 数值排序（坑 #30）
+- [x] M11-2 signal_browser 布局：root 直排改 QSplitter(Vertical)（上=通道列表+gfx，下=事件
+      列表默认 ≈4-5 行高可拖高、波形 setCollapsible(False)）；`_populate_channels` 与
+      EventLane 同时机挂载（面板常驻；无事件显示空态——2026-09-24 用户裁定改，
+      同日实现：控件内空态覆盖层 S.EVENT_LANE_NONE）；
+      teardown 清空防跨录制残留
+- [x] M11-3 双击行 → `jump_requested(onset)` → 复用 `_center_at`——事件线/时间标签/总览
+      滑块经 sigRangeChanged 链自动联动；初始排序显式定时间列升序（坑 #63）
+- [x] M11-4 测试：test_ui_event_list.py 7 项（列文本/label 退化/数值排序/双击信号/名称
+      配色/浏览器面板可见·行数/无事件隐藏+双击 T2 居中 30s）；pytest 305 绿零回归
+- [x] M11-5 e2e_m1 +3 项（S001R03 面板可见/行数 30/双击首事件视口中心 0.000s）→ 26 项
+      ALL OK + smoke 回归
+- [x] M11-6 治理七文件同步（STATUS/MANUAL §1.2·§3.5/README/plan/TODO/review/HANDOFF
+      坑 #63+架构树）

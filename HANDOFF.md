@@ -148,7 +148,9 @@ src/dataloadv/
     ├── dialogs/import_dialog.py   # 导入控制器：worker 扫描→进度→错误表
     ├── dialogs/batch_dialog.py    # 批处理两页对话框：选择(过滤/全选/导出组)↔运行；queue.Queue+QTimer 事件泵（M5）
     ├── dialogs/settings_dialog.py # 设置：线程数/缓存 GB/默认导出目录（M5）
-    └── widgets/             # workspace_tree / meta_table / signal_browser / event_lane / log_panel
+    └── widgets/             # workspace_tree / meta_table / signal_browser / event_lane /
+                              #   event_list（M11 事件 marker 列表：双击行 _center_at 定位）/
+                              #   log_panel
                               #   + params_form（pydantic 自动表单，步骤/特征共用——step_id 别名零改动）
                               #   + pipeline_panel（步骤链+特征链+预览+PSD+「用当前显示窗口」预填）
                               #   + psd_view / epochs_preview
@@ -248,6 +250,8 @@ src/dataloadv/
 61. **初始窗口尺寸硬编超屏 + Dock 首布局用构建期 hint（M10 后 Windows 真机反馈，2026-09-01 修复）**：`self.resize(1440, 900)` 在 1366×768 笔记本或 1080p@125% 缩放（有效逻辑高 864）上**超出屏幕**——右侧处理 Dock（面板最小宽实测 419，@125% ≈524）被屏幕边缘直接裁掉；用户"全屏→恢复正常"的机理：最大化触发 QMainWindow 整体重排、还原后 Dock 保持适配尺寸。修复两件套（main_window.py）：①初始尺寸按主屏 `availableGeometry()` 收口并居中（大屏保持 1440×900）；②`showEvent` 首次显示时 `resizeDocks` 按面板**当时**（过 DPI/字体 polish 的）`sizeHint` 显式定左右 Dock 宽（自动下限=面板最小宽，不会压瘪）——QMainWindow 首布局用的是构建期 sizeHint，Windows 高 DPI 下与 polish 后的真实值有偏差。**测试坑**：offscreen 平台默认屏 800×800（正好是小屏模拟），但本 PySide6 6.11 构建忽略 `QT_QPA_PLATFORM=offscreen:screenSize=WxH` 参数（实测恒 800×800）——大屏用例只能打桩模块级 `QGuiApplication`（沿坑 #31/#54 patch 先例），测试见 test_ui_window_sizing.py。
 
 62. **EDF 头 physical_dimension 写非标单位串 = 幅值显示放大 10⁶（sheep4 定论 + 应用兜底，2026-09-07）**：新设备导出的 `ZJDJ-260906-0101.edf` 把 16 通道单位字段全写成 **`AuV`**——mne/edfio 的单位白名单不认它，读取时**不换算、物理值裸当伏特**，应用比例尺显示 10⁶ µV（数据实际 std≈1.2，本意微伏）。**排查指纹**：①比例尺/幅值比预期大 10⁶ 倍；②`edfio.read_edf` 逐信号看 `physical_dimension` 是否在 `uV/mV/V` 等标准串内；③数字值 std 极小（~6 LSB）说明信号本身没饱和没坏。**双修复**：A）`scripts/fix_edf_unit.py`——字节级只改头内单位字段（布局按坑 #44 字段主序，dim 区 `256+ns*96`，每信号 8B；逐通道 `--from` 精确匹配防误伤、Annotations 空字段自动跳过），数据区零改动（ADC 数字值逐位一致实证），输出 `_fixed.edf` 副本、原文件不动（data/ 只读）；B）**应用内自动兜底**（`io/mne_readers.py` EdfReader）——load_raw 后 `_scan_nonstandard_edf_units` 扫头（几百字节），非标数据通道按 µV 缩放 ×1e-6 + warning + meta.notes 打 `EDF_UNIT_FLAG` 待提示标记，UI 打开时弹一次告知框后清标记（main_window._notify_edf_unit_fallback，FS_UNSET 同款机制）；**B 与 A 殊途同归**（兜底读原文件 == mne 读修复副本，allclose 实证）。**实现要点**：mne 白名单 = µV 三种码位变体/uV/mV，"V" 本义伏特也归标准、空单位不猜（语义未知）；`read_raw_edf` 的 `units=` 参数**不能覆盖已写单位**（文件有单位且与传入不同直接 ValueError）——只能读后缩放；LAZY 请求在非标件上强制整载（lazy 数据按需从文件读无法原地修正，非标件罕见整载换正确性值得）；正常件路径零改动（lazy 保持、数值逐位一致）。测试 test_io_edf_unit_fallback.py 8 项（含 MainWindow 弹窗清标记，win fixture 三重隔离）。**注意**：EDF 头里"数字值→物理值"换算由 phys/digital min/max 决定（这个设备写对了），单位字段只影响读入方的**量纲解释**——所以错单位不动数据、改标签即愈。
+
+63. **`QTableView.setSortingEnabled(True)` 会触发一次隐式初始排序，行为不可依赖（M11 实测）**：本 PySide6 6.11 构建实测启用时按**第 0 列降序**排（Qt 文档未承诺此行为，proxy 初始顺序因此不确定）——事件列表首跑双击"行 2"实际命中 source 行 0。规则：①启用排序后**必须 `horizontalHeader().setSortIndicator(列, 序)` 显式定初始序**（本项定为时间列升序=事件清单天然序），箭头显示与实际排序一致；②测试/调用方**不得硬编码 proxy 行号**——按业务键（如 onset）经 `onset_at_row` 反查目标行；③显隐断言用 `isHidden()`（显式 setVisible 语义）而非 `isVisible()`——offscreen 下顶级窗口未 show，isVisible 恒 False。
 
 ## 当前接手要点（2026-09-01，M10 双平台打包机器验证完成、人工验收与 CI push 待办）
 

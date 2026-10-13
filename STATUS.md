@@ -1,8 +1,22 @@
 # STATUS — 项目状态快照
 
-> 本文件回答"现在做到哪了"。每里程碑完成及重要提交后更新。最后更新：2026-09-01（M10 双平台打包 **✅ 完成**：本机 macOS 包 + CI Windows 包均真人验收过，全链路收官）
+> 本文件回答"现在做到哪了"。每里程碑完成及重要提交后更新。最后更新：2026-09-24（M11 事件 marker 列表 **✅ 完成**：浏览器底部横条 + 双击行跳转波形）
 
 ## 当前里程碑
+
+- **M11 事件 marker 列表：✅ 完成（2026-09-24）**——用户需求（截图红圈指示事件条
+  区域）：有标记的数据要能看到事件清单（name/time/latency），双击行快速定位波形。
+  新控件 `ui/widgets/event_list.py`（`EventListView`：QTableView+Model+Proxy 照
+  meta_table 先例，5 列 #/名称/时间(s)/样本点/持续(s)；名称优先 label（GDF 已中文）
+  退化 code 且**前景色 = event_color 与波形事件竖线同色**；数值列 UserRole 数值排序
+  坑 #30）；浏览器 `_build_ui` 主布局改 QSplitter(Vertical)——上=原 center（通道列表
+  +gfx），下=事件列表（默认 ≈4-5 行高、可拖高、波形不可压瘪），**无事件面板常驻显示
+  空态「无事件」**（2026-09-24 用户裁定改自动隐藏——控件内空态覆盖层，表头保留）；**双击行 → `jump_requested(onset)` → 复用 `_center_at`**——
+  事件线/时间标签/总览滑块全部经 sigRangeChanged 链自动联动，零额外同步代码。
+  验证：pytest **305 绿**（+7，test_ui_event_list.py：列文本/label 退化/数值排序/
+  双击信号/名称配色/浏览器集成三态）+ e2e_m1 **27 项**（+4：S001R03 面板可见、
+  行数 30、双击首事件视口居中 0.000s、羊无事件面板常驻空态）+ smoke；**新坑 #63**（setSortingEnabled 隐式
+  初始排序行为不可依赖——必须 setSortIndicator 显式定初始序）。
 
 - **M10 双平台打包（PyInstaller）：✅ 完成（2026-09-01）**——按
   PACKAGING_HANDOFF.md 执行。**macOS 本机**：`dataloadv.spec`（单份跨平台，darwin 出 .app /
@@ -108,6 +122,7 @@
 | M8.3 特征结果图表区 | ✅ 完成 | 2026-08-30 | welch_psd 逐通道+时间窗（通道平均语义废除）+结果 tab 表+图表（PSD log-log/特征柱状网格、分段按事件码聚合）；批处理同享；pytest 271 / e2e_m4 19 项 |
 | M9 预处理后连续数据导出 | ✅ 完成 | 2026-08-31 | continuous_io（EDF channelwise 16-bit/FIF float32 _raw 后缀+类型白名单·标签长度前置守卫）；单文件面板/菜单+批处理逐文件（epoching 跳过+失败降级+只勾 raw 不写特征文件）；pytest 287 / e2e_m9 16 项 |
 | M10 双平台打包 | ✅ 完成 | 2026-09-01 | PyInstaller 6.22.2 单份 spec 跨平台 + entry.py shim + app `--smoke` 自检；macOS .app 293MB/zip 119MB/构建 42s，offscreen 冒烟+真窗口存活+PYZ 依赖核实全过、pytest 287 零回归、用户实测验收过；CI 修复（坑 #60）后重跑双绿（win64 136MB/macOS 94MB），**Windows 真机真人验收通过**；瘦身取消；工作区隐私清理（01/02号脑电·羊数据 59 条清出索引） |
+| M11 事件 marker 列表 | ✅ 完成 | 2026-09-24 | 浏览器底部横条 QSplitter（5 列 #/名称/时间/样本点/持续；名称色=事件线色）；双击行 `_center_at` 定位全联动；无事件面板常驻空态；坑 #63 初始排序显式化；pytest 305 / e2e_m1 27 项 |
 
 ## 环境
 
@@ -116,7 +131,7 @@
 
 ## 测试
 
-- `QT_QPA_PLATFORM=offscreen pytest`：**298 passed**（v0.1.1 后 290 + **2026-09-07 净增 8**：EDF 非标单位兜底（AuV 件按 µV 缩放/LAZY 强制整载/meta 标记/正常件零扰动+保持 lazy/mV·V 白名单不碰/空单位不猜/MainWindow 弹窗一次+清标记+ws 同步——test_io_edf_unit_fallback.py）。历史累计：M9 后 287（M9 净增 16：连续导出 8（EDF 往返 rtol 1e-3/prefiltering 头 highpass=1 往返/FIF 往返 rtol 1e-6+annotations 3 条/未知 fmt 拒/超长名拒/非 ASCII 名拒/misc 类型拒/平坦通道可导/单通道双格式）+ 面板守卫 2（无 ctx 提示/stage=epochs 指向分段导出）+ 批处理 5（wants_export 四开关语义/epochs 管线跳过+日志/引擎级 3 文件每文件 _proc.edf+sidecar kind=raw+files_written 汇总/导出失败降级日志特征照算/**只勾 raw 不产特征 CSV·H5——run() 分支修正的回归哨兵**）；M8.3 净增 10：welch 语义 5 + 导出 2 + 图表区 3；M8.2 净增 4；M8.1 净增 15（epoching 锚定 9 + 预览 6）；M8 净增 29（tfr 17 + 四视图 8 + bandpower 4）；M7 后 213。**须 offscreen：MainWindow 级测试在 macOS 真窗口模式会挂住**）
+- `QT_QPA_PLATFORM=offscreen pytest`：**305 passed**（2026-09-07 后 298 + **M11 净增 7**：事件列表（列文本+label 空退化 code/样本点换算/数值 UserRole 排序 100.0 vs 20.0/双击发射 onset/名称色=event_color/浏览器面板可见+行数 3/无事件隐藏+双击 T2 视口居中 30s——test_ui_event_list.py）。2026-09-07 净增 8：EDF 非标单位兜底（AuV 件按 µV 缩放/LAZY 强制整载/meta 标记/正常件零扰动+保持 lazy/mV·V 白名单不碰/空单位不猜/MainWindow 弹窗一次+清标记+ws 同步——test_io_edf_unit_fallback.py）。历史累计：M9 后 287（M9 净增 16：连续导出 8（EDF 往返 rtol 1e-3/prefiltering 头 highpass=1 往返/FIF 往返 rtol 1e-6+annotations 3 条/未知 fmt 拒/超长名拒/非 ASCII 名拒/misc 类型拒/平坦通道可导/单通道双格式）+ 面板守卫 2（无 ctx 提示/stage=epochs 指向分段导出）+ 批处理 5（wants_export 四开关语义/epochs 管线跳过+日志/引擎级 3 文件每文件 _proc.edf+sidecar kind=raw+files_written 汇总/导出失败降级日志特征照算/**只勾 raw 不产特征 CSV·H5——run() 分支修正的回归哨兵**）；M8.3 净增 10：welch 语义 5 + 导出 2 + 图表区 3；M8.2 净增 4；M8.1 净增 15（epoching 锚定 9 + 预览 6）；M8 净增 29（tfr 17 + 四视图 8 + bandpower 4）；M7 后 213。**须 offscreen：MainWindow 级测试在 macOS 真窗口模式会挂住**）
 - `python scripts/e2e_m1.py`：**ALL OK（22 项）**——sheep + S001 真实导入 → 浏览 → 释放（幂等总量断言）；M6 追加 5 项 + M6.5 追加 1 项（羊数据按 BDF 解码：魔数优先于扩展名）+ M6.8 追加 3 项（±1s 平移/绝对模式 y 自适配/总览滑块跟随视口）
 - `python scripts/e2e_m7.py`：**ALL OK（16 项）×2 幂等**——羊浏览器体检（4 bad 全复用→Yes 自动标坏道→列表 ✗/✓ 前缀→tooltip 明细→按钮恢复）/ TPDJ-位置1 八通道全坏 / 特征链（注册表→FeatureTable→CSV·HDF5 回读分级一致）；**须逐模块 patch signal_browser.QMessageBox**（该模块 M7 起有模块级引用，MainWindow 的 patch 罩不到）
 - `python scripts/e2e_m2.py`：**ALL OK（17 项）**——4.9GB dataset 扫描 5.2s / 识别 1606 条 / 3 条已知结构报错 / 六格式（EDF/GDF 2a/GDF 2b/ds1/ds4/CSV）逐个打开均有真实曲线 / GDF 中文标签 / 六 tab 关闭释放
@@ -297,6 +312,21 @@
    macOS 右键→打开（或 `xattr -cr DataloadV.app`）；Windows "更多信息→仍要运行"
 
 ## 最近变更记录（新条目加在最上面）
+
+- 2026-09-24（M11 完成，用户截图红圈需求驱动）：**事件 marker 列表**——新控件
+  `ui/widgets/event_list.py`（EventListView：5 列 #/名称/时间(s)/样本点 round(onset×fs)/
+  持续(s)；名称优先 label 退化 code，**前景色与波形事件竖线同源 event_color**；数值列
+  UserRole 数值排序坑 #30）；signal_browser 主布局 root 直排改 **QSplitter(Vertical)**
+  （上=通道列表+gfx，下=事件列表默认 ≈4-5 行高可拖高、波形 setCollapsible(False)），
+  `_populate_channels` 挂载（与 EventLane 同时机：`set_events`+`setVisible(len>0)`——
+  同日用户裁定面板常驻、无事件显示空态覆盖层——`setVisible(len>0)` 已废除），teardown
+  清空防跨录制残留；**双击行 jump_requested(onset)
+  → 复用 `_center_at`**——事件线/时间标签/总览滑块经 sigRangeChanged 链自动联动零额外
+  同步。**坑 #63**：`setSortingEnabled(True)` 触发隐式初始排序（本 PySide6 构建实测按
+  第 0 列降序，Qt 未承诺此行为）——必须 `setSortIndicator` 显式定初始序（定为时间列
+  升序），测试不得硬编码 proxy 行号。验证：pytest **305 绿**（+7）+ e2e_m1 **26 项**
+  （+3：S001R03 面板可见/行数 30/双击首事件视口中心 0.000s）+ smoke 零回归。治理七文件
+  同步（MANUAL §1.2·§3.5/README/plan/TODO/review/HANDOFF 坑 #63+架构树）。
 
 - 2026-09-07（数据诊断 + 双修复，用户"sheep4 幅值比预期大 10⁶ 倍"提问驱动）：**定论非读取 bug**——`sheep4/ZJDJ-260906-0101.edf`（新设备真 EDF：16 导 500Hz 332s，非 sheep 系列 BDF）头 physical_dimension 字段 16 通道**全写 `AuV`**，mne/edfio 单位白名单不认 → 不换算裸当伏特 → 显示 10⁶ µV；数据本身没坏（数字值 std ~6 LSB，按声明量程 std≈1.2，后缀 uV 表本意微伏）。**修复 A（数据副本）**：`scripts/fix_edf_unit.py`（字节级只改头内 16 个单位字段共 48 字节，`--from` 精确匹配防误伤，输出副本拒绝覆盖）生成 `ZJDJ-260906-0101_fixed.edf`——三重验证过：差异字节全在 dim 区/16 通道 ADC 数字值逐位一致/mne 读回 std≈1.2µV；原文件未动（data/ 只读）。**修复 B（应用内自动兜底，用户拍板追加）**：EdfReader.load_raw 后扫头检出非标单位数据通道 → 按 µV 缩放 ×1e-6 + 中文 warning + meta.notes 打待提示标记（UI 打开弹一次告知框后清除，FS_UNSET 同款机制）；mne 白名单（µV 变体/uV/mV，"V" 归标准）外才兜底、空单位不猜；LAZY 非标件强制整载（无法原地修正），正常件路径零改动；`units=` 参数不能覆盖已写单位（mne ValueError 实证）故走读后缩放。**A/B 殊途同归实证**：兜底读原文件 == mne 读修复副本（allclose）。验证：pytest **298 绿**（+8：兜底数值/白名单不动/空单位不猜/正常零扰动/meta 标记/MainWindow 弹窗清标记——test_io_edf_unit_fallback.py）；首次全量跑撞坑 #57⑥ 偶发竞态（期间并发验证脚本，224 位 E+挂死，kill 重跑 298 绿 6.3s 全清）。HANDOFF 坑 #62、DATA_NOTES §1 sheep4 条目、MANUAL §3.3 告知框说明入册。
 

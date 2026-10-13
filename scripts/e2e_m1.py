@@ -130,6 +130,11 @@ def main() -> int:
                 t0r, t1r = v._visible_range()
                 check("M6.8 总览滑块跟随视口",
                       abs(r0 - t0r) < 1e-3 and abs(r1 - t1r) < 1e-3)
+                # M11：无事件数据（羊 BDF 无标记）事件列表面板常驻显示空态
+                check("M11 无事件面板常驻空态",
+                      (not v._event_list.isHidden())
+                      and v._event_list.row_count() == 0
+                      and (not v._event_list._empty_lbl.isHidden()))
         finally:
             QTimer.singleShot(300, _stage4)
 
@@ -158,6 +163,18 @@ def main() -> int:
                 t0, t1 = v._visible_range()
                 check("跳转后可视区含事件（事件线非空）",
                       len(v._event_lines) > 0 or len(v.rec.events.in_window(t0, t1)) == 0)
+                # M11 事件 marker 列表：面板可见、行数=事件数、双击行 → 视口居中该事件
+                check("事件列表面板可见（有事件时）", not v._event_list.isHidden())
+                check("事件列表行数 = 事件数", v._event_list.row_count() == 30,
+                      f"(实际 {v._event_list.row_count()})")
+                target = float(v.rec.events.onset.min())
+                row = next((r for r in range(v._event_list.row_count())
+                            if v._event_list.onset_at_row(r) == target), 0)
+                v._event_list._on_double_click(v._event_list._proxy.index(row, 0))
+                dt0, dt1 = v._visible_range()
+                check("双击列表行跳转到该事件（视口居中）",
+                      abs((dt0 + dt1) / 2 - target) < 1e-6,
+                      f"(中心 {(dt0 + dt1) / 2:.3f} vs 事件 {target:.3f})")
         finally:
             QTimer.singleShot(300, _finish)
 

@@ -1044,3 +1044,43 @@ fixture 收窄 `channels=["EEG00"]` 保 1 条下游零改，新增窗进列头/a
 - 测试坑：本 PySide6 6.11 构建 offscreen 忽略 `screenSize=WxH` 参数（实测恒 800×800），
   大屏用例打桩模块级 `QGuiApplication`。
 - 待办：发新版（版本号+tag）出包 → 用户 Windows 笔记本复验小屏布局。
+
+## M11 — 事件 marker 列表（2026-09-24 完成，用户截图红圈需求驱动）
+
+### 做了什么
+
+- `ui/widgets/event_list.py` 新建：`_EventListModel`（5 列 #/名称/时间/样本点/持续；
+  数值列 UserRole 数值——坑 #30；名称 label 中文优先退化 code + ForegroundRole 用
+  event_color 与波形事件竖线同色）+ `EventListView`（QTableView+QSortFilterProxyModel
+  照 meta_table 先例；`jump_requested(float)` 双击行经 proxy→source 映射发射——
+  meta_table 双击开 tab 同款路径；`onset_at_row` 供调用方反查）。
+- `signal_browser.py`：`_build_ui` 主布局 root 直排改 **QSplitter(Vertical)**——上=原
+  center（通道列表+gfx）包 QWidget，下=EventListView（setSizes [1000,140] ≈4-5 行高、
+  波形 setCollapsible(False)、列表可收细）；`_populate_channels` 尾部与 `_lane.set_events`
+  同时机挂载（`set_events`+`setVisible(len>0)`）；teardown 清空断数据引用。
+- 双击行跳转 = `jump_requested.connect(self._center_at)` 一行——`_center_at` →
+  `_plot.setXRange` → sigRangeChanged 链自动联动事件线/时间标签/总览滑块，零额外同步。
+- strings_zh.py 新增 COL_EVENT_* 5 条（M11 区块）。
+
+### 发现的问题与修正
+
+- **坑 #63**：`setSortingEnabled(True)` 触发隐式初始排序（本 PySide6 6.11 构建实测按
+  第 0 列**降序**，Qt 未承诺）——首跑测试双击"proxy 行 2"实际命中 source 行 0。修正：
+  启用后 `setSortIndicator(2, Ascending)` 显式定时间列升序；测试改按 onset 反查行号，
+  不硬编码 proxy 行。
+- 测试 ERROR 一轮：BrowserIntegration 用了 test_ui_browser_m6 里的 `browser` fixture
+  但未在本文件定义——fixture 定义复制进本文件（synthetic_raw 来自 conftest 共享）。
+
+### 验证
+
+- pytest **305 绿**（+7：tests/test_ui_event_list.py——列文本与 label 退化/样本点换算/
+  数值排序 100.0 vs 20.0/双击发射 onset/名称色=event_color/浏览器面板可见+3 行/无事件
+  隐藏/双击 T2 视口中心 30.0±1e-6）。
+- e2e_m1 **26 项 ALL OK**（+3：S001R03 事件列表面板可见、行数=30、双击 onset 最小行
+  视口中心 0.000 vs 事件 0.000）；smoke_gui SMOKE OK。
+- 显隐断言口径：`isHidden()`（显式 setVisible 语义）而非 `isVisible()`（offscreen 顶级
+  未 show 恒 False）——已写进坑 #63。
+
+### 计划偏离
+
+- 无——布局经 AskUserQuestion 用户拍板"底部横条（推荐）"，其余按批准计划执行。

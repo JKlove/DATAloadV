@@ -53,15 +53,17 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QSlider,
+    QSplitter,
     QVBoxLayout,
     QWidget,
 )
 
-from ...core.recording import LoadPolicy, Recording
+from ...core.recording import EventTable, LoadPolicy, Recording
 from ...features.qc import QualityCheckParams, compute_channel_qc
 from ...workers.generic import run_in_thread
 from ..strings_zh import S
 from .event_lane import EventLane, event_color
+from .event_list import EventListView
 
 logger = logging.getLogger(__name__)
 
@@ -342,9 +344,24 @@ class SignalBrowserView(QWidget):
         center.addWidget(self._ch_list)
         center.addWidget(self._gfx, 1)
 
+        # 事件 marker 列表（M11）：底部横条，默认约 4-5 行高、可拖高；
+        # 双击行 → jump_requested → _center_at 定位（事件线/滑块自动联动）。
+        # 面板常驻（2026-09-24 用户裁定）：无事件数据显示空态"无事件"
+        self._event_list = EventListView()
+        self._event_list.jump_requested.connect(self._center_at)
+        center_widget = QWidget()
+        center_widget.setLayout(center)
+        split = QSplitter(Qt.Orientation.Vertical)
+        split.addWidget(center_widget)
+        split.addWidget(self._event_list)
+        split.setStretchFactor(0, 1)   # 波形区弹性占主
+        split.setCollapsible(0, False)  # 波形不可被拖到压瘪
+        split.setSizes([1000, 140])    # 初始比例 ≈ 4-5 行列表高
+        split.setCollapsible(1, True)  # 列表可收细（配合拖拽）
+
         root = QVBoxLayout(self)
         root.addLayout(bar)
-        root.addLayout(center, 1)
+        root.addWidget(split, 1)
 
     def _plot_item(self) -> pg.PlotItem:
         """主图配置：时间轴秒、滚轮平移 ViewBox、y 轴锁定."""
@@ -396,6 +413,9 @@ class SignalBrowserView(QWidget):
         n = max(len(names), 1)
         self._plot.setYRange(-1.5 * self._spacing_uv, (n + 0.5) * self._spacing_uv, padding=0)
         self._lane.set_events(self.rec.events, dur)
+        # 事件 marker 列表（M11）：与事件条同源同挂载时机；面板常驻，
+        # 无事件由控件内部切空态提示（"无事件"）
+        self._event_list.set_events(self.rec.events, self.rec.meta.sfreq)
 
     # ------------------------------------------------------------------ 数据流
 
@@ -924,3 +944,6 @@ class SignalBrowserView(QWidget):
             self._plot.getViewBox().sigRangeChanged.disconnect(self._schedule_refresh)
         except (RuntimeError, TypeError):
             pass  # 未连接/已断开均视为正常
+        # 事件列表清空：模型持 EventTable 引用，断链助 GC（列表随 tab 销毁，
+        # 这里只断数据引用——防万一 teardown 后仍有异步回调摸到旧事件表）
+        self._event_list.set_events(EventTable(), 1.0)
