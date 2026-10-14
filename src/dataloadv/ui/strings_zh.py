@@ -107,6 +107,45 @@ class S:
     COL_EVENT_SAMPLE = "样本点"
     COL_EVENT_DURATION = "持续 (s)"
 
+    # ===== M12：浏览器四项（比例尺下拉 / 紧凑显示 / 事件面板左移 / 同段时频图）=====
+    LBL_SCALE = "比例尺 (µV)"
+    SCALE_AUTO = "自动"
+    LBL_SCALE_TIP = (
+        "相邻通道行的纵向间距（µV）。\n"
+        "自动 = 按数据振幅估计；固定值 = 锁定行距；\n"
+        "增益仍独立缩放波形本身。"
+    )
+    SCALE_CHOICES = ("1", "3", "5", "7", "10", "20", "30", "50",
+                     "100", "200", "500", "1000", "2000")
+    BTN_COMPACT = "优化显示选择通道"
+    BTN_COMPACT_RESET = "复位通道显示"
+    BTN_COMPACT_TIP = (
+        "只显示勾选通道并紧凑重排（不留空位、均匀铺满）；\n"
+        "复位 = 恢复全部通道显示与原布局。"
+    )
+    LBL_TFR_CHANNEL = "时频通道"
+    BROWSER_TFR_SHORT = "窗口过短（需 ≥{t:g} s）"
+    BROWSER_TFR_FAIL = "时频计算失败：{msg}"
+
+    # ===== M13：时频图改进（频率轴翻转+150Hz / 方法与参数调节窗）=====
+    BTN_TFR_SETTINGS = "时频设置…"
+    TFR_DLG_TITLE = "时频图设置"
+    TFR_LBL_METHOD = "方法"
+    TFR_METHOD_MORLET = "Morlet 复小波"
+    TFR_METHOD_MULTITAPER = "Multitaper 多锥"
+    TFR_METHOD_STOCKWELL = "Stockwell S 变换"
+    TFR_METHOD_STFT = "STFT 短时傅里叶"
+    TFR_LBL_FMIN = "频率下限 (Hz)"
+    TFR_LBL_FMAX = "频率上限 (Hz)"
+    TFR_LBL_NFREQ = "频率点数"
+    TFR_LBL_NCYC = "周期数系数（小 = 时间分辨率高）"
+    TFR_LBL_TB = "time_bandwidth（大 = 频率分辨率高）"
+    TFR_LBL_WIDTH = "width（大 = 频率分辨率高）"
+    TFR_LBL_WIN = "窗长 (s)"
+    TFR_LBL_OVERLAP = "重叠比例"
+    TFR_DLG_NYQ_TIP = "该文件采样率 {fs:g} Hz，上限已按 Nyquist 钳制为 {fmax:g} Hz"
+    TFR_DLG_BAD_RANGE = "频率下限必须小于上限"
+
     # ===== M6：浏览器窗口导航 + 浅色主题配色 =====
     BTN_GO_FIRST = "|◀ 最前"
     BTN_PREV_PAGE = "◀ 上一屏"

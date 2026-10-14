@@ -14,6 +14,8 @@ import pytest
 
 pytest.importorskip("PySide6", reason="无 GUI 环境")
 
+from conftest import wait_until  # noqa: E402
+
 from PySide6.QtCore import QPointF, Qt  # noqa: E402
 
 from dataloadv.core.recording import EventTable  # noqa: E402
@@ -61,7 +63,7 @@ def browser(tmp_path, qtbot, synthetic_raw):
     rec = open_file(fif)
     view = SignalBrowserView(rec)
     qtbot.addWidget(view)
-    qtbot.waitUntil(lambda: view._loaded_once, timeout=10000)
+    wait_until(qtbot, lambda: view._loaded_once, "浏览器首帧加载")
     view._refresh_data()
     yield view
     view.teardown()
@@ -93,7 +95,7 @@ def offset_browser_mod(tmp_path, qtbot):
     rec = open_file(fif)
     view = SignalBrowserView(rec)
     qtbot.addWidget(view)
-    qtbot.waitUntil(lambda: view._loaded_once, timeout=10000)
+    wait_until(qtbot, lambda: view._loaded_once, "浏览器首帧加载")
     view._refresh_data()
     yield view
     view.teardown()
@@ -132,8 +134,9 @@ class TestChannelLabels:
         assert len(browser._channels) == len(names) == 8
         for ch, name in zip(browser._channels, names):
             assert ch["label"].toPlainText() == name  # 全名，无 "…" 截断
-        # 旧的 y 轴刻度通道名已隐藏（截断源头）
-        assert not browser._plot.getAxis("left").isVisible()
+        # 旧的 y 轴刻度通道名已废除（截断源头）；M12 起左轴=定宽**空刻度**
+        # （三行统一宽度保 setXLink 像素对齐，不再整体隐藏）——断言无刻度
+        assert not browser._plot.getAxis("left")._tickLevels
 
     def test_labels_follow_viewport_left_edge(self, browser):
         browser._go_edge(first=True)
@@ -343,7 +346,7 @@ class TestOffsetRobustDisplay:
         rec = open_file(fif)
         view = SignalBrowserView(rec)
         qtbot.addWidget(view)
-        qtbot.waitUntil(lambda: view._loaded_once, timeout=10000)
+        wait_until(qtbot, lambda: view._loaded_once, "浏览器首帧加载")
         view._refresh_data()
         try:
             assert view._spacing_uv == 100.0  # 全平 → 不覆盖默认值
@@ -519,9 +522,8 @@ class TestChannelOffsets:
 
     def test_offset_text_appears(self, offset_browser_mod, qtbot):
         view = offset_browser_mod
-        qtbot.waitUntil(
-            lambda: "µV" in view._ch_list.item(0).text(), timeout=10000
-        )
+        wait_until(qtbot, lambda: "µV" in view._ch_list.item(0).text(),
+                   "通道偏移文本")
         txt = view._ch_list.item(0).text()
         assert txt.startswith("CH1") and "+50.0k" in txt  # 50mV → +50.0k µV
 
@@ -563,9 +565,8 @@ class TestOverviewLane:
     def test_region_drag_moves_main_view(self, browser, qtbot):
         browser._set_x_range(15.0, 25.0)  # 先同步 region（宽 10）
         browser._lane._region.setRegion((20.0, 30.0))  # 模拟用户拖滑块（同宽）
-        qtbot.waitUntil(
-            lambda: abs(browser._visible_range()[0] - 20.0) < 1e-3, timeout=2000
-        )
+        wait_until(qtbot, lambda: abs(browser._visible_range()[0] - 20.0) < 1e-3,
+                   "滑块定位到 20s", timeout_s=5.0)
         t0, t1 = browser._visible_range()
         assert abs(t1 - 30.0) < 1e-3
 

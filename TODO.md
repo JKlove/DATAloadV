@@ -357,3 +357,42 @@ Qt 6.x 后续版本须换 `filterInvalidated` 信号或 `beginFilterChange`，�
       ALL OK + smoke 回归
 - [x] M11-6 治理七文件同步（STATUS/MANUAL §1.2·§3.5/README/plan/TODO/review/HANDOFF
       坑 #63+架构树）
+
+## M12 浏览器四项改造（✅ 完成 2026-10-13：比例尺下拉/紧凑显示/事件面板左移/同段时频图）
+
+- [x] M12a 比例尺下拉：右组 combo（自动+13 档 µV）；固定值锁 `_spacing_uv` 挡首帧
+      估计、"自动"用当前窗重估；与增益正交
+- [x] M12b 事件列表移左栏：M11 底部 QSplitter 撤销；左栏 maxWidth 330 内
+      QSplitter(Vertical)[通道列表+按钮行, 事件列表]；event_list 列宽 ResizeToContents
+- [x] M12c 紧凑显示：`_row_map` 每帧重算，堆叠/_med 兜底/标签 y/估计 setYRange/
+      _apply_y_range 五处统一经 `_row_of/_row_count`；复位 blockSignals 批量恢复全选
+- [x] M12d gfx 三行+轴对齐：主图/时频/事件条 5:2:1；三行左轴统一 `ROW_AXIS_W=46`
+      （主图/事件条从整体隐藏改定宽空刻度）；TFR 空壳（invertY/setXLink/turbo LUT）
+- [x] M12e 时频计算：300ms 实例 QTimer 防抖+`_tfr_seq` 代币+`_tfr_retry` 补算+<2s
+      占位+teardown 停表；`compute_epochs_tfr(reshape(1,1,-1), baseline=None)` 复用；
+      Nyquist 收口 `min(45, sfreq*0.475)`；通道下拉在工具栏左组
+- [x] M12f 测试：test_ui_browser_m12.py 15 项（比例尺 3/紧凑 4/三行对齐 3/时频 5）；
+      TestChannelLabels 断言同步改；pytest 320 绿零回归
+- [x] M12g e2e_m1 +4 项（比例尺锁定/紧凑收紧/时频覆盖交集窗/turbo 色标）→ 31 项
+      ALL OK + smoke 回归
+- [x] M12h 治理七文件同步（坑 #64 五则入 HANDOFF）
+
+## M13 时频图改进（✅ 完成 2026-10-14：频率轴翻转+150Hz / 四方法参数窗）
+
+- [x] M13-1 features/tfr.py：TfrConfig + compute_window_tfr 四方法统一入口
+      （morlet/multitaper/stockwell/stft；dB 统一每频点减峰值；stockwell 恒 3 元组
+      解包；线性轴方法 _pool_rows 分段 max 池化保窄峰——均匀抽样实测漏 0.06Hz 峰）
+- [x] M13-2 频率轴：去 invertY（旧组合实际高频在下，注释勘误）+ setYRange(0, fmax)
+      + fmax=min(150, Nyq×0.475) 钳制 + 行 stretch 5:3.5:0.55
+- [x] M13-3 TfrSettingsDialog：方法下拉+按方法参数显隐+fmax SpinBox 上限=Nyquist
+      钳制值；工具栏「时频设置…」；应用段更新 cfg/频率轴/重算；短窗守卫
+      cfg.min_window_s()（morlet/mt 2.0s、stockwell 1.0s、stft 2×窗长）
+- [x] M13-4 epochs_preview invertY 注释勘误（行为不动）
+- [x] M13-5 测试：features 7（四方法峰检出参数化/dB 口径/行数统一/stft 窗参数
+      /钳制与短窗推导/未知方法拒）+ browser 3（低频像素在下/频率轴 0 起+118.75
+      /对话框应用重算）；pytest 334 绿零回归
+- [x] M13-6 e2e_m1 +1（频率轴 0 起+160Hz 采样钳到 76）→ 32 项 ALL OK + smoke
+- [x] M13-7 治理七文件同步（坑 #64 补四则：invertY 朝向勘误/stockwell 3 元组与
+      静默截断/max 池化保窄峰/legacy 标记注记）
+- [x] 同日挂死根因闭环（16 处 qtbot.waitUntil → conftest wait_until；规则入
+      坑 #57⑥：测试禁用 waitUntil；时间戳探针转常设）

@@ -40,6 +40,13 @@ def event_color(code: str, all_codes: list[str]) -> str:
     return EVENT_PALETTE[idx % len(EVENT_PALETTE)]
 
 
+# 左轴统一宽度（M12）：主图/时频图/事件条三行左轴都定宽 46px 空白列——
+# setXLink 的对齐是**像素对齐**（两图数据区需在屏幕上重叠），左轴宽度不等
+# 时主图 [30,40] 会映射成时频图 [30.56,40]（事件时间错位 0.56s，实测）；
+# 统一定宽后三行数据区起点/终点严格对齐，事件竖线跨行可视对齐
+ROW_AXIS_W = 46.0
+
+
 class EventLane(pg.PlotItem):
     """事件概览条 + 总览时间轴滑块."""
 
@@ -57,9 +64,11 @@ class EventLane(pg.PlotItem):
         # 视口滑块的拖动由 LinearRegionItem 自己处理，不依赖 ViewBox。
         self.setMouseEnabled(x=False, y=False)
         self.setMenuEnabled(False)
-        # y 固定 0–1（刻度线画在 0.15–0.85），不显示 y 轴
+        # y 固定 0–1（刻度线画在 0.15–0.85），不显示 y 轴；左轴改定宽空刻度
+        # （M12：三行统一 ROW_AXIS_W，见模块头注释——与主图/时频图数据区对齐）
         self.setYRange(0, 1, padding=0)
-        self.getAxis("left").setVisible(False)
+        self.getAxis("left").setTicks([])
+        self.getAxis("left").setWidth(ROW_AXIS_W)
         self.getAxis("bottom").setStyle(showValues=False)
         self._scatter: pg.ScatterPlotItem | None = None
         self._legend_item: pg.TextItem | None = None

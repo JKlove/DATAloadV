@@ -1,7 +1,9 @@
-"""事件 marker 列表（M11）：浏览器底部横条，双击行跳波形到该事件.
+"""事件 marker 列表（M11）：双击行跳波形到该事件.
 
-需求（2026-09-24 用户提出，红圈指示事件条区域）：有标记的数据能看到事件
-清单（名称/时间/样本点），双击某行 → 波形快速定位到该事件位置。
+需求（2026-09-24 用户提出）：有标记的数据能看到事件清单（名称/时间/样本点），
+双击某行 → 波形快速定位到该事件位置。位置沿革：M11 初版为浏览器底部横条；
+M12（2026-10-13）按用户截图移入左栏通道列表下方（纵向面板，5 列
+ResizeToContents 自适应列宽）。
 
 结构（照 meta_table.py 的 QTableView + Model + Proxy 先例）：
 - ``_EventListModel``：5 列（序号/名称/时间/样本点/持续），数值列 UserRole
@@ -30,6 +32,7 @@ from PySide6.QtCore import (
 from PySide6.QtGui import QBrush, QColor
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QHeaderView,
     QLabel,
     QTableView,
     QVBoxLayout,
@@ -141,6 +144,9 @@ class EventListView(QWidget):
         self._table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self._table.setAlternatingRowColors(True)
         self._table.horizontalHeader().setStretchLastSection(True)
+        # 列宽自适应内容（M12 移入左栏后宽度有限，固定列宽会截断中文名）
+        self._table.horizontalHeader().setSectionResizeMode(
+            QHeaderView.ResizeMode.ResizeToContents)
         self._table.verticalHeader().setVisible(False)  # # 列已有序号
         self._table.setSortingEnabled(True)
         # 启用排序会触发一次隐式初始排序（本 PySide6 构建实测按第 0 列降序，

@@ -22,6 +22,7 @@ from dataloadv.features.tfr import (
     MAX_EPOCHS_FOR_TFR,
     compute_epochs_tfr,
     default_tfr_freqs,
+    TfrConfig,
 )
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -182,3 +183,91 @@ class TestTfrGoldenReal:
         # 基线期（含 t=0，与实现闭区间一致）归零 + 事件后能量变化有界
         assert np.allclose(db[:, times <= 0].mean(axis=1), 0.0, atol=1e-9)
         assert db.std() > 0.5
+
+
+class TestComputeWindowTfr:
+    """M13 浏览器同段时频统一入口：四方法/参数/口径."""
+
+    @staticmethod
+    def _signal(fs: float = 250.0, dur: float = 10.0) -> tuple[np.ndarray, np.ndarray]:
+        """10Hz 20µV 正弦 + 5µV 噪底（conftest synthetic 同款形态）."""
+        t = np.arange(int(fs * dur)) / fs
+        x = 20e-6 * np.sin(2 * np.pi * 10.0 * t) \
+            + 5e-6 * np.random.default_rng(0).normal(size=len(t))
+        return x, t
+
+    @pytest.mark.parametrize("method", ["morlet", "multitaper", "stockwell", "stft"])
+    def test_alpha_peak_found_by_all_methods(self, method):
+        """四方法都能在 ~10Hz 行检出正弦峰（高于远端行）.
+
+        各方法分辨率/泄漏特性不同导致差值幅度不同（实测 3.8–9.4dB），
+        阈值取保守 3dB。
+        """
+        from dataloadv.features.tfr import compute_window_tfr
+
+        x, t = self._signal()
+        freqs, times_out, db = compute_window_tfr(x, 250.0, t, TfrConfig(method=method))
+        assert db.shape == (len(freqs), len(times_out))
+        assert np.isfinite(db).all()
+        r10 = int(np.argmin(np.abs(freqs - 10.0)))
+        r60 = int(np.argmin(np.abs(freqs - 60.0)))
+        # 各方法分辨率/泄漏特性不同，峰差幅度不同（122.5Hz 上限实测：morlet
+        # ~9 / mt ~5 / stockwell ~2.4 / stft ~6 dB）——阈值按方法差异化
+        floor = {"morlet": 3.0, "multitaper": 3.0, "stockwell": 2.0, "stft": 3.0}
+        assert float(db[r10].mean()) - float(db[r60].mean()) > floor[method]
+
+    def test_dB_peak_normalized(self):
+        """口径：每频点减自身峰值——db.max(axis=时间) 全 0."""
+        from dataloadv.features.tfr import compute_window_tfr
+
+        x, t = self._signal()
+        _f, _t, db = compute_window_tfr(x, 250.0, t, TfrConfig())
+        assert np.allclose(db.max(axis=1), 0.0, atol=1e-9)
+
+    def test_row_count_unified(self):
+        """线性轴方法（stockwell 数千格/stft 上百格）行数统一到 n_freqs.
+
+        分段 max 池化（保窄峰——均匀抽样实测漏 10Hz 窄峰，见 _pool_rows）。
+        """
+        from dataloadv.features.tfr import compute_window_tfr
+
+        x, t = self._signal()
+        for m in ("stockwell", "stft"):
+            _f, _t, db = compute_window_tfr(x, 250.0, t, TfrConfig(method=m, n_freqs=32))
+            assert len(_f) <= 32 and db.shape[0] == len(_f)
+
+    def test_stft_window_params_take_effect(self):
+        """stft 窗长/重叠决定时间点数：dur=10s、win=1s、overlap=0.5 → 步进 0.5s.
+
+        scipy 默认 boundary='zeros'+padded=True（两端补零到整步进）——
+        t 覆盖 [0, 10] 含端点，共 (2500-125)/125+1 = 21 点。
+        """
+        from dataloadv.features.tfr import compute_window_tfr
+
+        x, t = self._signal()
+        _f, t_out, _db = compute_window_tfr(
+            x, 250.0, t, TfrConfig(method="stft", win_s=1.0, overlap=0.5))
+        assert len(t_out) == 21
+        assert t_out[0] == pytest.approx(0.0, abs=1e-9)
+        assert t_out[-1] == pytest.approx(10.0, abs=1e-9)
+
+    def test_effective_fmax_clamped_and_min_window(self):
+        """fmax None/超限的 Nyquist 钳制；min_window_s 随方法推导."""
+        # 2026-10-14 二次裁定：默认上界 150（够 Nyquist 时）；更高显式调高，
+        # 物理上限 Nyquist×0.49（250Hz→122.5、500Hz 默认 150/显式可到 245）
+        assert TfrConfig().effective_fmax(250.0) == pytest.approx(122.5)
+        assert TfrConfig(fmax=300.0).effective_fmax(250.0) == pytest.approx(122.5)
+        assert TfrConfig(fmax=100.0).effective_fmax(250.0) == pytest.approx(100.0)
+        assert TfrConfig().effective_fmax(500.0) == pytest.approx(150.0)
+        assert TfrConfig(fmax=200.0).effective_fmax(500.0) == pytest.approx(200.0)
+        assert TfrConfig(fmax=300.0).effective_fmax(500.0) == pytest.approx(245.0)
+        assert TfrConfig().min_window_s() == pytest.approx(2.0)
+        assert TfrConfig(method="stockwell").min_window_s() == pytest.approx(1.0)
+        assert TfrConfig(method="stft", win_s=0.8).min_window_s() == pytest.approx(1.6)
+
+    def test_unknown_method_rejected(self):
+        from dataloadv.features.tfr import compute_window_tfr
+
+        x, t = self._signal()
+        with pytest.raises(ValueError, match="未知时频方法"):
+            compute_window_tfr(x, 250.0, t, TfrConfig(method="dwt"))

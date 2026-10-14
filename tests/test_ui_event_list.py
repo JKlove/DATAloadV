@@ -19,6 +19,8 @@ import pytest
 
 pytest.importorskip("PySide6", reason="无 GUI 环境")
 
+from conftest import wait_until  # noqa: E402
+
 from PySide6.QtCore import Qt  # noqa: E402
 
 from dataloadv.core.recording import EventTable  # noqa: E402
@@ -107,7 +109,7 @@ def browser(tmp_path, qtbot, synthetic_raw):
     rec = open_file(fif)
     view = SignalBrowserView(rec)
     qtbot.addWidget(view)
-    qtbot.waitUntil(lambda: view._loaded_once, timeout=10000)
+    wait_until(qtbot, lambda: view._loaded_once, "浏览器首帧加载")
     view._refresh_data()
     yield view
     view.teardown()
@@ -130,7 +132,7 @@ def browser_noev(tmp_path, qtbot):
     rec = open_file(fif)
     view = SignalBrowserView(rec)
     qtbot.addWidget(view)
-    qtbot.waitUntil(lambda: view._loaded_once, timeout=10000)
+    wait_until(qtbot, lambda: view._loaded_once, "浏览器首帧加载")
     yield view
     view.teardown()
     rec.unload()

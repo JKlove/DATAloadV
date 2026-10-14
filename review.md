@@ -1084,3 +1084,148 @@ fixture 收窄 `channels=["EEG00"]` 保 1 条下游零改，新增窗进列头/a
 ### 计划偏离
 
 - 无——布局经 AskUserQuestion 用户拍板"底部横条（推荐）"，其余按批准计划执行。
+
+## M12 — 浏览器四项改造（2026-10-13 完成，用户四项需求驱动）
+
+### 做了什么
+
+- **比例尺下拉**（`_scale_combo`，右组）：自动+1/3/…/2000 µV 固定值；语义=相邻通道
+  行距（与增益正交——增益缩波形、比例尺定行距）；固定值置 `_spacing_estimated=True`
+  挡首帧估计，"自动"切回用当前窗口数据重估。
+- **紧凑显示**：左栏两按钮；`_row_map` 在 `_refresh_data_inner` 开头按勾选重算
+  （原始 idx→紧凑行号），5 处 idx/n 使用点统一经 `_row_of/_row_count`；复位分支
+  blockSignals 包批量 setCheckState 防 N 次刷新。
+- **事件列表移左栏**：外层 QSplitter(Vertical) 撤销，左栏（maxWidth 330）内
+  QSplitter(Vertical)[通道列表+按钮行, 事件列表]；event_list 加 ResizeToContents。
+- **同段时频图**：gfx 三行 5:2:1 + turbo LUT (1,1)；`_tfr_item()` 空壳 + 300ms 实例
+  QTimer 防抖 + `_tfr_seq` 代币 + `_tfr_retry` 补算 + <2s 占位 + teardown 停表作废；
+  计算复用 `compute_epochs_tfr`（零改动，baseline=None=相对各频点峰值口径）；
+  Nyquist `min(45, sfreq*0.475)` 收口；三行左轴统一 46px 保 setXLink 像素对齐。
+
+### 发现的问题与修正
+
+- **坑 #64 五则**（全入 HANDOFF）：setXLink 像素对齐（左轴不等宽错位 0.56s 实测）
+  /Nyquist 与短窗硬边界/QTimer.singleShot 不可取消须用实例单发/复位按钮信号风暴/
+  e2e rect 断言用视口∩数据域交集。
+- 测试自修 5 处：_wait_tfr 等待逻辑（`not running or not active` 恒真提前退——改
+  先等 timer inactive 再等线程清空）；抽取后曲线中位数亚 µV 偏差容差 abs=1.0
+  （M6.6 同款口径）；`_tickLevels` 三态断言（坑 #57①：setTicks([])=[]、自动=None）；
+  ImageItem 无 rect()（坑 #55① mapRectToView(boundingRect())）；端点采样对齐容差
+  0.02s；一处笔误（多余引号 + view/browser 混名）。
+- e2e 首跑时频 rect 失败：双击跳转居中 0 后视口 [-5,5] 左半无数据，TFR 只覆盖
+  clamp 后 [0,5]——行为正确，断言口径改交集（坑 #64⑤）。
+
+### 验证
+
+- pytest **320 绿**（+15：tests/test_ui_browser_m12.py——比例尺锁定/重估/正交、
+  紧凑重排/即时收缩/复位/留空位哨兵、三行几何对齐/x 跟随/轴统一、时频回填/α 峰
+  10Hz 显著/短窗占位/teardown 竞态/代币递增）。
+- e2e_m1 **31 项 ALL OK**（+4）；smoke_gui SMOKE OK；test_ui_browser_m6 全量过
+  （仅 TestChannelLabels 一行断言随左轴语义同步改）。
+
+### 计划偏离
+
+- 无——四项按批准计划 a→e 顺序实施，每步中间回归（50 项×2 次）。
+
+### 同日用户反馈精修（时频图三点）
+
+- **行高**：5:2:1 → 5:3:0.7（时频图加高、事件条压扁）。
+- **色标换 ColorBarItem**（弃 HistogramLUTItem）：后者的渐变编辑器会在色标上
+  拖出多个三角切分点（用户"不知道是什么、还拖出很多个"）——纯展示场景换成
+  ColorBarItem（纯色标+上下缘拖动调范围，无渐变编辑）。
+- **范围锁定跨屏保持**：用户拖动结束（sigLevelsChangeFinished——程序 setLevels
+  不触发，可安全区分用户操作）→ `_tfr_levels_locked=True`，后续每屏不再自动
+  重设；双击色标（eventFilter 拦 GraphicsSceneMouseDoubleClick）解锁并按当前
+  图重设。**联动方向离屏实证**：cb.setLevels→img 自动同步、
+  img.setImage(autoLevels=True) 不联动 cb——程序侧一律经 cb 驱动（坑 #64⑥）。
+- 验证：+1 测试（锁定跨屏保持+双击解锁重设）→ pytest **321 绿**；e2e_m1
+  31 项 ALL OK（色标断言随 `_tfr_cb` 更名）。
+
+### 第三轮（直方图回归，用户二次反馈）
+
+- HistogramLUTItem 换回（能量分布直方图保留——用户调上下范围的参考）；渐变
+  编辑器 eventFilter 吃掉全部鼠标（三角切分点不可再拖出，双击渐变=解锁手势）。
+- 锁定判定换 **levels 偏差检测**：LUT 绑定下 img.setImage(autoLevels=True) 会同步
+  region（与 ColorBarItem 联动方向相反），且 region 两个信号程序路径也发——
+  `sigLevelChangeFinished` 不能当"用户改过"标志（离屏两轮探针实证）；改为程序设置后
+  记基准 `_tfr_auto_levels`，回填前当前 levels 偏离基准 → 锁定。检测必须**先于**
+  setImage（否则 autoLevels 覆盖用户值后检测恒假——首版顺序错误，修正）。
+- **当日全量 Heisenbug 挂死**（~50% 概率、挂点集中 m12 尾-qtbot 清理链、观测手段
+  介入即消失）：完整调查档案入 HANDOFF 坑 #57⑥；防御=test_ui_browser_m12 全部等待
+  改 `_poll_until`（Python 层 deadline，超时明确 FAIL 防永挂）；所有能完成的运行
+  全绿（全量 3 次、组合 10+、e2e_m1 31 项 ALL OK、smoke）。
+- 验证：test_ui_browser_m12 18 项绿（+锁定跨屏/渐变禁交互 2 项，等待逻辑两轮修正：
+  30ms refresh 防抖窗口提前退出 → 条件等待；qtbot.waitUntil 的 Qt 侧超时会饿死 →
+  _poll_until）。
+
+
+### 2026-10-14 挂死根因闭环（用户重启机器后继续排查驱动）
+
+- **手段**：conftest 注入文件级 START/FINISH 时间戳探针（不经 pytest fd 捕获、不改变
+  Qt 时序——-s/faulthandler 观测都会让挂死消失的纯 Heisenbug 里唯一无扰动的方法）。
+- **精确挂点**：test_ui_browser_m6.py::TestGainInput 的 fixture setup 里
+  `qtbot.waitUntil(lambda: view._loaded_once)`——m6 老测试、M12 前从未挂过的位置。
+- **根因**：pytest-qt 的 waitUntil 内部是 QEventLoop.exec + Qt 侧 QTimer 超时
+  （pytestqt/wait_signal.py:26/639）——事件分发被饿死时**超时本身失效 → 永等**。M12
+  的 300ms TFR QTimer+后台线程活动放大了触发窗口；地雷从 M8 的 keepalive 等待范式
+  （坑 #55④）就埋下。重启机器（排除系统状态）仍 2/3 挂——与系统无关。
+- **解法**：全项目 16 处 qtbot.waitUntil → conftest 共享 `wait_until`（Python 层
+  time.monotonic deadline + qtbot.wait(50)，超时明确 FAIL 不永挂）。
+- **验证**：替换后全量 **5 连绿**（322 passed，18s 稳定）+ e2e_m1 31 项 ALL OK +
+  smoke；受影响四测试文件 105 项单独跑绿。探针转常设（后续挂死零成本定位）。
+## M13 — 时频图改进（2026-10-14 完成，用户两项需求 + 重启后挂死排查驱动）
+
+### 做了什么
+
+- **频率轴翻转+150Hz**：去 `invertY(True)`——离屏 `mapFromView` 像素实证旧组合
+  （invertY + ImageItem y 向下）实际**高频在下**，M8 起两处注释"低频在下"均写反
+  （epochs_preview 勘误注释、行为不动）；`setYRange(0, fmax)`、fmax=
+  `cfg.effective_fmax`（默认 150 受 Nyquist×0.475 钳制：250Hz→118.75、500Hz→150）；
+  行 stretch 5:3:0.7→5:3.5:0.55（事件条再压、时频图再加高）。
+- **四方法+参数窗**：`features/tfr.py` 新 `TfrConfig`（dataclass，跨线程安全）+
+  `compute_window_tfr` 统一入口——morlet/multitaper（对数频率轴、n_cycles=
+  max(f/系数,2)、mt 另有 time_bandwidth）、stockwell（恒 3 元组返回、线性数千格）、
+  stft（scipy.signal.stft、窗中心时刻、boundary 补零含端点）；dB 口径统一每频点
+  减自身峰值；**stockwell/stft 行数经 `_pool_rows` 分段 max 池化**统一到 n_freqs
+  （均匀抽样实测漏 stockwell 0.06Hz 窄峰：峰差 9.2dB→-0.8dB，池化后 3.8dB 恢复）。
+  `TfrSettingsDialog`（手写 QFormLayout 照 settings_dialog；方法下拉+按方法参数
+  显隐+fmax SpinBox 上限=Nyquist 钳制值——超不了无需事后校验）；browser
+  `_open_tfr_settings` 应用段；短窗守卫 `cfg.min_window_s()`。
+- DWT 不做（AskUserQuestion 拍板四方法零依赖：pywt 新依赖+倍频程带渲染语义特殊）。
+
+### 发现的问题与修正
+
+- **stockwell 窄峰丢失**（首版均匀抽样）：分段 max 池化修复（坑 #64⑦c）。
+- stft 时间点数首版推导 19（未算 scipy boundary 补零含端点）→ 实测 21 修正断言。
+- 四方法峰差幅度 3.8–9.4dB（分辨率/泄漏特性不同）——测试阈值取保守 3dB。
+
+### 挂死根因闭环（同日，用户重启机器后继续排查）
+
+- 重启后仍 2/3 挂（排除系统状态）；conftest 文件级 START/FINISH 探针（零扰动）
+  定位精确挂点=qtbot.waitUntil；16 处全部替换 conftest `wait_until`（Python 层
+  deadline）后**全量 5 连绿**；规则入坑 #57⑥：测试禁用 qtbot.waitUntil；探针转常设。
+
+### 验证
+
+- pytest **334 绿**（+12：test_features_tfr +7 / test_ui_browser_m12 +3 / 文案
+  适配 2）+ e2e_m1 **32 项 ALL OK**（+1 频率轴钳制）+ smoke；全量期间零挂死。
+
+### 计划偏离
+
+- 无（四方法集合经 AskUserQuestion 用户拍板；其余按批准计划）。
+
+
+### M13 后续三项精修（2026-10-14 同日，用户反馈驱动）
+
+- **布局**：「时频设置…」从工具栏移入左栏按钮行下方（工具栏过长挤压主窗口左侧
+  工作区 Dock，全屏后名录显示不全）。
+- **参数上限分析**（用户问"是否合理，不合理请放开"）：fmax 150Hz 硬顶**不合理**
+  （唯一物理上限是 Nyquist）→ 去除，钳制改 Nyquist×0.49（250Hz→122.5、500Hz→245）；
+  频率点数 8–120 偏紧 → 4–400；其余保留（n_cycles_scale≥1 防小波核退化、
+  time_bandwidth 2–8 为 DPSS 惯例、overlap≤0.9 防无意义重叠）——分析结论入 MANUAL。
+- **修 STFT 图不显示**（真窗口 bug）：scipy.stft 返回相对窗口的 0 起时间轴 →
+  窗口在非 0 位置时热图画到视口外；stft 分支平移回绝对时间 + 非零窗口回归哨兵
+  （坑 #64⑧，含"测试别只用默认窗口"教训）。测试侧连带修正防抖窗口陷阱第三例
+  （等待用 _tfr_seq 正向终态）。
+- 验证：pytest **335 绿**（+1 哨兵；features 钳制断言更新 122.5/245、stockwell
+  峰差阈值按方法差异化）+ e2e_m1 32 项 ALL OK + smoke。

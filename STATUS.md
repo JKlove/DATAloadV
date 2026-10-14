@@ -1,8 +1,46 @@
 # STATUS — 项目状态快照
 
-> 本文件回答"现在做到哪了"。每里程碑完成及重要提交后更新。最后更新：2026-09-24（M11 事件 marker 列表 **✅ 完成**：浏览器底部横条 + 双击行跳转波形）
+> 本文件回答"现在做到哪了"。每里程碑完成及重要提交后更新。最后更新：2026-10-14（M13 时频图改进 **✅ 完成**+同日三项精修：设置按钮移左栏/参数上限放开/修 STFT 时间轴 bug；挂死根因闭环）
 
 ## 当前里程碑
+
+- **M13 时频图改进：✅ 完成（2026-10-14）**——用户两项需求：①**频率轴翻转**
+  （去 invertY——旧 invertY(True) 与 ImageItem y 向下坐标的组合实际是**高频
+  在下**，M8 起注释一直写反，离屏实证勘误；现低频/0 在下、往上增高）+
+  显示范围 [0, 150]（受 Nyquist×0.475 钳制：250Hz 采样→118.75、500Hz→150）
+  + 行 stretch 5:3:0.7→**5:3.5:0.55**（事件条再压、时频图再加高）；②**方法与
+  参数调节窗**——`features/tfr.py` 新 `TfrConfig` + `compute_window_tfr` 统一入口
+  **四方法零依赖**（morlet/multitaper/stockwell/stft——DWT 需 pywt 且倍频程带
+  渲染语义特殊，AskUserQuestion 拍板不做）；dB 口径统一"每频点减自身峰值"；
+  线性轴方法（stockwell 数千格/stft 上百格）**分段 max 池化**抽行到 n_freqs
+  （均匀抽样实测漏 0.06Hz 窄峰）；新对话框 `ui/dialogs/tfr_settings_dialog.py`
+  （方法下拉+按方法参数显隐+fmax 上限=Nyquist 钳制值 SpinBox 天然防超）；
+  工具栏「时频设置…」按钮；短窗下限随方法推导（morlet/mt 2.0s、stockwell
+  1.0s、stft 2×窗长）。实测耗时 morlet 3ms/mt 20ms/stockwell 130ms/stft
+  0.2ms（10s@250Hz）——全部远低于 300ms 防抖。验证：pytest **334 绿**（+12）
+  + e2e_m1 **32 项**（+1 频率轴钳制）+ smoke。
+  **同日挂死根因闭环**（用户重启机器后继续排查）：文件级 START/FINISH 探针
+  定位精确挂点=qtbot.waitUntil（内部 QEventLoop.exec+Qt 侧超时会饿死→永等）；
+  全项目 16 处替换为 conftest 共享 `wait_until`（Python 层 deadline）后全量
+  5 连绿；规则入坑 #57⑥：**测试禁用 qtbot.waitUntil**。
+
+
+- **M12 信号浏览器四项改造：✅ 完成（2026-10-13）**——用户四项需求（截图指定布局）：
+  ①**比例尺下拉**（"自动"+13 固定值 1–2000µV；语义=相邻通道行距 µV、与增益正交；
+  固定值锁定 `_spacing_uv` 并挡首帧估计，"自动"切回用当前窗数据重估）；
+  ②**紧凑显示**（通道列表下「优化显示选择通道/复位通道显示」两按钮——`_row_map`
+  每帧按勾选重算原始 idx→紧凑行号，堆叠/标签/yRange 五处 idx 使用点统一经
+  `_row_of/_row_count`；复位 blockSignals 批量恢复全选防 N 次刷新）；③**事件 marker
+  列表移入左栏**（通道列表下方 QSplitter 上下分割可拖比例，左栏 maxWidth 330、
+  事件列表列宽 ResizeToContents；M11 底部横条布局撤销）；④**同段时频图**（gfx 三行
+  主图 5:时频 2:事件条 1；单通道 morlet 功率 dB（`compute_epochs_tfr` 复用、
+  baseline=None=相对各频点峰值口径）、turbo 配色（`pg.colormap.get` 项目首用）+
+  常驻 HistogramLUTItem、通道下拉在工具栏、300ms 实例 QTimer 防抖 + 代币作废迟到
+  回调 + <2s 短窗占位；**setXLink 像素对齐**——三行左轴统一 46px 空刻度（主图/事件条
+  从整体隐藏改定宽空刻度）保事件时间跨行不错位，**Nyquist 收口** `min(45, sfreq*0.475)`）。
+  验证：pytest **320 绿**（+15 test_ui_browser_m12.py：比例尺 3/紧凑 4/三行对齐 3/
+  时频 5，同日色标精修 +1=16）+ e2e_m1 **31 项**（+4）+ smoke；**坑 #64 六则**（setXLink 像素对齐 0.56s
+  错位实测/Nyquist 与短窗硬边界/实例 QTimer 防抖/复位 blockSignals/e2e rect 交集口径）。
 
 - **M11 事件 marker 列表：✅ 完成（2026-09-24）**——用户需求（截图红圈指示事件条
   区域）：有标记的数据要能看到事件清单（name/time/latency），双击行快速定位波形。
@@ -123,6 +161,8 @@
 | M9 预处理后连续数据导出 | ✅ 完成 | 2026-08-31 | continuous_io（EDF channelwise 16-bit/FIF float32 _raw 后缀+类型白名单·标签长度前置守卫）；单文件面板/菜单+批处理逐文件（epoching 跳过+失败降级+只勾 raw 不写特征文件）；pytest 287 / e2e_m9 16 项 |
 | M10 双平台打包 | ✅ 完成 | 2026-09-01 | PyInstaller 6.22.2 单份 spec 跨平台 + entry.py shim + app `--smoke` 自检；macOS .app 293MB/zip 119MB/构建 42s，offscreen 冒烟+真窗口存活+PYZ 依赖核实全过、pytest 287 零回归、用户实测验收过；CI 修复（坑 #60）后重跑双绿（win64 136MB/macOS 94MB），**Windows 真机真人验收通过**；瘦身取消；工作区隐私清理（01/02号脑电·羊数据 59 条清出索引） |
 | M11 事件 marker 列表 | ✅ 完成 | 2026-09-24 | 浏览器底部横条 QSplitter（5 列 #/名称/时间/样本点/持续；名称色=事件线色）；双击行 `_center_at` 定位全联动；无事件面板常驻空态；坑 #63 初始排序显式化；pytest 305 / e2e_m1 27 项 |
+| M13 时频图改进 | ✅ 完成 | 2026-10-14 | 频率轴翻转（低频/0 在下）+Nyquist 钳制（150 硬顶后放开→×0.49）+行高 5:3.5:0.55；四方法统一入口（分段 max 池化保窄峰）+设置对话框（按钮在左栏）；修 STFT 相对时间轴 bug；挂死根因闭环（waitUntil→wait_until）；pytest 335 / e2e_m1 32 项 |
+| M12 浏览器四项改造 | ✅ 完成 | 2026-10-13 | 比例尺下拉（自动+13 档 µV）/紧凑显示（优化选择通道+复位）/事件列表移左栏/同段时频图（turbo+setXLink 像素对齐+Nyquist 收口+300ms 防抖代币）；坑 #64 六则；同日色标精修（ColorBarItem+范围锁定跨屏保持）；pytest 321 / e2e_m1 31 项 |
 
 ## 环境
 
@@ -131,7 +171,7 @@
 
 ## 测试
 
-- `QT_QPA_PLATFORM=offscreen pytest`：**305 passed**（2026-09-07 后 298 + **M11 净增 7**：事件列表（列文本+label 空退化 code/样本点换算/数值 UserRole 排序 100.0 vs 20.0/双击发射 onset/名称色=event_color/浏览器面板可见+行数 3/无事件隐藏+双击 T2 视口居中 30s——test_ui_event_list.py）。2026-09-07 净增 8：EDF 非标单位兜底（AuV 件按 µV 缩放/LAZY 强制整载/meta 标记/正常件零扰动+保持 lazy/mV·V 白名单不碰/空单位不猜/MainWindow 弹窗一次+清标记+ws 同步——test_io_edf_unit_fallback.py）。历史累计：M9 后 287（M9 净增 16：连续导出 8（EDF 往返 rtol 1e-3/prefiltering 头 highpass=1 往返/FIF 往返 rtol 1e-6+annotations 3 条/未知 fmt 拒/超长名拒/非 ASCII 名拒/misc 类型拒/平坦通道可导/单通道双格式）+ 面板守卫 2（无 ctx 提示/stage=epochs 指向分段导出）+ 批处理 5（wants_export 四开关语义/epochs 管线跳过+日志/引擎级 3 文件每文件 _proc.edf+sidecar kind=raw+files_written 汇总/导出失败降级日志特征照算/**只勾 raw 不产特征 CSV·H5——run() 分支修正的回归哨兵**）；M8.3 净增 10：welch 语义 5 + 导出 2 + 图表区 3；M8.2 净增 4；M8.1 净增 15（epoching 锚定 9 + 预览 6）；M8 净增 29（tfr 17 + 四视图 8 + bandpower 4）；M7 后 213。**须 offscreen：MainWindow 级测试在 macOS 真窗口模式会挂住**）
+- `QT_QPA_PLATFORM=offscreen pytest`：**335 passed**（M12 后 322 + 挂死根因替换适配 +2 + **M13 净增 10**：四方法峰检出（4 参数化）/dB 口径/行数统一/stft 窗参数/Nyquist 钳制与 min_window/未知方法拒（features 7）+ 低频在下像素断言/频率轴 0 起+118.75 钳制/设置对话框应用重算（browser 3）。（M11 后 305 + **M12 净增 15**：比例尺 3（固定值锁定 spacing+yRange/手动切自动按当前窗重估 MAD×8/与增益正交）+ 紧凑显示 4（留 3 通道紧凑重排首行贴 0/紧凑下再勾选即时收缩/复位全选恢复原布局/默认留空位回归哨兵）+ 三行对齐 3（vb 数据区左右缘一致/setXRange 后 TFR viewRange 跟随/三左轴统一 46 空刻度·TFR 自动频率刻度）+ 时频 5（img 回填+rect 覆盖视口+turbo LUT/ch0 α 峰 10Hz vs 30Hz 差>6dB·纯噪声通道无差异/1s 窗占位/teardown 竞态/通道切换代币递增）——test_ui_browser_m12.py）。2026-09-07 净增 8：EDF 非标单位兜底（AuV 件按 µV 缩放/LAZY 强制整载/meta 标记/正常件零扰动+保持 lazy/mV·V 白名单不碰/空单位不猜/MainWindow 弹窗一次+清标记+ws 同步——test_io_edf_unit_fallback.py）。历史累计：M9 后 287（M9 净增 16：连续导出 8（EDF 往返 rtol 1e-3/prefiltering 头 highpass=1 往返/FIF 往返 rtol 1e-6+annotations 3 条/未知 fmt 拒/超长名拒/非 ASCII 名拒/misc 类型拒/平坦通道可导/单通道双格式）+ 面板守卫 2（无 ctx 提示/stage=epochs 指向分段导出）+ 批处理 5（wants_export 四开关语义/epochs 管线跳过+日志/引擎级 3 文件每文件 _proc.edf+sidecar kind=raw+files_written 汇总/导出失败降级日志特征照算/**只勾 raw 不产特征 CSV·H5——run() 分支修正的回归哨兵**）；M8.3 净增 10：welch 语义 5 + 导出 2 + 图表区 3；M8.2 净增 4；M8.1 净增 15（epoching 锚定 9 + 预览 6）；M8 净增 29（tfr 17 + 四视图 8 + bandpower 4）；M7 后 213。**须 offscreen：MainWindow 级测试在 macOS 真窗口模式会挂住**）
 - `python scripts/e2e_m1.py`：**ALL OK（22 项）**——sheep + S001 真实导入 → 浏览 → 释放（幂等总量断言）；M6 追加 5 项 + M6.5 追加 1 项（羊数据按 BDF 解码：魔数优先于扩展名）+ M6.8 追加 3 项（±1s 平移/绝对模式 y 自适配/总览滑块跟随视口）
 - `python scripts/e2e_m7.py`：**ALL OK（16 项）×2 幂等**——羊浏览器体检（4 bad 全复用→Yes 自动标坏道→列表 ✗/✓ 前缀→tooltip 明细→按钮恢复）/ TPDJ-位置1 八通道全坏 / 特征链（注册表→FeatureTable→CSV·HDF5 回读分级一致）；**须逐模块 patch signal_browser.QMessageBox**（该模块 M7 起有模块级引用，MainWindow 的 patch 罩不到）
 - `python scripts/e2e_m2.py`：**ALL OK（17 项）**——4.9GB dataset 扫描 5.2s / 识别 1606 条 / 3 条已知结构报错 / 六格式（EDF/GDF 2a/GDF 2b/ds1/ds4/CSV）逐个打开均有真实曲线 / GDF 中文标签 / 六 tab 关闭释放
@@ -312,6 +352,51 @@
    macOS 右键→打开（或 `xattr -cr DataloadV.app`）；Windows "更多信息→仍要运行"
 
 ## 最近变更记录（新条目加在最上面）
+
+- 2026-10-14（M13 完成 + 挂死根因闭环，用户两项时频需求 + 重启后继续排查驱动）：
+  **①频率轴翻转+150Hz**：去 `invertY(True)`（与 ImageItem y 向下坐标组合的实际
+  朝向是高频在下——离屏 mapFromView 实证，M8 起注释写反；epochs_preview L396 注释
+  同步勘误、行为不动）；`setYRange(0, fmax)`、fmax=`cfg.effective_fmax`（默认 150
+  受 min(150, sfreq*0.475) 钳制）；行 stretch 5:3.0:0.7→5:3.5:0.55。**②四方法+参数
+  窗**：`TfrConfig` dataclass + `compute_window_tfr`（morlet/multitaper 对数频率轴、
+  stockwell 恒 3 元组返回+线性数千格、stft=scipy.signal.stft 窗中心时刻）——dB 统一
+  每频点减峰值；stockwell/stft 行数经 `_pool_rows` **分段 max 池化**统一到 n_freqs
+  （均匀抽样实测漏 stockwell 0.06Hz 窄峰——1933 格抽 40 行行距 2.9Hz>峰宽）；
+  `TfrSettingsDialog`（方法下拉+按方法参数显隐+fmax SpinBox 上限=Nyquist 钳制值）；
+  browser `_open_tfr_settings` 应用段（cfg/频率轴/重算）；短窗守卫 `cfg.min_window_s()`
+  （morlet/mt=2.0、stockwell=1.0、stft=2×win_s）。实测四方法 0.2–130ms 均无压力。
+  **③挂死根因闭环**：conftest 文件级 START/FINISH 时间戳探针（不被 pytest 捕获、
+  不扰 Qt 时序）定位挂点=qtbot.waitUntil（pytest-qt 内部 QEventLoop.exec+QTimer 超时，
+  事件饿死时超时失效→永等；M12 timer/线程活动只是放大窗口，地雷 M8 埋下）——
+  16 处全部替换 conftest `wait_until`（Python 层 deadline），替换后 5 连绿。
+  验证：pytest **334 绿**（+12：features 四方法峰检出口径/行统一/stft 参数/钳制与
+  短窗推导 7 + browser 朝向/钳制/对话框流程 3 + 文案适配 2）+ e2e_m1 **32 项** +
+  smoke；治理七文件同步、坑 #64 补四方法四则。
+  **M13 后续三项精修（同日用户反馈）**：①「时频设置…」按钮从工具栏移入左栏按钮行下方（工具栏过长挤压主窗口左工作区 Dock、全屏后名录显示不全）；②参数上限放开——**fmax 150Hz 硬顶去除**（唯一物理上限 Nyquist，取 ×0.49 安全边：250Hz→122.5、500Hz→245，高频活动不再被人为顶住）、**频率点数 8–120→4–400**（计算量线性、400 点仍在防抖节拍内）；其余范围保留（n_cycles_scale≥1 防核退化/time_bandwidth 2–8 DPSS 惯例/overlap≤0.9——分析入 MANUAL）；③**修 STFT 图不显示 bug**：scipy stft 返回相对窗口的 0 起时间轴，窗口在非 0 位置时热图画到视口外（用户真窗口实测暴露；离屏默认 [0,10] 窗测试碰巧撞对）——stft 分支平移回绝对时间 `t+times[0]`，+1 回归哨兵（[30,40] 窗 rect.left==30）。pytest **335 绿** + e2e 32 项 + smoke；坑 #64 补⑧。**同日三次裁定**：默认上界回 150Hz（fmax=None → min(150, Nyq×0.49)），更高范围用户显式调高（上限仍 Nyq×0.49：500Hz 默认 150/可到 245）。
+
+
+- 2026-10-13（M12 完成，用户四项需求驱动，截图指定布局）：**信号浏览器四项改造**。
+  ①**比例尺下拉**：右组 `_scale_combo`（自动+1/3/5/7/10/20/30/50/100/200/500/1000/2000µV）；
+  固定值锁定 `_spacing_uv`+`_spacing_estimated=True` 挡首帧估计；"自动"切回
+  `_spacing_estimated=False` 用当前窗数据重估（全平窗保持旧值的瑕疵注释在案）；与增益
+  正交（`_set_gain` 路径不碰 spacing）。②**紧凑显示**：左栏按钮「优化显示选择通道/
+  复位通道显示」；`_row_map` 每帧按勾选重算，堆叠公式/`_med` 兜底/标签 y/估计内
+  setYRange/`_apply_y_range` 五处 idx·n 统一经 `_row_of/_row_count`；复位 blockSignals
+  批量恢复全选；默认非紧凑保全部既有测试。③**事件列表移左栏**：M11 底部 QSplitter
+  撤销；左栏 maxWidth 330 内 QSplitter(Vertical)[通道列表+按钮行, 事件列表]（520:260
+  可拖）；event_list 列宽 ResizeToContents；teardown/jump 接线零改动。④**同段时频图**：
+  gfx 三行 5:2:1（主图/时频+turbo LUT (1,1)/事件条）；`_tfr_item()` 空壳（invertY/
+  bottom 隐藏/`setYRange(2,fmax)`）；计算 300ms 实例 QTimer 防抖（`_refresh_data_inner`
+  末尾单点收拢）+`_tfr_seq` 代币+`_tfr_retry` 补算+<2s 占位+teardown 停表作废；
+  `_compute_tfr` 复用 `compute_epochs_tfr(reshape(1,1,-1), baseline=None)`（tfr.py 零
+  改动）；通道下拉在工具栏左组（与显隐/坏道/紧凑解耦）；**setXLink 像素对齐**——
+  三行左轴统一 `event_lane.ROW_AXIS_W=46`（主图/事件条从整体隐藏改定宽空刻度；
+  TestChannelLabels 断言同步改 `_tickLevels`）；**Nyquist 收口** `min(45, sfreq*0.475)`。
+  验证：pytest **320 绿**（+15 test_ui_browser_m12.py：比例尺 3/紧凑 4/三行对齐 3/
+  时频 5）+ e2e_m1 **31 项**（+4：比例尺锁定/紧凑收紧/时频已算覆盖交集窗/turbo 色标
+  在场）+ smoke 零回归；**坑 #64 五则**入 HANDOFF；治理七文件同步。
+  **同日用户反馈精修（三点）**：时频行加高 5:2:1→5:3:0.7（事件条压扁）；色标换 **ColorBarItem**（HistogramLUTItem 的渐变编辑器会拖出多个三角切分点——用户困惑，纯色标+上下缘拖动替代）；**联动方向离屏实证：cb.setLevels→img 自动同步、img.setImage(autoLevels=True) 不联动 cb——程序侧一律经 cb 驱动**；用户拖动结束（sigLevelsChangeFinished）锁定范围**跨屏保持**、双击色标恢复自动（eventFilter）；+1 测试（锁定跨屏+双击解锁）→ pytest **321 绿**；坑 #64 补⑥。
+  **第三轮（直方图回归）**：HistogramLUTItem 换回（保留能量分布直方图供调范围参考——用户二次反馈），渐变编辑器 eventFilter 吃掉全部鼠标（三角切分点不再可拖出）；锁定判定改 **levels 偏差检测**（LUT 的 region 信号程序路径也发——不能当用户标志；autoLevels 联动方向与 ColorBarItem 相反：img autoLevels 会同步 lut，离屏实证）；+2 测试（锁定跨屏/渐变禁交互）→ pytest **322 绿**（当日全量在高负载系统下另有 Heisenbug 偶发挂死 ~50%——完整档案入 HANDOFF 坑 #57⑥，所有能完成的运行全绿、e2e/smoke 稳定）。**2026-10-14 根因闭环（用户重启机器后继续排查）**：conftest 文件级时间戳探针（无扰动、不被 pytest 捕获）定位精确挂点=m6 老测试 fixture 的 `qtbot.waitUntil(_loaded_once)`——**根因=waitUntil 内部 QEventLoop.exec+Qt 侧超时被饿死永等**（M12 的 timer/线程活动只是放大窗口，地雷 M8 就埋下）；解法=全项目 16 处 qtbot.waitUntil 统一替换为 conftest 共享 `wait_until`（Python 层 deadline）——替换后全量 **5 连绿**（此前重启后仍 2/3 挂）；规则入 HANDOFF 坑 #57⑥：测试禁用 qtbot.waitUntil。
 
 - 2026-09-24（M11 完成，用户截图红圈需求驱动）：**事件 marker 列表**——新控件
   `ui/widgets/event_list.py`（EventListView：5 列 #/名称/时间(s)/样本点 round(onset×fs)/

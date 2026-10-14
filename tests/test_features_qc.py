@@ -233,6 +233,8 @@ class TestQualityCheckFeature:
 
 pytest.importorskip("PySide6", reason="无 GUI 环境")
 
+from conftest import wait_until  # noqa: E402
+
 
 class _QcMsgBox:
     """signal_browser 模块级 QMessageBox 桩（逐模块 patch——MainWindow 的
@@ -269,7 +271,7 @@ class TestQcBrowser:
         rec = open_file(fif)
         view = sb.SignalBrowserView(rec)
         qtbot.addWidget(view)
-        qtbot.waitUntil(lambda: view._loaded_once, timeout=10000)
+        wait_until(qtbot, lambda: view._loaded_once, "浏览器首帧加载")
         _QcMsgBox.boxes.clear()
         monkeypatch.setattr(sb, "QMessageBox", _QcMsgBox)
         yield view
@@ -278,9 +280,8 @@ class TestQcBrowser:
 
     def _run_and_wait(self, view, qtbot):
         view._run_qc()
-        qtbot.waitUntil(
-            lambda: not view._qc_running and bool(view._qc), timeout=10000
-        )
+        wait_until(qtbot, lambda: not view._qc_running and bool(view._qc),
+                   "质量体检完成")
 
     def test_marks_and_suggests_bads(self, qc_browser, qtbot):
         """✓/✗ 前缀 + tooltip 明细 + question(Yes) → 三个坏道写进 info["bads"]."""
@@ -315,7 +316,7 @@ class TestQcBrowser:
         rec = open_file(fif)
         view = sb.SignalBrowserView(rec)
         qtbot.addWidget(view)
-        qtbot.waitUntil(lambda: view._loaded_once, timeout=10000)
+        wait_until(qtbot, lambda: view._loaded_once, "浏览器首帧加载")
         _QcMsgBox.boxes.clear()
         monkeypatch.setattr(sb, "QMessageBox", _QcMsgBox)
         try:

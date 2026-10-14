@@ -40,7 +40,7 @@ import math
 
 import numpy as np
 import pyqtgraph as pg
-from PySide6.QtCore import Qt, QTimer, Signal
+from PySide6.QtCore import QEvent, QRectF, Qt, QTimer, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -60,9 +60,11 @@ from PySide6.QtWidgets import (
 
 from ...core.recording import EventTable, LoadPolicy, Recording
 from ...features.qc import QualityCheckParams, compute_channel_qc
+from ...features.tfr import TfrConfig, compute_window_tfr, default_tfr_freqs
 from ...workers.generic import run_in_thread
+from ..dialogs.tfr_settings_dialog import TfrSettingsDialog
 from ..strings_zh import S
-from .event_lane import EventLane, event_color
+from .event_lane import ROW_AXIS_W, EventLane, event_color
 from .event_list import EventListView
 
 logger = logging.getLogger(__name__)
@@ -228,6 +230,29 @@ class SignalBrowserView(QWidget):
         self._qc: dict[str, dict] = {}
         self._qc_running = False  # 防重入：计算期间禁用按钮
         self._ch_offsets: np.ndarray | None = None  # 直流偏移（µV，行文本用）
+        # 紧凑显示（M12）：True=只显勾选通道且按勾选序紧凑重排（不留空位）；
+        # _row_map 在每次 _refresh_data_inner 开头按当前勾选重算（原始 idx →
+        # 紧凑行号），行号使用点统一经 _row_of/_row_count 分支
+        self._compact = False
+        self._row_map: dict[int, int] = {}
+        # 同段时频图（M12）：300ms 防抖定时器（**实例 QTimer 单发可重启**——
+        # QTimer.singleShot 不可取消，连续拖动会堆叠）；_tfr_seq 代币作废迟到
+        # 回调；_tfr_running 防并发计算；_tfr_retry=计算期间又有新请求的补算标记
+        # M13：方法/参数配置（TfrConfig 纯 dataclass，跨线程安全）
+        self._tfr_cfg = TfrConfig()
+        self._tfr_timer = QTimer(self)
+        self._tfr_timer.setSingleShot(True)
+        self._tfr_timer.setInterval(300)
+        self._tfr_timer.timeout.connect(self._start_tfr)
+        self._tfr_seq = 0
+        self._tfr_running = False
+        self._tfr_retry = False
+        # 色标范围锁定（2026-10-13 用户反馈两轮）：用户拖过范围后跨屏保持
+        # （不再每屏自动重设）；双击色标恢复自动。判定用 **levels 偏差检测**：
+        # 程序自动设置后记录基准值，回填前若当前 levels 偏离基准 → 用户改过
+        # → 锁定（region 信号程序路径也发，不能当用户标志——离屏实证）
+        self._tfr_levels_locked = False
+        self._tfr_auto_levels: tuple | None = None
 
         self._build_ui()
         self._populate_channels()
@@ -271,6 +296,12 @@ class SignalBrowserView(QWidget):
         self._btn_qc = QPushButton(S.BTN_QC)
         self._btn_qc.setToolTip(S.BTN_QC_TIP)
         self._btn_qc.clicked.connect(self._run_qc)
+        # 时频通道下拉（M12）：时频图显示哪个通道——与通道显隐/坏道/紧凑显示
+        # **完全独立**（隐藏通道仍可看其时频；时频是分析视角不是浏览布局）
+        tfr_lbl = QLabel(S.LBL_TFR_CHANNEL)
+        self._tfr_ch_combo = QComboBox()
+        self._tfr_ch_combo.setMaximumWidth(110)
+        self._tfr_ch_combo.currentIndexChanged.connect(lambda _i: self._schedule_tfr())
 
         self._lbl_time = QLabel(S.BROWSER_NO_DATA)
         self._btn_prev = QPushButton(S.BTN_PREV_EVENT)
@@ -279,6 +310,15 @@ class SignalBrowserView(QWidget):
         # 曾长期接反（prev→+1/next→-1），写使用手册盘点 UI 时发现于 2026-08-18 修正。
         self._btn_prev.clicked.connect(lambda: self._jump_event(-1))
         self._btn_next.clicked.connect(lambda: self._jump_event(+1))
+        # 比例尺下拉（M12）：固定行距 µV 或"自动"（=首帧 MAD×8 估计的现行为）。
+        # 语义 = 相邻通道行的纵向间距（µV），与增益正交（增益只缩波形不挪行距）
+        scale_lbl = QLabel(S.LBL_SCALE)
+        self._scale_combo = QComboBox()
+        self._scale_combo.addItem(S.SCALE_AUTO)
+        self._scale_combo.addItems(list(S.SCALE_CHOICES))
+        self._scale_combo.setMaximumWidth(76)
+        self._scale_combo.setToolTip(S.LBL_SCALE_TIP)
+        self._scale_combo.currentTextChanged.connect(self._on_scale_changed)
         # 行居中开关（M6.8）：默认勾选 = M6.7b 行为；不勾显示绝对电平
         self._center_cb = QCheckBox(S.CB_ROW_CENTER)
         self._center_cb.setChecked(True)
@@ -303,37 +343,55 @@ class SignalBrowserView(QWidget):
         for w in (
             self._btn_first, self._btn_prev_page, self._btn_prev_s, self._btn_next_s,
             self._btn_next_page, self._btn_last, win_lbl, self._window_combo,
-            self._btn_qc,
+            self._btn_qc, tfr_lbl, self._tfr_ch_combo,
         ):
             bar.addWidget(w)
         bar.addStretch(1)
         for w in (
-            self._lbl_time, self._btn_prev, self._btn_next, self._center_cb,
+            self._lbl_time, self._btn_prev, self._btn_next,
+            scale_lbl, self._scale_combo, self._center_cb,
             gain_lbl, self._gain_slider, self._gain_spin,
         ):
             bar.addWidget(w)
 
         # 通道列表（左）：勾选显隐 + 右键标记坏道（M3 与 BadChannelsStep 联动）；
-        # M6.8 起每行还显示该通道的直流偏移（后台算好后拼进 text）
+        # M6.8 起每行还显示该通道的直流偏移（后台算好后拼进 text）；
+        # M12 起宽度由左栏容器（maxWidth 330）统一约束
         self._ch_list = QListWidget()
-        self._ch_list.setMaximumWidth(200)
         self._ch_list.itemChanged.connect(self._on_channel_toggle)
         self._ch_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self._ch_list.customContextMenuRequested.connect(self._on_channel_context)
 
-        # 图形区：主图 + 事件条
+        # 图形区（M12 三行）：主图 / 同段时频图+turbo 色标 / 事件条。
+        # 行高（M13 再调，用户反馈）：时频图加高到 3.5、事件条压到 0.55
         self._gfx = pg.GraphicsLayoutWidget()
         self._plot = self._plot_item()
         self._gfx.addItem(self._plot, 0, 0)
+        self._tfr_plot = self._tfr_item()
+        self._gfx.addItem(self._tfr_plot, 1, 0)
+        # turbo 色标+能量分布直方图（常驻）：HistogramLUTItem——直方图展示当前
+        # 窗数据的 dB 分布（用户调上下范围时的参考，2026-10-13 二次反馈保留）；
+        # **渐变编辑器禁用交互**（eventFilter 吃掉鼠标——其三角切分点可拖出
+        # 多个，用户困惑且无用），只显示 turbo 渐变；范围调节用直方图上的
+        # region 拖动（保留）。autoLevels 联动离屏实证：img.setImage(autoLevels
+        # =True) 会同步 lut 的 region（与 ColorBarItem 相反）；但 region 两个
+        # 信号程序路径也发——"用户改过"改用 levels 偏差检测（见 _on_tfr_done）。
+        # 双击色标区域恢复自动范围
+        self._tfr_lut = pg.HistogramLUTItem()
+        self._tfr_lut.setImageItem(self._tfr_img)
+        self._tfr_lut.gradient.setColorMap(pg.colormap.get("turbo"))
+        self._tfr_lut.gradient.installEventFilter(self)  # 渐变只显示不交互
+        self._tfr_lut.installEventFilter(self)  # 双击恢复自动
+        self._gfx.addItem(self._tfr_lut, 1, 1)
         self._lane = EventLane()
-        self._gfx.addItem(self._lane, 1, 0)
+        self._gfx.addItem(self._lane, 2, 0)
         self._lane.wire_click()  # 进 scene 后才能绑点击（见 EventLane.wire_click）
         self._lane.clicked_time.connect(self._center_at)
         # 总览滑块双向联动（M6.8）：拖滑块 → 主图跟随；主图视口变化 → 滑块回写
         self._lane.viewport_moved.connect(self._on_lane_viewport)
-        # 行高：主图占 5，事件条占 1
         self._gfx.ci.layout.setRowStretchFactor(0, 5)
-        self._gfx.ci.layout.setRowStretchFactor(1, 1)
+        self._gfx.ci.layout.setRowStretchFactor(1, 3.5)
+        self._gfx.ci.layout.setRowStretchFactor(2, 0.55)
 
         # 键盘导航需要焦点：点击图区 → 焦点代理到本控件 → keyPressEvent 生效
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
@@ -341,27 +399,55 @@ class SignalBrowserView(QWidget):
         self._gfx.setFocusProxy(self)
 
         center = QHBoxLayout()
-        center.addWidget(self._ch_list)
-        center.addWidget(self._gfx, 1)
 
-        # 事件 marker 列表（M11）：底部横条，默认约 4-5 行高、可拖高；
-        # 双击行 → jump_requested → _center_at 定位（事件线/滑块自动联动）。
-        # 面板常驻（2026-09-24 用户裁定）：无事件数据显示空态"无事件"
+        # 紧凑显示两按钮（M12）：通道列表下方——「优化显示选择通道」=只显勾选
+        # 通道并紧凑重排（不留空位、均匀铺满）；「复位通道显示」=恢复全部通道
+        # 与原布局（勾选状态也恢复全选）
+        self._btn_compact = QPushButton(S.BTN_COMPACT)
+        self._btn_compact.setToolTip(S.BTN_COMPACT_TIP)
+        self._btn_compact.clicked.connect(lambda: self._set_compact(True))
+        self._btn_reset = QPushButton(S.BTN_COMPACT_RESET)
+        self._btn_reset.setToolTip(S.BTN_COMPACT_TIP)
+        self._btn_reset.clicked.connect(lambda: self._set_compact(False))
+        btn_row = QHBoxLayout()
+        btn_row.addWidget(self._btn_compact)
+        btn_row.addWidget(self._btn_reset)
+        # 时频设置（M13；2026-10-14 用户反馈从工具栏移入左栏——工具栏过长会
+        # 挤压主窗口左侧工作区 Dock，全屏后工作区名录显示不全）
+        self._btn_tfr_cfg = QPushButton(S.BTN_TFR_SETTINGS)
+        self._btn_tfr_cfg.clicked.connect(self._open_tfr_settings)
+
+        # 左栏（M12）：上半=通道列表+按钮行，下半=事件 marker 列表（M11 面板
+        # 自底部横条移入，2026-10-13 用户截图指定位置）；上下 QSplitter 可拖
+        # 比例，上段不可折叠（64 导联时固定比例会压瘪通道列表）；双击事件行
+        # → jump_requested → _center_at 定位（事件线/滑块自动联动）不变
+        ch_block = QWidget()
+        ch_lay = QVBoxLayout(ch_block)
+        ch_lay.setContentsMargins(0, 0, 0, 0)
+        ch_lay.addWidget(self._ch_list, 1)
+        ch_lay.addLayout(btn_row)
+        ch_lay.addWidget(self._btn_tfr_cfg)
         self._event_list = EventListView()
         self._event_list.jump_requested.connect(self._center_at)
-        center_widget = QWidget()
-        center_widget.setLayout(center)
-        split = QSplitter(Qt.Orientation.Vertical)
-        split.addWidget(center_widget)
-        split.addWidget(self._event_list)
-        split.setStretchFactor(0, 1)   # 波形区弹性占主
-        split.setCollapsible(0, False)  # 波形不可被拖到压瘪
-        split.setSizes([1000, 140])    # 初始比例 ≈ 4-5 行列表高
-        split.setCollapsible(1, True)  # 列表可收细（配合拖拽）
+        left_split = QSplitter(Qt.Orientation.Vertical)
+        left_split.addWidget(ch_block)
+        left_split.addWidget(self._event_list)
+        left_split.setStretchFactor(0, 1)
+        left_split.setCollapsible(0, False)
+        left_split.setCollapsible(1, True)
+        left_split.setSizes([520, 260])  # 双段非零初始（保 e2e isHidden 断言语义）
+        left = QWidget()
+        left.setMaximumWidth(330)  # 事件列表 5 列 ≈306px + 余量
+        left_lay = QVBoxLayout(left)
+        left_lay.setContentsMargins(0, 0, 0, 0)
+        left_lay.addWidget(left_split)
+
+        center.addWidget(left)
+        center.addWidget(self._gfx, 1)
 
         root = QVBoxLayout(self)
         root.addLayout(bar)
-        root.addWidget(split, 1)
+        root.addLayout(center, 1)
 
     def _plot_item(self) -> pg.PlotItem:
         """主图配置：时间轴秒、滚轮平移 ViewBox、y 轴锁定."""
@@ -372,11 +458,51 @@ class SignalBrowserView(QWidget):
         p.setClipToView(True)
         # y 锁定：通道行高只由间距估计决定，滚轮/拖动不再压缩通道
         p.getViewBox().setMouseEnabled(x=True, y=False)
+        # 左轴=定宽空刻度（M12）：不再整个隐藏——与 TFR/事件条三行统一
+        # ROW_AXIS_W，保 setXLink 像素对齐（见 event_lane.ROW_AXIS_W 注释）
+        p.getAxis("left").setTicks([])
+        p.getAxis("left").setWidth(ROW_AXIS_W)
+        return p
+
+    def _tfr_item(self) -> pg.PlotItem:
+        """同时段时频图（M12 建、M13 改）：方法/参数可配，x 与主图像素对齐.
+
+        空壳+计算分离：本方法只建视图（常驻 ImageItem/hint/色标）；数据
+        由 _schedule_tfr/_start_tfr 后台计算回填。关键配置——
+        - ``setXLink(self._plot)``：与主图**像素对齐**（不是复制范围）；
+          必须在 _populate_channels 首次 setXRange 前建立（_build_ui 构造
+          顺序天然满足），三行左轴等宽（ROW_AXIS_W）时逐次精确。
+        - **不 invertY**（M13 翻转）：invertY(True) 与 ImageItem 的 y 向下
+          坐标组合的实际效果是**高频在下**（M8 起注释一直写反，2026-10-14
+          离屏实证）——去掉后低频/0 在下、往上增高（用户要求）。
+        - 频率显示范围 [0, fmax]（fmax = cfg.effective_fmax，默认 150 受
+          Nyquist×0.475 钳制——250Hz 采样 →118.75、500Hz →150）。
+        - LUT 顺序约束：``setImageItem`` 必须先于 ``setColorMap``（M8 实证）；
+          turbo 用 ``pg.colormap.get("turbo")``（安装自带 csv；jet/hot 才需公式）。
+        """
+        p = pg.PlotItem()
+        p.getAxis("left").setLabel(S.EP_TFR_FREQ_AXIS)
+        p.getAxis("left").setWidth(ROW_AXIS_W)
+        p.getAxis("bottom").setVisible(False)  # 时间刻度归主图 bottom 轴
+        p.setMouseEnabled(x=False, y=False)
+        p.setMenuEnabled(False)
+        p.hideButtons()
+        fmax = self._tfr_cfg.effective_fmax(self.rec.meta.sfreq)
+        self._tfr_freqs = default_tfr_freqs(self._tfr_cfg.fmin, fmax,
+                                            self._tfr_cfg.n_freqs)
+        p.setYRange(0.0, fmax, padding=0)
+        self._tfr_img = pg.ImageItem()
+        p.addItem(self._tfr_img)
+        self._tfr_hint = pg.TextItem("", color="#888888", anchor=(0.5, 0.5))
+        p.addItem(self._tfr_hint)
+        p.setXLink(self._plot)
         return p
 
     def _populate_channels(self) -> None:
         """按 meta 通道表建曲线/行内标签/列表项（数据未到也先建，首帧统一填数）."""
         names = self.rec.meta.channel_names
+        # 时频通道下拉（M12）：全部通道名，默认第一通道
+        self._tfr_ch_combo.addItems(list(names))
         label_fill = pg.mkBrush(255, 255, 255, 200)  # 半透明白底：压在波形上也读得清
         for i, name in enumerate(names):
             curve = pg.PlotCurveItem(pen=pg.mkPen(S.SIGNAL_PEN_COLOR, width=1))
@@ -396,8 +522,8 @@ class SignalBrowserView(QWidget):
             item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
             item.setCheckState(Qt.CheckState.Checked)
             self._ch_list.addItem(item)
-        # M6：通道名不再走 y 轴刻度（全量 setTicks 在导联多时必然挤叠/截断）
-        self._plot.getAxis("left").setVisible(False)
+        # M6：通道名不走 y 轴刻度（行内嵌 TextItem）；M12 起左轴=定宽空刻度
+        # （配置移入 _plot_item——与 TFR/事件条三行统一对齐）
 
         # 幅值标尺（右上角竖线 + µV 标注；首帧数据后按视口高度换算）
         self._scale_line = pg.PlotCurveItem(pen=pg.mkPen("#666666", width=2))
@@ -591,6 +717,11 @@ class SignalBrowserView(QWidget):
     def _refresh_data_inner(self) -> None:
         t0, t1 = self._visible_range()
         enabled = [c for c in self._channels if c["enabled"]]
+        # 紧凑显示（M12）：每帧重算 原始idx→紧凑行号 映射（勾选变化即重排）；
+        # 非紧凑时空映射，_row_of 退化返回原 idx（留空位语义不变）
+        self._row_map = (
+            {c["idx"]: i for i, c in enumerate(enabled)} if self._compact else {}
+        )
         picks = [c["idx"] for c in enabled]
         if picks:
             data, times = self.rec.get_window(t0, t1, picks)
@@ -626,14 +757,14 @@ class SignalBrowserView(QWidget):
                 # 显示值（绝对模式）= 原始值 × 增益：无行偏移、纯电平堆叠，
                 # 通道间真实电平差直接可见（yRange 同步自适配，见 _apply_y_range）
                 if centering:
-                    disp = (out_v - baselines[row]) * gain + ch["idx"] * self._spacing_uv
+                    disp = (out_v - baselines[row]) * gain + self._row_of(ch) * self._spacing_uv
                 else:
                     disp = out_v * gain
                     # 记本窗口中位（含增益）供标签贴行用；隐藏通道用旧值兜底
                     ch["_med"] = (
                         float(np.median(data_uv[row])) * gain
                         if data_uv.shape[1] > 0
-                        else ch.get("_med", ch["idx"] * self._spacing_uv)
+                        else ch.get("_med", self._row_of(ch) * self._spacing_uv)
                     )
                 ch["curve"].setData(out_t, disp, connect=connect)
         # 通道标签跟随视口左缘（所有通道都更新，含隐藏——便宜且状态一致）；
@@ -643,9 +774,9 @@ class SignalBrowserView(QWidget):
         centering = self._center_cb.isChecked()
         for ch in self._channels:
             y = (
-                ch["idx"] * self._spacing_uv
+                self._row_of(ch) * self._spacing_uv
                 if centering
-                else ch.get("_med", ch["idx"] * self._spacing_uv)
+                else ch.get("_med", self._row_of(ch) * self._spacing_uv)
             )
             ch["label"].setPos(t0 + margin, y)
         # y 轴范围按模式应用（行居中=堆叠行布局；绝对=数据自适配）。
@@ -658,6 +789,151 @@ class SignalBrowserView(QWidget):
             S.TIME_FMT.format(t=(t0 + t1) / 2, total=self.rec.meta.duration_s)
         )
         self._update_event_lines(t0, t1)
+        # 同段时频图（M12）：视口/增益/紧凑等一切变化在数据刷新末尾单点
+        # 收拢——只重启防抖定时器，300ms 内的连续拖动只算最后一次
+        self._schedule_tfr()
+
+    # ------------------------------------------------------------------ 同段时频图（M12）
+
+    def _open_tfr_settings(self) -> None:
+        """「时频设置…」（M13）：方法/参数对话框 → 确定后应用并重算.
+
+        应用面：更新 cfg + 频率轴（`_tfr_freqs` 与 y 显示范围同步重建）+
+        触发重算。正在计算的请求由代币机制自然作废（旧参数结果丢弃）。
+        """
+        dlg = TfrSettingsDialog(self._tfr_cfg, self.rec.meta.sfreq, self)
+        if dlg.exec() != TfrSettingsDialog.DialogCode.Accepted:
+            return
+        self._tfr_cfg = dlg.config()
+        fmax = self._tfr_cfg.effective_fmax(self.rec.meta.sfreq)
+        self._tfr_freqs = default_tfr_freqs(self._tfr_cfg.fmin, fmax,
+                                            self._tfr_cfg.n_freqs)
+        self._tfr_plot.setYRange(0.0, fmax, padding=0)
+        logger.info("时频图配置已更新：method=%s fmin=%.1f fmax=%.1f n=%d",
+                    self._tfr_cfg.method, self._tfr_cfg.fmin, fmax,
+                    self._tfr_cfg.n_freqs)
+        self._schedule_tfr()
+
+    def _schedule_tfr(self) -> None:
+        """防抖入口：重启单发定时器（实例 QTimer.start() 重启=取消旧定时）."""
+        self._tfr_timer.start()
+
+    def _start_tfr(self) -> None:
+        """防抖到期：发起后台时频计算（代币作废迟到回调）.
+
+        短窗下限随方法/参数推导（``cfg.min_window_s()``，M13——morlet/
+        multitaper 2.0s（2Hz 核≈1.6s）、stockwell 1.0s、stft 2×窗长），
+        不再硬编码 2.0；计算中又有新请求（_tfr_retry）在完成后自动补算。
+        """
+        if not self._loaded_once:
+            return
+        t0, t1 = self._visible_range()
+        self._tfr_seq += 1
+        token = self._tfr_seq
+        min_s = self._tfr_cfg.min_window_s()
+        if (t1 - t0) < min_s:
+            self._tfr_hint.setText(S.BROWSER_TFR_SHORT.format(t=min_s))
+            self._tfr_hint.setPos((t0 + t1) / 2, float(self._tfr_freqs[len(self._tfr_freqs) // 2]))
+            self._tfr_hint.setVisible(True)
+            return
+        if self._tfr_running:
+            self._tfr_retry = True
+            return
+        self._tfr_running = True
+        self._tfr_hint.setVisible(False)
+        ch = self._tfr_ch_combo.currentIndex()
+        run_in_thread(
+            self._compute_tfr,
+            on_done=lambda r: self._on_tfr_done(token, r),
+            on_error=lambda m: self._on_tfr_error(token, m),
+            t0=t0, t1=t1, ch=ch,
+        )
+
+    def _compute_tfr(self, t0: float, t1: float, ch: int):
+        """后台线程：当前窗口单通道时频（M13 四方法统一入口，计算全在 features）.
+
+        与主线程并发只读同一 raw——M6.8 通道偏移统计已有同款先例。
+        ``compute_window_tfr`` 返回 (freqs, times, db)：db=每频点减自身峰值
+        的 dB（浏览器无事件基线口径）；stft 的 times 为窗中心时刻。
+        """
+        data, times = self.rec.get_window(t0, t1, [ch])
+        return compute_window_tfr(data[0], self.rec.meta.sfreq, times, self._tfr_cfg)
+
+    def _on_tfr_done(self, token: int, result) -> None:
+        """主线程回填：代币失效（期间视口又变）或有补算标记则丢弃/重排."""
+        self._tfr_running = False
+        try:
+            if token != self._tfr_seq or self._tfr_retry:
+                self._tfr_retry = False
+                self._schedule_tfr()
+                return
+            freqs, times, db = result
+            # 偏差检测（先于 setImage——autoLevels 会覆盖用户拖的值）：当前
+            # levels 偏离上次程序基准 = 用户拖过 region → 锁定
+            cur = tuple(self._tfr_img.getLevels())
+            base = self._tfr_auto_levels
+            if (not self._tfr_levels_locked and base is not None
+                    and not np.allclose(cur, base)):
+                self._tfr_levels_locked = True
+            # ImageItem 默认 col-major：传置 [n_times, n_freq]；数据坐标 setRect
+            # 对齐窗口与频率域，x 轴由 setXLink 像素对齐跟随（零额外同步）。
+            # levels：未锁→autoLevels=True（img 与 lut.region 自动同步，直方图
+            # 分布随新数据刷新）并记录新基准；已锁→保持（region 不动，直方图
+            # 分布曲线仍随数据更新——用户调范围时能看到新屏的分布参考）
+            self._tfr_img.setImage(db.T, autoLevels=not self._tfr_levels_locked)
+            self._tfr_img.setRect(QRectF(
+                float(times[0]), float(freqs[0]),
+                float(times[-1] - times[0]), float(freqs[-1] - freqs[0]),
+            ))
+            if not self._tfr_levels_locked:
+                self._tfr_auto_levels = tuple(self._tfr_img.getLevels())
+        except RuntimeError:
+            pass  # C++ 对象已释放（关 tab 竞态，epochs_preview 同款兜底）
+
+    def eventFilter(self, obj, event) -> bool:
+        """色标交互管制：渐变编辑器只显示不交互；双击恢复自动范围."""
+        t = event.type()
+        mouse = (
+            QEvent.Type.GraphicsSceneMousePress,
+            QEvent.Type.GraphicsSceneMouseRelease,
+            QEvent.Type.GraphicsSceneMouseMove,
+            QEvent.Type.GraphicsSceneMouseDoubleClick,
+        )
+        try:
+            if obj is self._tfr_lut.gradient and t in mouse:
+                # 渐变编辑器（三角切分点）禁交互——吃掉全部鼠标（含双击：
+                # 双击渐变也当解锁手势，语义与直方图区一致）
+                if t == QEvent.Type.GraphicsSceneMouseDoubleClick:
+                    self._reset_tfr_levels()
+                return True
+            if obj is self._tfr_lut and \
+                    t == QEvent.Type.GraphicsSceneMouseDoubleClick:
+                self._reset_tfr_levels()
+                return True
+        except RuntimeError:
+            pass  # 关 tab 竞态
+        return super().eventFilter(obj, event)
+
+    def _reset_tfr_levels(self) -> None:
+        """解除范围锁定并按当前图重设自动范围（双击色标手势）."""
+        self._tfr_levels_locked = False
+        img = self._tfr_img.image
+        if img is not None:
+            self._tfr_lut.setLevels(float(img.min()), float(img.max()))
+            self._tfr_auto_levels = tuple(self._tfr_img.getLevels())
+
+    def _on_tfr_error(self, token: int, msg: str) -> None:
+        """后台失败：占位提示（瞬态视图状态，不弹 QMessageBox 骚扰）."""
+        self._tfr_running = False
+        if token != self._tfr_seq:
+            return
+        try:
+            self._tfr_hint.setText(S.BROWSER_TFR_FAIL.format(msg=msg))
+            t0, t1 = self._visible_range()
+            self._tfr_hint.setPos((t0 + t1) / 2, float(self._tfr_freqs[len(self._tfr_freqs) // 2]))
+            self._tfr_hint.setVisible(True)
+        except RuntimeError:
+            pass
 
     _spacing_estimated = False
 
@@ -674,7 +950,7 @@ class SignalBrowserView(QWidget):
         amp = float(np.median(live)) * _SPACING_MAD_SCALE if len(live) else 0.0
         if amp > 1e-3:  # 全平数据（如常数导联）不覆盖默认值
             self._spacing_uv = amp
-            n = len(self._channels)
+            n = self._row_count()
             self._plot.setYRange(
                 -1.5 * self._spacing_uv, (n + 0.5) * self._spacing_uv, padding=0
             )
@@ -691,7 +967,7 @@ class SignalBrowserView(QWidget):
 
         幅值标尺是纯视图几何（视口高度÷增益换算真实 µV），与模式无关。
         """
-        n = max(len(self._channels), 1)
+        n = max(self._row_count(), 1)
         if self._center_cb.isChecked():
             self._plot.setYRange(
                 -1.5 * self._spacing_uv, (n + 0.5) * self._spacing_uv, padding=0
@@ -731,6 +1007,24 @@ class SignalBrowserView(QWidget):
         if self._gain_syncing or value <= 0:
             return
         self._set_gain(10.0 * math.log10(value))
+
+    def _on_scale_changed(self, text: str) -> None:
+        """比例尺下拉（M12）：固定行距 µV 或切回"自动"重估.
+
+        固定值：``_spacing_uv`` 直接锁定并置 ``_spacing_estimated=True``
+        （阻止首帧自动估计覆盖用户选择）；yRange 由 _apply_y_range 随刷新
+        自动套用。切回"自动"：``_spacing_estimated=False`` 后刷新——下一次
+        有数据的刷新经 _refresh_data_inner 的估计分支按**当前窗口**重估
+        （注意：全平窗口时 _estimate_spacing 保留旧值但仍置位——"切自动
+        但保持手动值"的已知瑕疵，注释在案）。空窗/全不勾选时推迟到下次
+        有数据的刷新，语义自然。
+        """
+        if text == S.SCALE_AUTO:
+            self._spacing_estimated = False
+        else:
+            self._spacing_uv = float(text)
+            self._spacing_estimated = True
+        self._refresh_data()
 
     def _update_scale_bar(self, t0: float, t1: float) -> None:
         """右上角幅值标尺：像素长度固定，标注换算回真实 µV（含增益）.
@@ -895,7 +1189,11 @@ class SignalBrowserView(QWidget):
         ev.accept()
 
     def _on_channel_toggle(self, item: QListWidgetItem) -> None:
-        """通道勾选变化 → 显隐对应曲线与标签并刷新（曲线保留，仅不画）."""
+        """通道勾选变化 → 显隐对应曲线与标签并刷新（曲线保留，仅不画）.
+
+        紧凑模式下勾选/取消即时重排——_refresh_data_inner 每帧重算
+        _row_map，无需在此分支（M12）。
+        """
         row = self._ch_list.row(item)
         if 0 <= row < len(self._channels):
             on = item.checkState() == Qt.CheckState.Checked
@@ -903,6 +1201,41 @@ class SignalBrowserView(QWidget):
             self._channels[row]["curve"].setVisible(on)
             self._channels[row]["label"].setVisible(on)
             self._refresh_data()
+
+    # ------------------------------------------------------------------ 紧凑显示（M12）
+
+    def _row_of(self, ch: dict) -> int:
+        """通道的堆叠行号：紧凑=勾选序号（_row_map），否则=原始 idx（留空位）."""
+        return self._row_map.get(ch["idx"], ch["idx"])
+
+    def _row_count(self) -> int:
+        """堆叠行数：紧凑=勾选通道数，否则=全部通道数（含隐藏占位）."""
+        if self._compact:
+            return sum(1 for c in self._channels if c["enabled"])
+        return len(self._channels)
+
+    def _set_compact(self, on: bool) -> None:
+        """「优化显示选择通道 / 复位通道显示」按钮（M12）.
+
+        优化（on=True）：只置紧凑标志并刷新——勾选状态不动（用户的选择
+        保留），行号按勾选序紧凑重排（不留空位、yRange 收紧到行数）。
+        复位（on=False）：恢复全部通道勾选 + 原布局。批量 setCheckState
+        会连发 N 次 itemChanged → N 次刷新，blockSignals 包住（与
+        _refresh_ch_list_text 同模式），一次性改完再手动刷一帧。
+        """
+        if not on:
+            self._ch_list.blockSignals(True)
+            try:
+                for i in range(self._ch_list.count()):
+                    self._ch_list.item(i).setCheckState(Qt.CheckState.Checked)
+            finally:
+                self._ch_list.blockSignals(False)
+            for ch in self._channels:
+                ch["enabled"] = True
+                ch["curve"].setVisible(True)
+                ch["label"].setVisible(True)
+        self._compact = on
+        self._refresh_data()
 
     # ------------------------------------------------------------------ 坏道标记
 
@@ -947,3 +1280,6 @@ class SignalBrowserView(QWidget):
         # 事件列表清空：模型持 EventTable 引用，断链助 GC（列表随 tab 销毁，
         # 这里只断数据引用——防万一 teardown 后仍有异步回调摸到旧事件表）
         self._event_list.set_events(EventTable(), 1.0)
+        # 时频计算收尾（M12）：停防抖定时器 + 代币自增作废在途回调
+        self._tfr_timer.stop()
+        self._tfr_seq += 1

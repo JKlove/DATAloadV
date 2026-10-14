@@ -393,7 +393,10 @@ class EpochsPreviewView(QWidget):
             ))
             self._plot.clear()
             self._plot.addItem(img)
-            self._plot.invertY(True)  # 低频在下（频率轴惯例）
+            # 实际效果=高频在下（与 ImageItem y 向下坐标的组合，2026-10-14
+            # 实测勘误——旧注释"低频在下"一直写反；M13 起浏览器侧时频图已按
+            # 用户要求翻转为低频在下，本视图行为保持未动）
+            self._plot.invertY(True)
             self._plot.getAxis("left").setLabel(S.EP_TFR_FREQ_AXIS)
             # 恢复自动频率刻度（_redraw/构造统一 setTicks([]) 无刻度；None=默认刻度系统）
             self._plot.getAxis("left").setTicks(None)

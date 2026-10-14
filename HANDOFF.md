@@ -54,7 +54,7 @@ pip install -e ".[dev]"
 ```bash
 conda activate dlv
 dataloadv                                    # 启动应用（或 python -m dataloadv）
-QT_QPA_PLATFORM=offscreen pytest             # 全部单测（2026-09-07：298 passed，含 real 数据项；
+QT_QPA_PLATFORM=offscreen pytest             # 全部单测（2026-10-14 M13 精修后：335 passed，含 real 数据项；
                                              #   MainWindow 级测试须 offscreen——坑 #45）
 pytest -m real                               # 仅真实数据冒烟（data/sheep 缺失自动跳过；建议同带 offscreen）
 python scripts/e2e_m9.py                     # M9 端到端：连续导出 EDF/FIF+批处理逐文件（幂等；须 offscreen）
@@ -149,7 +149,9 @@ src/dataloadv/
     ├── dialogs/batch_dialog.py    # 批处理两页对话框：选择(过滤/全选/导出组)↔运行；queue.Queue+QTimer 事件泵（M5）
     ├── dialogs/settings_dialog.py # 设置：线程数/缓存 GB/默认导出目录（M5）
     └── widgets/             # workspace_tree / meta_table / signal_browser / event_lane /
-                              #   event_list（M11 事件 marker 列表：双击行 _center_at 定位）/
+                              #   event_list（M11 事件 marker 列表：双击行 _center_at 定位；M12 移入左栏）/
+                              #   signal_browser（M12：比例尺下拉/紧凑显示/三行 gfx 主图+同段时频图
+                              #   turbo+turbo 色标+事件条，setXLink 像素对齐见坑 #64）/
                               #   log_panel
                               #   + params_form（pydantic 自动表单，步骤/特征共用——step_id 别名零改动）
                               #   + pipeline_panel（步骤链+特征链+预览+PSD+「用当前显示窗口」预填）
@@ -241,6 +243,35 @@ src/dataloadv/
 
 56. **M8.1 分段锚定与时频观感的六个源码级细节**：①**`pg.ColorMap` 收 0..1 float 色数组会按 0..255 截断**（0.75→0）——近全黑热图且无告警；jet/hot 公式生成必须 `(256,3)` **uint8**（`np.round(rgb*255).astype(np.uint8)`）；viridis/turbo/plasma 是 `pg.colormap.get()` 内置、jet/hot 抛 FileNotFoundError（dlv 环境 0.14.0）。②**`ImageItem.lut` 是可调用不是数组**——`HistogramLUTItem.getLookupTable` 的引用（随 gradient 实时变），签名 `getLookupTable(img=None, n=None, alpha=None)` **首参是 img**：`img.lut(256)` 报 `'int' object has no attribute 'dtype'`，取表须 `img.lut(n=256)`；`np.asarray(img.lut)` 得 bound method 对象数组比较恒无意义。配套：`img.getLevels()` 返回 ndarray，断言相等须 `np.array_equal`（`==` 触发 truth-value 歧义）；`lut.gradient.setColorMap(cm)` 只走 gradientChanged→setLookupTable **不碰 levels**（换配色零亮度扰动），且须在 `setImageItem` 之后调用。③**mne.Epochs 锚点保留条件**（1.12 实测）：`anchor+round(tmin·fs) ≥ 0` 且 `anchor ≤ n_times−1−round(tmax·fs)`，越界锚点被 `on_missing="ignore"` **静默丢弃**——自定义锚点序列一律**样本域**构造（秒域近似差 1 样本就丢段）；手动时刻模式是用户显式枚举的输入，必须预检报错列出**全部**无效锚点（"要 5 段得 3 段"比报错难排查）。④**程序化 `setYRange` 会禁用 autoRange**——时频视图须在 `addItem(img)` 后显式 `autoRange()`，否则热图被上一视图残留 Y 范围压成一条（用户截图证实的观感 bug 根因；与 invertY 先后无关）。⑤**中文 Literal 值 = 冻结的序列化格式**：pydantic 校验/旧 JSON 缺键回填/QComboBox 往返三处实测兼容，但换词即旧 pipeline JSON 全不兼容——词表一次定稿；`json.dumps` 记得 `ensure_ascii=False`。⑥e2e_m8/e2e_m81 按视图**索引**寻址（setCurrentIndex(0..3/4)）——预览加新视图只能 append 尾部，不可插位。
 57. **M8.2 pyqtgraph 0.14 刻度与图例的五则**（离屏实测）：①`AxisItem.setTicks` 三态——`[[...]]` 自定义刻度、`[]` **空刻度（无任何刻度）**、`None` **恢复默认自动刻度系统**；内部 `_tickLevels` 可读（自定义=列表、空/自动后=None/[]，断言"无自定义刻度"用 `not _tickLevels` 兼容两态）。**切换视图不复位 ticks 就是残留**（通道名 ticks 经 invertY 翻到左上角飘字的根因）。②`plot.clear()` **会**清 LegendItem 条目（`leg.items` 变空——M8 "不用 legend 防 clear 状态残留"的顾虑在 0.14 不成立），但**图例框本身不清**（空框仍显示）——须手动 `legend.hide()`。③LegendItem 0.14 默认 **NoBrush 无底框**（文字直压曲线），`setBrush(mkBrush(255,255,255,210))`+`setPen` 加底；**`columnCount` 是 int 属性不是方法**（`setColumnCount(n)` 是方法）——单列条目多时矮窗口排不到底被截断，`setColumnCount(ceil(n/12))` 分列。④`TextItem` 有 `setFont` 无 `font()` getter——取回走内部 `t.textItem.font()`（QGraphicsTextItem）；堆叠行内嵌标签在矮窗口（500px/25 行）默认字号**盒高≥行距相邻相触**，显式 8pt 压盒高（M6 全高浏览器不受此限保持默认）。⑤离屏 `QFont()` 默认族在 macOS offscreen 有一次性 50ms 字体族别名告警（无害）。⑥**全量 pytest 期间别并发 e2e/smoke 等 QT 重活**：曾出现 pytest 死等（主线程 QEventLoop::exec、后台线程全 cond_wait，CPU 归零）——kill 重跑即过（-v 日志同批测试全绿），属并发负载下的偶发竞态非测试问题；macOS 抓 Python 栈 py-spy 要 sudo，用系统 `sample <pid> 2 -file` 看特征帧（exec/cond_wait）即可判"挂"还是"慢"。**2026-09-07 第二次实证**：全量 pytest（`| tail` 管道）期间并发跑 python 验证脚本（纯 io/numpy 无 Qt）→ 224 位出 E + 挂死（ps 判据：进程 25 分钟累计 CPU 仅 6.4s）；kill 后 `-v` 直写文件重跑 **298 绿 6.3s** 零 E——并发窗口内即使非 Qt 脚本也可能踩中；另：`| tail` 管道让挂死无进度可见（坑 #36 自食），全量回归一律 `-v` 直写文件。
+  **2026-10-13/14 Heisenbug 挂死（✅ 2026-10-14 根因闭环：qtbot.waitUntil 的 Qt 侧超时会饿死）**：全量
+  pytest 在高负载系统（load 4.7、机器 61 天未重启）下 ~50% 概率挂死——主线程
+  QEventLoop::exec、worker 全 cond_wait、CPU 归零（#57⑥ 同族但挂率异常高）。**已确认
+  事实**：①挂点漂移但集中在 test_ui_browser_m12.py 尾部至 m6 首测试之间（215/216 项
+  交界，即 m12 全部完成后 qtbot 清理链/m6 开场）；②最小组合 m12+m6 可复现（3 轮 1 挂，
+  -q 模式；同组合 -v 4 轮全绿，但全量 -v 亦挂过 1 次——输出模式非决定性）；③观测手段
+  一介入（-s / faulthandler 包装）就不挂（Heisenbug 本征）；④faulthandler.dump_traceback
+  _later 的 dump 会落进 pytest 的 fd 捕获——须 -s 才可见；⑤pytest-qt 的 waitUntil 内部
+  是 QEventLoop.exec + QTimer 超时（wait_signal.py:26/639）——**事件分发饿死时超时本身
+  失效 → 永等**，这正是挂死的形态学解释。**已做的防御**：test_ui_browser_m12 全部等待改
+  `_poll_until`（Python 层 time.monotonic deadline + qtbot.wait(50) 轮询——超时检查不
+  依赖 Qt 事件，最坏 15s 明确 FAIL 而非永挂）——**挂死仍发生**，说明还有别的 exec 入口
+  （嫌疑：qtbot fixture teardown 的 widget 清理链/pytest-qt 内部等待，未定位）。
+  **接手排查线索**：先重启机器（排除 61 天累积的内核状态）复测挂率；若复现，用
+  `pytest tests/test_ui_browser_m12.py tests/test_ui_browser_m6.py -q` 循环复现 +
+  lldb attach（sample 拿不到 Python 帧，py-spy 需 sudo）；重点查 pytest-qt qtbot
+  teardown 对 5 个 SignalBrowserView（各持 QTimer/PyQtGraph scene/后台线程 relay）的
+  清理顺序。**根因闭环（2026-10-14，重启机器排除系统因素后）**：conftest 注入文件级时间
+  戳探针（不经 pytest fd 捕获、不改变 Qt 时序——-s 观测会让它消失，纯 Heisenbug）→
+  精确挂点=test_ui_browser_m6.py::TestGainInput 的 fixture setup 里的
+  `qtbot.waitUntil(_loaded_once)`——**根因即 waitUntil 本身**（内部 QEventLoop.exec +
+  Qt 侧 QTimer 超时，事件分发被饿死时超时失效 → 永等；M12 的 300ms TFR QTimer+后台
+  线程活动只是放大了触发窗口，地雷从 M8 的 keepalive 等待范式就埋下）。**解法=全部
+  16 处 qtbot.waitUntil 替换为 conftest 的 `wait_until`**（Python 层 time.monotonic
+  deadline + qtbot.wait(50) 轮询——超时检查不依赖 Qt 事件，最坏明确 FAIL 不永挂；
+  tests/conftest.py 共享、各测试文件 `from conftest import wait_until`）。替换后全量
+  5 连绿（此前重启后仍 2/3 挂）+ e2e/smoke 回归过。**规则：本项目测试一律用
+  `wait_until`，禁止 `qtbot.waitUntil`**；时间戳探针转常设，再有挂死看
+  /tmp/pytest_trace.log 最后一个 START 无 FINISH 即精确挂点。（2026-10-14 又见一例**退出阶段挂**：trace 全部 FINISH 但进程不退——挂点在测试体之后（qapp/pytest-qt 清理段），探针测不到；kill 重跑即绿，低频，暂记档不深挖。）
 58. **M9 连续数据导出的五则**（mne 1.12 / edfio 0.4.16 实测）：①**`mne.export.export_raw` 的 `physical_range` 默认 "auto" 按通道类型统一量程**——录制里混一个 ±375000µV 开路饱和通道（羊数据 CH5-8 就是），该类型 16-bit 步长被拖到 ≈11.4µV/LSB，正常 20µV 信号直接被量化抹平；**必须 "channelwise"**（每通道按自身 min/max 用足量程）。②**EDF 按整秒数据记录写盘**：`crop(0, 30)` 含端点 7501 样本 → 读回 7750（补到 31 记录）——断言时长用「≤1 记录补齐」口径，不能写死 `n_times == 30*fs`。③**FIF 文件名规约**：缺 `.fif` 后缀 `raw.save` 抛 OSError、缺 `_raw` 只是 warning——wrapper 主动补 `_raw` 保干净；mne≥1.9 `raw.save` 返回 fnames **列表**（2GB split），取 `[0]`。④**白名单外通道类型是 mne 导出的静默硬伤**：misc 等类型数据留 V 却标 µV（单位错标），必须在 wrapper 前置拒绝（eeg/ecog/seeg/eog/ecg/emg/bio/dbs/stim 之外）；通道名 >16 字符抛英文 RuntimeError、非 ASCII 时 edfio 编码直接炸——都前置转中文 ValueError。⑤**`QAction.triggered` 直连带参方法会把 `checked=False` 传进去**：`menu.addAction(text, method)` 的 method 签名带可选参（如 `export_processed(fmt=None)`）时 False 非 None、格式守卫失效——lambda 包一层；面板按钮 `clicked` 同理（M9 全部 lambda 接线）。
 
 59. **M10 PyInstaller 打包的七则**（PyInstaller 6.22.2 / mne 1.12 / macOS arm64 实测）：①**spec 全局变量是 `SPECPATH`（str）没有 `SPECDIR`**——写 SPECDIR 是 NameError 秒退；用 `ROOT = Path(SPECPATH)`。②**mne 1.12 用 lazy_loader 惰性加载子模块，静态分析扫不到**——不处理则冻结环境 `import mne` 当场崩（`No module named 'mne.utils._logging'`，从 `mne.set_log_level` 的 lazy 属性链触发）；解法 `collect_submodules('mne')` 收全子模块**名字**（纯代码进 PYZ，几 MB），并剔除 `mne.tests`/`mne.testing`；neo（rawio 后端按格式名动态分发）/pynwb/hdmf 同款处理。③**`collect_data_files('mne'/'pynwb'/'hdmf')` 收数据文件最小集**（mne 通道模板/montage、pynwb/hdmf 命名空间 schema JSON）——实测够用，**不要 `collect_all`**（连测试数据几百 MB 一起拖）。④**warn-<名>.txt 的 "missing module named mne.utils.warn/verbose/logger" 是 lazy_loader 噪音**——真提供者（mne.utils._logging）已在 PYZ，冒烟通过是实证；delayed/optional 的 missing 条目不是待办清单。⑤**本机构建 .app 无 quarantine 属性**——本机双击不出 Gatekeeper 提示（`xattr` 无 com.apple.quarantine）；提示只在下载/他机拷贝的包上出现，`spctl -a` rejected 是未签名**预期**。mac 压分发包必须 `zip -r -y`（保 .app 内符号链接），Windows 用 Compress-Archive。⑥**CI runner 不用 conda**——setup-python 3.10 + `pip install -e ".[extra-readers]" pyinstaller` 装齐（pip 版 PySide6 在 win 正常），与 dlv conda 环境核心包同名同主版本、渠道不同但等价；CI 绿≠Windows 能跑，**必须真人双击验收一次**。⑦**app 内置 `--smoke` 分支**（main 里 argparse flag → smoke_gui.py 等价逻辑自检退出）——打包产物无头验证用 `QT_QPA_PLATFORM=offscreen <二进制> --smoke`；改动遵循"最小化"（不动 MainWindow、不加新模块）。另：全量打包实测仅 293MB（预判 1.2–1.8GB 未发生），瘦身不值得冒险动 excludes——体积让位可用性。
@@ -252,6 +283,27 @@ src/dataloadv/
 62. **EDF 头 physical_dimension 写非标单位串 = 幅值显示放大 10⁶（sheep4 定论 + 应用兜底，2026-09-07）**：新设备导出的 `ZJDJ-260906-0101.edf` 把 16 通道单位字段全写成 **`AuV`**——mne/edfio 的单位白名单不认它，读取时**不换算、物理值裸当伏特**，应用比例尺显示 10⁶ µV（数据实际 std≈1.2，本意微伏）。**排查指纹**：①比例尺/幅值比预期大 10⁶ 倍；②`edfio.read_edf` 逐信号看 `physical_dimension` 是否在 `uV/mV/V` 等标准串内；③数字值 std 极小（~6 LSB）说明信号本身没饱和没坏。**双修复**：A）`scripts/fix_edf_unit.py`——字节级只改头内单位字段（布局按坑 #44 字段主序，dim 区 `256+ns*96`，每信号 8B；逐通道 `--from` 精确匹配防误伤、Annotations 空字段自动跳过），数据区零改动（ADC 数字值逐位一致实证），输出 `_fixed.edf` 副本、原文件不动（data/ 只读）；B）**应用内自动兜底**（`io/mne_readers.py` EdfReader）——load_raw 后 `_scan_nonstandard_edf_units` 扫头（几百字节），非标数据通道按 µV 缩放 ×1e-6 + warning + meta.notes 打 `EDF_UNIT_FLAG` 待提示标记，UI 打开时弹一次告知框后清标记（main_window._notify_edf_unit_fallback，FS_UNSET 同款机制）；**B 与 A 殊途同归**（兜底读原文件 == mne 读修复副本，allclose 实证）。**实现要点**：mne 白名单 = µV 三种码位变体/uV/mV，"V" 本义伏特也归标准、空单位不猜（语义未知）；`read_raw_edf` 的 `units=` 参数**不能覆盖已写单位**（文件有单位且与传入不同直接 ValueError）——只能读后缩放；LAZY 请求在非标件上强制整载（lazy 数据按需从文件读无法原地修正，非标件罕见整载换正确性值得）；正常件路径零改动（lazy 保持、数值逐位一致）。测试 test_io_edf_unit_fallback.py 8 项（含 MainWindow 弹窗清标记，win fixture 三重隔离）。**注意**：EDF 头里"数字值→物理值"换算由 phys/digital min/max 决定（这个设备写对了），单位字段只影响读入方的**量纲解释**——所以错单位不动数据、改标签即愈。
 
 63. **`QTableView.setSortingEnabled(True)` 会触发一次隐式初始排序，行为不可依赖（M11 实测）**：本 PySide6 6.11 构建实测启用时按**第 0 列降序**排（Qt 文档未承诺此行为，proxy 初始顺序因此不确定）——事件列表首跑双击"行 2"实际命中 source 行 0。规则：①启用排序后**必须 `horizontalHeader().setSortIndicator(列, 序)` 显式定初始序**（本项定为时间列升序=事件清单天然序），箭头显示与实际排序一致；②测试/调用方**不得硬编码 proxy 行号**——按业务键（如 onset）经 `onset_at_row` 反查目标行；③显隐断言用 `isHidden()`（显式 setVisible 语义）而非 `isVisible()`——offscreen 下顶级窗口未 show，isVisible 恒 False。
+
+64. **M12 浏览器四项改造的五则（pyqtgraph 0.14 / mne 1.12 实测）**：①**`setXLink` 是像素对齐不是复制范围**——两图数据区需在屏幕重叠，左轴宽度不等时主图 [30,40] 映射成副图 [30.56,40]（事件时间错位 0.56s，Plan agent 离屏实测）；解法=三行左轴统一 `setWidth(46)`（主图/事件条从"整体隐藏"改"定宽空刻度"，常量 `event_lane.ROW_AXIS_W`）；link 必须在首次 setXRange 前建立（构造顺序天然满足，注释固化）。②**mne 时频 Nyquist 硬边界**：sfreq=80 文件默认 2–45Hz 抛 "Cannot compute freq above Nyquist"——必须 `fmax=min(45, sfreq*0.475)` 自建频率表；**短窗硬边界**：<2s 抛 "wavelet longer than signal"（2Hz 核≈1.6s）。③**浏览器 TFR 防抖必须用实例 `QTimer(singleShot).start()`**——重启即取消旧定时；`QTimer.singleShot` 不可取消，连续拖动会堆叠计算。④**复位类按钮批量 setCheckState 要 `blockSignals` 包住**——否则 N 次 itemChanged→N 次刷新（与 `_refresh_ch_list_text` 同模式）。⑤**e2e 时频 rect 断言口径**：双击跳转居中 0 时视口 [-5,5] 左半为负（无数据段），TFR image 只覆盖 `get_window` clamp 后的实际窗 [0,5]——断言用视口与数据域 [0,dur] 的**交集**，别拿视口直接比。另：raw 窗口 TFR 的 dB 口径是"相对各频点峰值"（times≥0 无基线分支），文案勿复用"基线校正"。⑥**ColorBarItem 的联动方向是单向 cb→img（离屏实证）**：`cb.setLevels(low, high)` 自动同步绑定的 ImageItem；`img.setImage(autoLevels=True)` **不**联动 cb（色标留在旧范围）——程序侧更新范围一律经 cb.setLevels；用户拖动结束发 `sigLevelsChangeFinished`（程序 setLevels 不发，可安全用作"用户调过"的锁定信号）；无内置双击行为，eventFilter 拦 GraphicsSceneMouseDoubleClick 自定义。**HistogramLUTItem 慎用于纯展示场景**：自带渐变编辑器（色标上双击/拖动会生成多个三角切分点），用户会误触且无意义——只需色标+范围时用 ColorBarItem。
+  ⑦**M13 时频四方法四则**：a）**invertY(True) 与 ImageItem y 向下坐标的组合实际
+  朝向是高频在下**（`vb.mapFromView` 像素实证；M8 起两处注释"低频在下"均写反——
+  浏览器 M13 已去 invertY 翻转、epochs_preview 仅勘误注释行为未动）；b）
+  **`tfr_array_stockwell` 恒返 3 元组** (psd,itc,freqs)（return_itc=False 也是 3 个，
+  itc=None；psd (n_ch,n_f,n_t) 频率线性数千格、fmin/fmax 不含精确端点、超 Nyquist
+  **静默截断**——与 morlet/multitaper 的 ValueError 不同，统一在 cfg.effective_fmax
+  钳制）；c）**线性轴方法抽行必须分段 max 池化**——均匀抽样实测漏窄峰（stockwell
+  1933 格抽 40 行行距 2.9Hz > 10Hz 正弦 0.06Hz 峰宽，峰差从 9dB 掉到 -0.8dB）；
+  d）三个 tfr_array_* 在 mne 1.12 均挂 @legacy（统一入口 compute_tfr 存在）——array
+  版仍完全可用，项目沿用。四方法耗时（10s@250Hz）：morlet 3ms/multitaper 20ms/
+  stockwell 130ms/stft 0.2ms。
+  ⑧**scipy.stft 返回相对窗口的 0 起时间轴**（2026-10-14 用户真窗口暴露）：morlet/
+  stockwell 分支沿用调用方传入的绝对秒，stft 的 t 却从 0 起——窗口在 [30,40] 这类位置
+  时热图 rect 落在时间轴 0-10s（视口外）=「图没加载出来」；离屏默认 [0,10] 窗口的测试
+  碰巧撞对放过了它。修：stft 分支平移回绝对时间 `t + times[0]`；回归哨兵=非零窗口
+  断言 rect.left。**教训：跨方法统一三元组约定时，每个方法的坐标语义（绝对/相对）要
+  逐一核对，测试别只用默认窗口。另：`_set_x_range` 路径的两级防抖（30ms refresh +
+  300ms TFR）窗口内 timer/running 都是"未跑"状态——负向条件（not isActive/not running）
+  全部提前满足，等待必须用正向业务终态（`_tfr_seq` 递增）——本坑第三次实证。
 
 ## 当前接手要点（2026-09-01，M10 双平台打包机器验证完成、人工验收与 CI push 待办）
 

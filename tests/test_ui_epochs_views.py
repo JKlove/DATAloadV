@@ -16,6 +16,8 @@ import numpy as np
 import pytest
 from PySide6.QtWidgets import QApplication
 
+from conftest import wait_until  # noqa: E402
+
 import dataloadv.ui.widgets.epochs_preview as ep
 from dataloadv.ui.strings_zh import S
 from dataloadv.workers.generic import _keepalive as _KA_THREADS
@@ -70,12 +72,11 @@ def view(qapp, qtbot):
 def _wait_tfr(view, qtbot):
     """等时频后台线程落地 + 真收尾（keepalive 清空＝线程链走完 deleteLater）."""
     view._start_tfr()
-    qtbot.waitUntil(lambda: not view._tfr_running, timeout=15000)
-    qtbot.waitUntil(
-        lambda: any(type(it).__name__ == "ImageItem" for it in view._plot.items),
-        timeout=5000,
-    )
-    qtbot.waitUntil(lambda: not _KA_THREADS, timeout=15000)
+    wait_until(qtbot, lambda: not view._tfr_running, "时频计算完成")
+    wait_until(qtbot,
+               lambda: any(type(it).__name__ == "ImageItem" for it in view._plot.items),
+               "时频图回填")
+    wait_until(qtbot, lambda: not _KA_THREADS, "线程链回收")
 
 
 class TestAvgView:
@@ -213,7 +214,7 @@ class TestTfrView:
         assert all(type(it).__name__ != "ImageItem" for it in view._plot.items)
         assert len(view._plot.listDataItems()) == 3  # 蝶形还在
         # 等 setCurrentIndex(3) 启动的真线程完整收尾（防会话退出时 QThread 竞态）
-        qtbot.waitUntil(lambda: not _KA_THREADS, timeout=15000)
+        wait_until(qtbot, lambda: not _KA_THREADS, "线程链回收")
 
 
 # ------------------------------------------------------- M8.1：Y 修复 / 配色 / 缓存
@@ -279,8 +280,8 @@ class TestTfrCache:
         assert any(type(it).__name__ == "ImageItem" for it in view._plot.items)
         assert not calls  # 没进线程重算
         view._ch_combo.setCurrentIndex(1)  # 换 ch1：未命中 → 正常进线程
-        qtbot.waitUntil(lambda: bool(calls), timeout=15000)
-        qtbot.waitUntil(lambda: not _KA_THREADS, timeout=15000)
+        wait_until(qtbot, lambda: bool(calls), "回调到达")
+        wait_until(qtbot, lambda: not _KA_THREADS, "线程链回收")
 
 
 # ------------------------------------------------------- M8.1：第五视图单段浏览

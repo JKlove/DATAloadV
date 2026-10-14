@@ -60,3 +60,40 @@ def synthetic_raw():
         mne.Annotations(onset=[10.0, 20.0, 30.0], duration=[0.0, 0.0, 0.0], description=["T0", "T1", "T2"])
     )
     return raw
+
+
+# ---- 挂死防御：共享等待助手 + 测试时间戳探针（2026-10-14 根因闭环后常设）----
+# wait_until：替代 qtbot.waitUntil——后者内部是 QEventLoop.exec + Qt 侧
+# QTimer 超时（pytestqt/wait_signal.py），事件分发被饿死时超时本身失效 →
+# 永等挂死（2026-10-13/14 全量 Heisenbug，HANDOFF 坑 #57⑥ 档案）。本助手
+# 条件与 deadline 都在 Python 层（time.monotonic），最坏 timeout_s 秒后
+# 明确 FAIL 可见，不会永挂。坑 #57⑥（已根除）。时间戳探针常设：
+# 文件级写入不经 pytest fd 捕获、不改变 Qt 时序（-s 观测会改变行为）——再有
+# 挂死时看 /tmp/pytest_trace.log 最后一个 START 无 FINISH 即精确挂点，零成本。
+import time as _time
+
+
+def wait_until(qtbot, cond, what: str = "条件", timeout_s: float = 15.0) -> None:
+    """Python 层 deadline 轮询等待（qtbot.waitUntil 的防挂死替代）."""
+    deadline = _time.monotonic() + timeout_s
+    while not cond():
+        if _time.monotonic() > deadline:
+            import pytest
+            pytest.fail(f"等待超时（{timeout_s}s）：{what}")
+        qtbot.wait(50)
+
+
+def pytest_runtest_logstart(nodeid, location):
+    try:
+        with open("/tmp/pytest_trace.log", "a") as _f:
+            _f.write(f"START {_time.monotonic():.3f} {nodeid}\n")
+    except OSError:
+        pass
+
+
+def pytest_runtest_logfinish(nodeid, location):
+    try:
+        with open("/tmp/pytest_trace.log", "a") as _f:
+            _f.write(f"FINISH {_time.monotonic():.3f} {nodeid}\n")
+    except OSError:
+        pass

@@ -11,6 +11,7 @@ from __future__ import annotations
 import sys
 
 import numpy as np
+from PySide6.QtCore import Qt
 from pathlib import Path
 
 PROJECT = Path(__file__).resolve().parent.parent
@@ -175,6 +176,54 @@ def main() -> int:
                 check("双击列表行跳转到该事件（视口居中）",
                       abs((dt0 + dt1) / 2 - target) < 1e-6,
                       f"(中心 {(dt0 + dt1) / 2:.3f} vs 事件 {target:.3f})")
+                # M12a 比例尺下拉：固定 50µV → yRange 按 64 导×50 锁定
+                n_ch = len(v.rec.meta.channel_names)
+                v._scale_combo.setCurrentText("50")
+                vy0, vy1 = v._plot.getViewBox().viewRange()[1]
+                check("M12 比例尺下拉锁定行距",
+                      abs(vy0 - (-1.5 * 50)) < 1e-6 and abs(vy1 - (n_ch + 0.5) * 50) < 1e-6)
+                # M12c 紧凑显示：只留 8 通道 → 优化按钮 → 行数收紧 8
+                v._ch_list.blockSignals(True)
+                for i in range(v._ch_list.count()):
+                    v._ch_list.item(i).setCheckState(
+                        Qt.CheckState.Checked if i < 8 else Qt.CheckState.Unchecked)
+                v._ch_list.blockSignals(False)
+                for ch in v._channels:
+                    on = ch["idx"] < 8
+                    ch["enabled"] = on
+                    ch["curve"].setVisible(on)
+                    ch["label"].setVisible(on)
+                v._set_compact(True)
+                cy0, cy1 = v._plot.getViewBox().viewRange()[1]
+                check("M12 紧凑显示只留勾选通道",
+                      v._row_count() == 8 and abs(cy1 - cy0 - 10.0 * v._spacing_uv) < 1e-3,
+                      f"(row_count={v._row_count()})")
+                v._set_compact(False)  # 复位恢复 64 导
+        finally:
+            QTimer.singleShot(900, _stage5b)
+
+    def _stage5b():
+        # M12d/e 时频图：防抖 300ms + 计算后 ImageItem 已回填（覆盖视口）
+        try:
+            v = next((w for w in win._browser_tabs.values()
+                      if "S001R03" in w.rec.meta.filename), None)
+            if v is not None:
+                r = v._tfr_img.mapRectToView(v._tfr_img.boundingRect())
+                t0, t1 = v._visible_range()
+                # 期望窗 = 视口与数据域 [0, dur] 的交集（双击跳转居中 0 时视口
+                # 左半为负——无数据段，TFR 只覆盖 clamp 后的实际窗口）
+                w0, w1 = max(t0, 0.0), min(t1, v.rec.meta.duration_s)
+                check("M12 时频图已计算并覆盖视口",
+                      v._tfr_img.image is not None
+                      and abs(r.left() - w0) < 0.02 and abs(r.width() - (w1 - w0)) < 0.02,
+                      f"(image {'有' if v._tfr_img.image is not None else '无'}, "
+                      f"rect.left={r.left():.3f} vs 期望窗 [{w0:.3f},{w1:.3f}])")
+                check("M12 turbo 色标在场", v._tfr_lut.scene() is not None)
+                # M13：频率轴 0 起点且上限按 Nyquist 钳制（S001R03 160Hz → 76Hz）
+                fy0, fy1 = v._tfr_plot.vb.viewRange()[1]
+                check("M13 时频频率轴 0 起 + Nyquist 钳制",
+                      abs(fy0) < 1e-9 and abs(fy1 - 78.4) < 0.1,
+                      f"(y=[{fy0:.1f},{fy1:.1f}]，160Hz 采样应钳到 78.4)")
         finally:
             QTimer.singleShot(300, _finish)
 
