@@ -331,6 +331,10 @@ Qt 6.x 后续版本须换 `filterInvalidated` 信号或 `beginFilterChange`，�
       兜底/M11 事件列表/M12·M13 时频全套/M14 特征图表改造）；发版验证 pytest 364 绿 +
       源码与重打包 macOS offscreen --smoke 双过；本机 ~/.dataloadv 隐私重清（泛化
       sheep* 规则——列举式漏了 sheep4/sheep5 共 5 条，终态零残留）
+- [x] **v0.2.0 Windows 崩溃修复 → v0.2.1（同日）**：中文 Windows GBK locale 打开
+      任何数据必崩（pyqtgraph 按平台默认编码读 UTF-8 渐变 CSV，坑 #65）；修=
+      PEP 540 UTF-8 模式自举（`_utf8.py` + entry/__main__ 前置调用）；pytest 368 绿
+- [ ] **用户 Windows 复验 v0.2.1**：打开数据不再崩（含原崩的 01号 DGDJ 文件）
 
 ## 已知问题 / Backlog（v1 收官后暂缓项）
 

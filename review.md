@@ -1301,3 +1301,22 @@ fixture 收窄 `channels=["EEG00"]` 保 1 条下游零改，新增窗进列头/a
 - 槽位制间隔经离屏渲染确认生效（合成数据截图：三系列箱间空隙清晰）——用户
   "没变化"为崩溃前的旧观感，修复后重算特征即可看到。
 - 验证：含 NaN 组构造+updateAutoRange 不再崩（离屏复现）→ pytest **364 绿**。
+
+## v0.2.1 — Windows GBK 崩溃修复（2026-10-19）
+
+- **现象**（用户中文 Windows 真机 + 手机照片日志）：打开任何数据必崩——
+  `_on_recording_opened → signal_browser._build_ui:382 → pg.colormap.get("turbo") →
+  colormap._getFromFile` 炸 `UnicodeDecodeError: 'gbk' codec can't decode`。
+- **根因**：pyqtgraph 读渐变 CSV 用 `open(filename,'r')` 不带 encoding——中文
+  Windows 平台默认编码 GBK，文件 UTF-8 → 解码炸。M13 起 `colormap.get("turbo")`
+  进了浏览器构建必经路径，故"打开任何数据"都崩；v0.1.1 无此代码路径故"旧版正常"；
+  macOS locale 即 UTF-8 故本地/CI-mac 全绿。
+- **字节级疑点（未闭合）**：dlv(conda) 与 PyPI 两渠道 pyqtgraph 0.14.0 的 73 个
+  渐变 CSV 实测均 GBK 安全纯 ASCII，dist 内逐字节一致——用户包内哪个文件含非
+  ASCII 未能在本机复现（照片 OCR 的 byte/position 细节存疑）；机制本身确定。
+- **修法（类级根治）**：`dataloadv/_utf8.py` `ensure_utf8_mode()`——Windows 非
+  UTF-8 模式时设 `PYTHONUTF8=1` + `execv` 自重启一次（PEP 540 只能启动时生效；
+  `DLV_UTF8_RESTARTED` 标记防异常循环）；`packaging/entry.py` 与 `__main__.py`
+  在 import 重库前调用（代价：Windows 冷启动约 +1s）。
+- **验证**：test_utf8_bootstrap.py 四分支打桩（368 绿全量）+ 源码/重打包 macOS
+  冒烟；**Windows 真机复验待用户（v0.2.1 下载后开原崩文件）**。

@@ -369,6 +369,14 @@
 
 ## 最近变更记录（新条目加在最上面）
 
+- 2026-10-19（v0.2.0 Windows 崩溃修复，发 v0.2.1）：用户中文 Windows（GBK locale）
+  **打开任何数据必崩**——pyqtgraph `colormap.get("turbo")`（M13 起浏览器构建必经）
+  按平台默认编码读 UTF-8 渐变 CSV 炸 `UnicodeDecodeError`；macOS 默认 UTF-8 故本机
+  全绿。修法=**PEP 540 UTF-8 模式自举**（新 `dataloadv/_utf8.py`：Windows 首启设
+  `PYTHONUTF8=1` 自重启一次，标记双保险防循环；`entry.py`/`__main__.py` 在 import
+  重库前调用）。pytest **368 绿**（+4）+ 源码/重打包 macOS 冒烟双过；坑 #65。
+  待用户 Windows 复验 v0.2.1 后闭环。
+
 - 2026-10-19（v0.2.0 发版）：含 v0.1.1 后全部增量（sheep4 单位兜底 / M11 事件
   marker 列表 / M12·M13 色标精修+挂死根除+时频全套 / M14 特征图表改造）——版本
   0.1.1→0.2.0（功能级增量配 minor 位），tag `v0.2.0` 触发 CI 出双平台包。发版验证：
