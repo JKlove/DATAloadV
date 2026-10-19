@@ -369,6 +369,15 @@
 
 ## 最近变更记录（新条目加在最上面）
 
+- 2026-10-19（v0.2.0 发版）：含 v0.1.1 后全部增量（sheep4 单位兜底 / M11 事件
+  marker 列表 / M12·M13 色标精修+挂死根除+时频全套 / M14 特征图表改造）——版本
+  0.1.1→0.2.0（功能级增量配 minor 位），tag `v0.2.0` 触发 CI 出双平台包。发版验证：
+  pytest **364 绿** + 源码/重打包 macOS offscreen `--smoke` 双 SMOKE OK（.app 293MB
+  与 M10 基线一致，pyproject 依赖自 v0.1.1 零改动）。同日本机 `~/.dataloadv` 隐私
+  重清：**规则泛化为路径段 `startswith("sheep")`**（列举式 sheep/2/3 漏了后续里程碑
+  新增的 sheep4/sheep5 共 5 条），备份 `/tmp/dataloadv_ws_backup_20261019_182338.tar.gz`，
+  终态默认工作区 3 来源 1558 条全公共数据、全库零残留。
+
 - 2026-10-15（M14 完成，用户两项需求驱动）：**①PSD 轴系**：PsdCurvesChart/PsdView 两处
   y=_to_db（10·log10(max(psd,1e-40))，re 1µV²/Hz）、删 setLogMode 双对数、`_PlainAxis`
   双轴（覆写 tickStrings 强制 f"{v:g}"）；y 轴标签新 `PIPE_PSD_AXIS_Y_DB`。**②柱状→箱线**：
