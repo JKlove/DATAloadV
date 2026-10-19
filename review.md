@@ -1229,3 +1229,75 @@ fixture 收窄 `channels=["EEG00"]` 保 1 条下游零改，新增窗进列头/a
   （等待用 _tfr_seq 正向终态）。
 - 验证：pytest **335 绿**（+1 哨兵；features 钳制断言更新 122.5/245、stockwell
   峰差阈值按方法差异化）+ e2e_m1 32 项 ALL OK + smoke。
+
+## M14 — 特征图表区改造（2026-10-15 完成，用户两项需求驱动）
+
+### 做了什么
+
+- **PSD 轴系**（PsdCurvesChart + PsdView 两处）：y 改 dB（`_to_db`=10·log10
+  (max(psd,1e-40))，re 1µV²/Hz——tfr 同口径的显示换算）；删 `setLogMode` 双对数
+  （x 线性频率）；`_PlainAxis` 覆写 tickStrings 强制 `f"{v:g}"`（pg 默认 log 轴出
+  Unicode 上标指数、线性轴 |v|≥10000 走 %g——两者都是用户不要的科学计数样式）。
+- **柱状→箱线**：FeatureBarGrid 的 `groupby.mean()` 改 `groupby.apply(list)` 原始
+  值（`self.groups` 替代 `self.aggregated`）；BarGraphItem 换 `pg.BoxplotItem`
+  （每特征一色 intColor(特征序)、格内系列同色相 alpha 0.35→0.75 梯度、medianPen
+  深灰、默认 IQR×1.5 须+离群点）；纵轴单位标注 `feature_unit`。
+- **features/units.py 新建**：后缀规则映射（_uv/_uv2/_rate/_pct/qc 特殊表/
+  _log 剥后判 _rel（rel_log 无量纲）/标准带名 µV²）；未知名兜底 ""（单位不猜）。
+
+### 发现的问题与修正
+
+- `alpha_rel_log` 首版判成 log(µV²)——相对功率取 log 仍无量纲；修为先剥 _log 再
+  判 _rel。
+- 测试寻址两轮修：BoxplotItem 不在 GraphicsLayout.items.values（那是 {item→'list'}
+  注册表，keys 才是控件）；坑 #64⑨a/b 入册。
+
+### 验证
+
+- pytest **362 绿**（+27：units 26 参数化 + m4 箱线口径 4）+ e2e_m4 **ALL OK**
+  + e2e_m1 + smoke 零回归。
+
+### 计划偏离
+
+- 无。
+
+
+### M14 追加：箱线/柱状切换下拉（2026-10-15，用户要求柱状回归）
+
+- FeatureBarGrid 顶部加展示形式下拉（箱线图（默认）/柱状图）；网格构建抽
+  `_build_gfx(mode)`（切换重建 scroll 内 gfx，旧件 deleteLater）；柱状=按事件码
+  **均值柱**（M8.3 原口径——均值由 groups 值列表派生，不重复 groupby）；两模式
+  **颜色同规**（每特征一色+格内系列透明度梯度，用户指定的颜色语义保持）。
+- 验证：+1 切换测试（箱→柱 BarGraphItem 均值 2.0/箱消失/切回恢复）→
+  pytest **363 绿** + e2e_m4 ALL OK + smoke。
+
+
+### M14 追加 2：箱线数据点散点 + 箱组收窄（2026-10-15，用户参考样式图驱动）
+
+- **jitter 散点**：每箱叠加全量实际数据点（ScatterPlotItem，size=3 深灰半透明、
+  固定种子 rng(0) 均匀抖动 ±40% 箱宽——同数据同抖动可复现）；BoxplotItem 的
+  `outlier=False`（离群点由散点统一展示，避免符号重复）。
+- **箱组宽 0.8→0.55**：相邻通道组间留 45% 通道距（用户反馈两通道的图贴合）。
+- 验证：+1 散点/箱宽数值断言 → pytest **364 绿** + e2e_m4 ALL OK。
+
+
+### M14 追加 3：箱线间距槽位制定稿（2026-10-15，四次用户反馈迭代）
+
+- 组内均分制三轮调参（填充 0.9→0.68→0.55、组宽 0.8→0.55→0.42、jitter 收箱内）都
+  未能让用户看到间隔——系列间绝对间隙只有百分之几通道距（像素级）；柱状反而被收窄。
+- **定稿槽位制**：每（通道×系列）独占宽 1.0 的 x 槽位（x=j·n_ser+k），箱宽恒
+  0.55 槽距、柱宽恢复 0.9（用户要求）、散点限箱内 75% 半宽、通道刻度挪组中心——
+  系列/通道间恒 45% 空隙，与系列数无关，几何上根除贴合。
+- 验证：槽位/箱宽数值断言更新 → pytest **364 绿** + e2e_m4 ALL OK + smoke。
+
+
+### M14 追加 4：滚动闪退修复（2026-10-15，用户反馈 + 日志定位）
+
+- **根因**（app 日志 traceback）：pg `BoxplotItem.IQR_1p5` 须函数
+  `np.max(data[data<=upper_theory])` 对含 NaN 的组得空数组抛 ValueError；滚动到
+  该格时 ViewBox 重绘 dataBounds 全链崩溃。NaN 来源：常数序列（饱和/平线通道）的
+  scipy kurtosis 返回 NaN（用户算"频段能量+PSD+时域特征"场景必现）。
+- **修复**：FeatureBarGrid 的 groups 构造入口滤 NaN（`v==v` 快速判定），空组丢弃。
+- 槽位制间隔经离屏渲染确认生效（合成数据截图：三系列箱间空隙清晰）——用户
+  "没变化"为崩溃前的旧观感，修复后重算特征即可看到。
+- 验证：含 NaN 组构造+updateAutoRange 不再崩（离屏复现）→ pytest **364 绿**。

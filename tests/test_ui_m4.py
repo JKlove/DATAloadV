@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import numpy as np
+import pyqtgraph as pg
 import pytest
 
 pytest.importorskip("PySide6", reason="无 GUI 环境")
@@ -21,6 +22,7 @@ from dataloadv.ui.widgets.feature_charts import (  # noqa: E402
     PsdCurvesChart,
     make_charts_area,
 )
+from dataloadv.ui.strings_zh import S  # noqa: E402
 from dataloadv.ui.widgets.feature_table import FeatureTableView  # noqa: E402
 from dataloadv.ui.widgets.params_form import ParamsForm  # noqa: E402
 from dataloadv.ui.widgets.pipeline_panel import PipelinePanel  # noqa: E402
@@ -206,8 +208,8 @@ class TestFeatureCharts:
         assert chart.n_curves == 60 and chart.total_curves == 70
         assert any("70" in lb.text() for lb in chart.findChildren(QLabel))
 
-    def test_bar_grid_aggregates_by_event_code(self, qtbot):
-        """分段行按事件码求均值：T1 两段 (1+3)/2=2，T2 一段=10."""
+    def test_bar_grid_groups_values_by_event_code(self, qtbot):
+        """M14 箱线口径：分组保留全部段值（非均值）——T1=[1,3]、T2=[10]."""
         scalars = [
             {"epoch_index": 0, "event_code": "T1", "channel": "EEG00",
              "feature": "alpha", "value": 1.0},
@@ -218,12 +220,59 @@ class TestFeatureCharts:
         ]
         grid = FeatureBarGrid(self._table(scalars=scalars))
         qtbot.addWidget(grid)
-        agg = grid.aggregated
-        by = {(r["event_code"], r["feature"]): r["value"] for _, r in agg.iterrows()}
-        assert by[("T1", "alpha")] == pytest.approx(2.0)
-        assert by[("T2", "alpha")] == pytest.approx(10.0)
+        assert grid.groups[("alpha", "T1", "EEG00")] == [1.0, 3.0]
+        assert grid.groups[("alpha", "T2", "EEG00")] == [10.0]
         assert grid.feature_names == ["alpha"]
         assert grid.has_epochs
+
+    def test_psd_chart_y_in_db_plain_axis(self, qtbot):
+        """M14：y 数据=10·log10(psd)；轴刻度普通数字（无科学计数/上标）."""
+        curve = self._curve(0)
+        chart = PsdCurvesChart([curve])
+        qtbot.addWidget(chart)
+        item = chart._plot.listDataItems()[0]
+        assert np.allclose(item.yData, 10.0 * np.log10(curve["psd"]))
+        assert chart._plot.getAxis("left").labelText == S.PIPE_PSD_AXIS_Y_DB
+        for v in (1e-5, 12345.0, -60.0):
+            texts = chart._plot.getAxis("bottom").tickStrings([v], 1.0, 1.0)
+            assert texts == [f"{v:g}"]  # 0.00001 / 12345 / -60——无 e/上标
+
+    def test_bar_grid_unit_labels(self, qtbot):
+        """M14：纵轴单位按特征映射（rms_uv→µV；kurtosis 无量纲不设）."""
+        scalars = [
+            {"epoch_index": None, "event_code": None, "channel": "EEG00",
+             "feature": f, "value": 1.0}
+            for f in ("rms_uv", "kurtosis")
+        ]
+        grid = FeatureBarGrid(self._table(scalars=scalars))
+        qtbot.addWidget(grid)
+        from dataloadv.features.units import feature_unit
+
+        assert feature_unit("rms_uv") == "µV"
+        assert feature_unit("kurtosis") == ""
+
+    def test_bar_grid_feature_colors_differ(self, qtbot):
+        """M14：每特征一色——两特征的箱 pen 颜色不同（BoxplotItem opts）."""
+        from pyqtgraph.graphicsItems.BoxplotItem import BoxplotItem
+
+        scalars = [
+            {"epoch_index": 0, "event_code": "T1", "channel": "EEG00",
+             "feature": f, "value": 1.0}
+            for f in ("alpha", "beta")
+        ]
+        grid = FeatureBarGrid(self._table(scalars=scalars))
+        qtbot.addWidget(grid)
+        gfx = grid.findChildren(pg.GraphicsLayoutWidget)[0]
+        # GraphicsLayout.items 是 {item→'list'} 注册表（0.14 实测）——keys 才是控件
+        plots = [it for it in gfx.ci.items.keys() if isinstance(it, pg.PlotItem)]
+        # BoxplotItem 挂在 PlotItem.items（addItem），不在 layout.items
+        boxes = [it for p in plots for it in p.items if isinstance(it, BoxplotItem)]
+        assert len(boxes) == 2  # 每特征一格各一箱
+        pens = [tuple(b.opts["pen"].color().getRgb()[:3]) for b in boxes]
+        assert pens[0] != pens[1]
+        # 单位标注：alpha 格左轴 µV²
+        labels = [p.getAxis("left").labelText for p in plots]
+        assert "µV²" in labels
 
     def test_bar_grid_one_cell_per_feature(self, qtbot):
         """两个特征 → 两格；特征名进 feature_names（格 title 同源）."""
@@ -263,3 +312,88 @@ class TestFeatureCharts:
         assert view._charts is not None
         view.teardown()
         assert view._charts is None and view._table is None and view._ctx is None
+
+
+class TestFeatureChartViewSwitch:
+    """M14 追加：箱线/柱状下拉切换（柱状同款每特征一色）."""
+
+    @staticmethod
+    def _grid(qtbot, scalars):
+        from dataloadv.ui.widgets.feature_charts import FeatureBarGrid as FBG
+
+        t = FeatureTable()
+        t.add_result(
+            type("R", (), {"scalars": scalars, "curves": []})(), recording="x.gdf")
+        g = FBG(t)
+        qtbot.addWidget(g)
+        return g
+
+    def test_switch_box_to_bar(self, qtbot):
+        """默认箱线；切柱状 → BoxplotItem 消失、BarGraphItem 出现且均值正确."""
+        import pyqtgraph as pg
+        from pyqtgraph.graphicsItems.BoxplotItem import BoxplotItem
+
+        scalars = [
+            {"epoch_index": 0, "event_code": "T1", "channel": "EEG00",
+             "feature": "alpha", "value": 1.0},
+            {"epoch_index": 1, "event_code": "T1", "channel": "EEG00",
+             "feature": "alpha", "value": 3.0},
+        ]
+        g = self._grid(qtbot, scalars)
+        plots = [it for it in g._scroll.widget().ci.items.keys()
+                 if isinstance(it, pg.PlotItem)]
+        assert any(isinstance(x, BoxplotItem) for p in plots for x in p.items)
+        g._view_combo.setCurrentIndex(1)  # 柱状
+        plots = [it for it in g._scroll.widget().ci.items.keys()
+                 if isinstance(it, pg.PlotItem)]
+        items = [x for p in plots for x in p.items]
+        assert not any(isinstance(x, BoxplotItem) for x in items)
+        bars = [x for x in items if isinstance(x, pg.BarGraphItem)]
+        assert len(bars) == 1
+        assert bars[0].opts["height"][0] == pytest.approx(2.0)  # (1+3)/2 均值
+        # 柱状同款每特征一色（brush 带 alpha 的特征色）
+        assert bars[0].opts["brush"] is not None
+        # 切回箱线
+        g._view_combo.setCurrentIndex(0)
+        plots = [it for it in g._scroll.widget().ci.items.keys()
+                 if isinstance(it, pg.PlotItem)]
+        assert any(isinstance(x, BoxplotItem) for p in plots for x in p.items)
+
+
+class TestBoxScatterOverlay:
+    """M14 追加：箱线叠加实际数据点（jitter 散点）+ 箱组收窄拉开通道间距."""
+
+    def test_scatter_points_match_values(self, qtbot):
+        """散点数=各组全部值数（T1 两值+T2 一值=3 点）；箱宽=0.55/系列数."""
+        import pyqtgraph as pg
+
+        scalars = [
+            {"epoch_index": 0, "event_code": "T1", "channel": "EEG00",
+             "feature": "alpha", "value": 1.0},
+            {"epoch_index": 1, "event_code": "T1", "channel": "EEG00",
+             "feature": "alpha", "value": 3.0},
+            {"epoch_index": 2, "event_code": "T2", "channel": "EEG00",
+             "feature": "alpha", "value": 10.0},
+        ]
+        t = FeatureTable()
+        t.add_result(
+            type("R", (), {"scalars": scalars, "curves": []})(), recording="x.gdf")
+        from dataloadv.ui.widgets.feature_charts import FeatureBarGrid
+
+        g = FeatureBarGrid(t)
+        qtbot.addWidget(g)
+        plots = [it for it in g._scroll.widget().ci.items.keys()
+                 if isinstance(it, pg.PlotItem)]
+        items = [x for p in plots for x in p.items]
+        scatters = [x for x in items if isinstance(x, pg.ScatterPlotItem)]
+        assert len(scatters) == 2  # 每系列一个（T1/T2）
+        n_pts = sum(len(s.getData()[1]) for s in scatters)
+        assert n_pts == 3  # 全量数据点（1+3 两个、10 一个）
+        # 箱宽收窄：0.55/系列数（原 0.8——用户反馈两通道贴合）
+        from pyqtgraph.graphicsItems.BoxplotItem import BoxplotItem
+
+        boxes = [x for x in items if isinstance(x, BoxplotItem)]
+        # 槽位制：箱宽恒 0.55 槽距；系列槽位 x = 通道*n_ser + 系列（整数）
+        assert all(abs(b.opts["width"] - 0.55) < 1e-9 for b in boxes)
+        locs = sorted(float(b.opts["loc"][0]) for b in boxes)
+        assert [round(x, 6) for x in locs] == [0.0, 1.0]  # 两系列相邻槽位

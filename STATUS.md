@@ -1,8 +1,23 @@
 # STATUS — 项目状态快照
 
-> 本文件回答"现在做到哪了"。每里程碑完成及重要提交后更新。最后更新：2026-10-14（M13 时频图改进 **✅ 完成**+同日三项精修：设置按钮移左栏/参数上限放开/修 STFT 时间轴 bug；挂死根因闭环）
+> 本文件回答"现在做到哪了"。每里程碑完成及重要提交后更新。最后更新：2026-10-15（M14 特征图表区改造 **✅ 完成**：PSD dB 轴/箱线图（数据点散点）+柱状切换下拉）
 
 ## 当前里程碑
+
+- **M14 特征图表区改造：✅ 完成（2026-10-15）**——用户两项需求（截图指认现状）：
+  ①**PSD 曲线轴系**（特征结果 tab 的 PSD 曲线页 + 处理面板「对比 PSD」两处）：y 改
+  **dB**（10·log10，re 1µV²/Hz——tfr 同款口径）、x 改**线性频率**（原双对数不均一）、
+  刻度一律**普通数字**（`_PlainAxis` 覆写 tickStrings 返回 f"{v:g}"——杜绝 10⁻⁵/1e+05
+  科学计数，pg 默认 log 轴走上标指数、线性轴 |v|≥10000 走 %g）；②**特征柱状图→箱线图**
+  （`pg.BoxplotItem`——小写 p；loc/data 正确用法，旧式 x/height 静默画不出）：每事件码
+  一箱（中位线/四分位箱/1.5×IQR 须/离群点），**原始值分箱**（长表直取，不走 to_wide——
+  透视 first 丢重复值）；**每特征一色**（intColor(特征序)，格内系列同色相不同透明度）；
+  **纵轴单位标注**（新 features/units.py `feature_unit`：_uv→µV/_uv2→µV²/_rate→次/s/
+  _pct→%/qc 漂移 µV·min⁻¹/bandpower µV²/_rel 无量纲/_log→log(µV²)，未知名兜底 ""
+  不猜单位）。同日追加：**箱线/柱状切换下拉**（顶部 combo，柱状=均值柱 M8.3 原口径、均值由 groups 派生不重复 groupby，两模式同款每特征一色）+1 切换测试；**箱线加实际数据点 jitter 散点**（全量值、固定种子抖动可复现，outlier=False 防重复符号）+**箱组宽 0.8→0.55**（用户反馈两通道贴合）+1 散点测试；**四次迭代后槽位制定稿**（每通道×系列独占 x 槽位、箱宽 0.55 槽距——系列/通道间恒 45% 空隙；柱状同槽位、柱宽恢复 0.9 槽；x 刻度挪组中心）——组内均分制在多系列时系列间隙仅百分之几通道距、视觉恒贴合，槽位制从几何上根除。**闪退修复**（用户滚动箱线区到底崩溃，日志定位）：pg 的 IQR 须函数 `np.max(data[data<=upper])` 遇 **NaN 特征值组**得空数组抛 ValueError（常数序列的 kurtosis 产 NaN——饱和/平线通道的时域特征），滚动重绘 dataBounds 时整应用崩——groups 入口滤 NaN（`v==v`）根治。验证：pytest **364 绿** + e2e_m4/m1 + smoke。
+  坑 #64⑨：BoxplotItem 小写 p 与静默无效旧式参数/GraphicsLayout.items 是
+  {item→'list'} 注册表（keys 才是控件）/to_wide first 丢重复值。
+
 
 - **M13 时频图改进：✅ 完成（2026-10-14）**——用户两项需求：①**频率轴翻转**
   （去 invertY——旧 invertY(True) 与 ImageItem y 向下坐标的组合实际是**高频
@@ -161,6 +176,7 @@
 | M9 预处理后连续数据导出 | ✅ 完成 | 2026-08-31 | continuous_io（EDF channelwise 16-bit/FIF float32 _raw 后缀+类型白名单·标签长度前置守卫）；单文件面板/菜单+批处理逐文件（epoching 跳过+失败降级+只勾 raw 不写特征文件）；pytest 287 / e2e_m9 16 项 |
 | M10 双平台打包 | ✅ 完成 | 2026-09-01 | PyInstaller 6.22.2 单份 spec 跨平台 + entry.py shim + app `--smoke` 自检；macOS .app 293MB/zip 119MB/构建 42s，offscreen 冒烟+真窗口存活+PYZ 依赖核实全过、pytest 287 零回归、用户实测验收过；CI 修复（坑 #60）后重跑双绿（win64 136MB/macOS 94MB），**Windows 真机真人验收通过**；瘦身取消；工作区隐私清理（01/02号脑电·羊数据 59 条清出索引） |
 | M11 事件 marker 列表 | ✅ 完成 | 2026-09-24 | 浏览器底部横条 QSplitter（5 列 #/名称/时间/样本点/持续；名称色=事件线色）；双击行 `_center_at` 定位全联动；无事件面板常驻空态；坑 #63 初始排序显式化；pytest 305 / e2e_m1 27 项 |
+| M14 特征图表区改造 | ✅ 完成 | 2026-10-15 | PSD dB 轴+线性频率+普通数字刻度（_PlainAxis）；柱状→箱线+柱状切换下拉（原始值分箱/均值柱两模式、每特征一色/纵轴单位 features.units 映射）；坑 #64⑨；pytest 364 |
 | M13 时频图改进 | ✅ 完成 | 2026-10-14 | 频率轴翻转（低频/0 在下）+Nyquist 钳制（150 硬顶后放开→×0.49）+行高 5:3.5:0.55；四方法统一入口（分段 max 池化保窄峰）+设置对话框（按钮在左栏）；修 STFT 相对时间轴 bug；挂死根因闭环（waitUntil→wait_until）；pytest 335 / e2e_m1 32 项 |
 | M12 浏览器四项改造 | ✅ 完成 | 2026-10-13 | 比例尺下拉（自动+13 档 µV）/紧凑显示（优化选择通道+复位）/事件列表移左栏/同段时频图（turbo+setXLink 像素对齐+Nyquist 收口+300ms 防抖代币）；坑 #64 六则；同日色标精修（ColorBarItem+范围锁定跨屏保持）；pytest 321 / e2e_m1 31 项 |
 
@@ -171,7 +187,7 @@
 
 ## 测试
 
-- `QT_QPA_PLATFORM=offscreen pytest`：**335 passed**（M12 后 322 + 挂死根因替换适配 +2 + **M13 净增 10**：四方法峰检出（4 参数化）/dB 口径/行数统一/stft 窗参数/Nyquist 钳制与 min_window/未知方法拒（features 7）+ 低频在下像素断言/频率轴 0 起+118.75 钳制/设置对话框应用重算（browser 3）。（M11 后 305 + **M12 净增 15**：比例尺 3（固定值锁定 spacing+yRange/手动切自动按当前窗重估 MAD×8/与增益正交）+ 紧凑显示 4（留 3 通道紧凑重排首行贴 0/紧凑下再勾选即时收缩/复位全选恢复原布局/默认留空位回归哨兵）+ 三行对齐 3（vb 数据区左右缘一致/setXRange 后 TFR viewRange 跟随/三左轴统一 46 空刻度·TFR 自动频率刻度）+ 时频 5（img 回填+rect 覆盖视口+turbo LUT/ch0 α 峰 10Hz vs 30Hz 差>6dB·纯噪声通道无差异/1s 窗占位/teardown 竞态/通道切换代币递增）——test_ui_browser_m12.py）。2026-09-07 净增 8：EDF 非标单位兜底（AuV 件按 µV 缩放/LAZY 强制整载/meta 标记/正常件零扰动+保持 lazy/mV·V 白名单不碰/空单位不猜/MainWindow 弹窗一次+清标记+ws 同步——test_io_edf_unit_fallback.py）。历史累计：M9 后 287（M9 净增 16：连续导出 8（EDF 往返 rtol 1e-3/prefiltering 头 highpass=1 往返/FIF 往返 rtol 1e-6+annotations 3 条/未知 fmt 拒/超长名拒/非 ASCII 名拒/misc 类型拒/平坦通道可导/单通道双格式）+ 面板守卫 2（无 ctx 提示/stage=epochs 指向分段导出）+ 批处理 5（wants_export 四开关语义/epochs 管线跳过+日志/引擎级 3 文件每文件 _proc.edf+sidecar kind=raw+files_written 汇总/导出失败降级日志特征照算/**只勾 raw 不产特征 CSV·H5——run() 分支修正的回归哨兵**）；M8.3 净增 10：welch 语义 5 + 导出 2 + 图表区 3；M8.2 净增 4；M8.1 净增 15（epoching 锚定 9 + 预览 6）；M8 净增 29（tfr 17 + 四视图 8 + bandpower 4）；M7 后 213。**须 offscreen：MainWindow 级测试在 macOS 真窗口模式会挂住**）
+- `QT_QPA_PLATFORM=offscreen pytest`：**364 passed**（335 后 + **M14 净增 27**：units 映射 26 参数化（时域后缀/qc/bandpower rel·log·@窗/兜底）+ 箱线分组值列表/dB 数值+普通刻度/特征色+单位标注 4 改增。（M12 后 322 + 挂死根因替换适配 +2 + **M13 净增 10**：四方法峰检出（4 参数化）/dB 口径/行数统一/stft 窗参数/Nyquist 钳制与 min_window/未知方法拒（features 7）+ 低频在下像素断言/频率轴 0 起+118.75 钳制/设置对话框应用重算（browser 3）。（M11 后 305 + **M12 净增 15**：比例尺 3（固定值锁定 spacing+yRange/手动切自动按当前窗重估 MAD×8/与增益正交）+ 紧凑显示 4（留 3 通道紧凑重排首行贴 0/紧凑下再勾选即时收缩/复位全选恢复原布局/默认留空位回归哨兵）+ 三行对齐 3（vb 数据区左右缘一致/setXRange 后 TFR viewRange 跟随/三左轴统一 46 空刻度·TFR 自动频率刻度）+ 时频 5（img 回填+rect 覆盖视口+turbo LUT/ch0 α 峰 10Hz vs 30Hz 差>6dB·纯噪声通道无差异/1s 窗占位/teardown 竞态/通道切换代币递增）——test_ui_browser_m12.py）。2026-09-07 净增 8：EDF 非标单位兜底（AuV 件按 µV 缩放/LAZY 强制整载/meta 标记/正常件零扰动+保持 lazy/mV·V 白名单不碰/空单位不猜/MainWindow 弹窗一次+清标记+ws 同步——test_io_edf_unit_fallback.py）。历史累计：M9 后 287（M9 净增 16：连续导出 8（EDF 往返 rtol 1e-3/prefiltering 头 highpass=1 往返/FIF 往返 rtol 1e-6+annotations 3 条/未知 fmt 拒/超长名拒/非 ASCII 名拒/misc 类型拒/平坦通道可导/单通道双格式）+ 面板守卫 2（无 ctx 提示/stage=epochs 指向分段导出）+ 批处理 5（wants_export 四开关语义/epochs 管线跳过+日志/引擎级 3 文件每文件 _proc.edf+sidecar kind=raw+files_written 汇总/导出失败降级日志特征照算/**只勾 raw 不产特征 CSV·H5——run() 分支修正的回归哨兵**）；M8.3 净增 10：welch 语义 5 + 导出 2 + 图表区 3；M8.2 净增 4；M8.1 净增 15（epoching 锚定 9 + 预览 6）；M8 净增 29（tfr 17 + 四视图 8 + bandpower 4）；M7 后 213。**须 offscreen：MainWindow 级测试在 macOS 真窗口模式会挂住**）
 - `python scripts/e2e_m1.py`：**ALL OK（22 项）**——sheep + S001 真实导入 → 浏览 → 释放（幂等总量断言）；M6 追加 5 项 + M6.5 追加 1 项（羊数据按 BDF 解码：魔数优先于扩展名）+ M6.8 追加 3 项（±1s 平移/绝对模式 y 自适配/总览滑块跟随视口）
 - `python scripts/e2e_m7.py`：**ALL OK（16 项）×2 幂等**——羊浏览器体检（4 bad 全复用→Yes 自动标坏道→列表 ✗/✓ 前缀→tooltip 明细→按钮恢复）/ TPDJ-位置1 八通道全坏 / 特征链（注册表→FeatureTable→CSV·HDF5 回读分级一致）；**须逐模块 patch signal_browser.QMessageBox**（该模块 M7 起有模块级引用，MainWindow 的 patch 罩不到）
 - `python scripts/e2e_m2.py`：**ALL OK（17 项）**——4.9GB dataset 扫描 5.2s / 识别 1606 条 / 3 条已知结构报错 / 六格式（EDF/GDF 2a/GDF 2b/ds1/ds4/CSV）逐个打开均有真实曲线 / GDF 中文标签 / 六 tab 关闭释放
@@ -352,6 +368,20 @@
    macOS 右键→打开（或 `xattr -cr DataloadV.app`）；Windows "更多信息→仍要运行"
 
 ## 最近变更记录（新条目加在最上面）
+
+- 2026-10-15（M14 完成，用户两项需求驱动）：**①PSD 轴系**：PsdCurvesChart/PsdView 两处
+  y=_to_db（10·log10(max(psd,1e-40))，re 1µV²/Hz）、删 setLogMode 双对数、`_PlainAxis`
+  双轴（覆写 tickStrings 强制 f"{v:g}"）；y 轴标签新 `PIPE_PSD_AXIS_Y_DB`。**②柱状→箱线**：
+  FeatureBarGrid 分组从 groupby.mean() 改 groupby.apply(list) 原始值（`self.groups` 替代
+  `self.aggregated`）；BarGraphItem 循环换 BoxplotItem（每特征一色 intColor(i)，格内系列
+  alpha 0.35→0.75 梯度，medianPen 深灰）；`features/units.py` 新建 feature_unit 映射
+  （@窗后缀先剥→qc 特殊表→_uv2/_uv/_rate→_log 剥后判 _rel（rel_log 无量纲）→标准带名
+  µV²→兜底 ""）；FEAT_CHART_EP_AGG 文案改箱线口径。测试：test_features_units.py 26
+  参数化 + test_ui_m4 重写箱线口径（groups 值列表）+3 新（dB 数值/普通刻度/特征色+单位
+  标注）；pytest **362 绿** + e2e_m4 ALL OK + e2e_m1 + smoke 零回归。坑 #64⑨ 三则
+  （BoxplotItem 小写 p 与旧式参数静默无效/GraphicsLayout.items 注册表语义/to_wide 的
+  first 丢重复值——箱线用长表）。
+
 
 - 2026-10-14（M13 完成 + 挂死根因闭环，用户两项时频需求 + 重启后继续排查驱动）：
   **①频率轴翻转+150Hz**：去 `invertY(True)`（与 ImageItem y 向下坐标组合的实际

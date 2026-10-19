@@ -100,6 +100,11 @@ class S:
     TIME_FMT = "{t:.2f} s / {total:.1f} s"
     LOAD_FAILED_TITLE = "打开失败"
 
+    # ===== M14：特征图表区改造（PSD dB 轴 / 箱线图）=====
+    PIPE_PSD_AXIS_Y_DB = "功率谱密度 (dB, re 1 µV²/Hz)"
+    FEAT_CHART_VIEW_BOX = "箱线图"
+    FEAT_CHART_VIEW_BAR = "柱状图"
+
     # ===== M11：事件 marker 列表（浏览器底部横条，双击行跳转波形）=====
     COL_EVENT_IDX = "#"
     COL_EVENT_NAME = "名称"
@@ -300,7 +305,7 @@ class S:
     FEAT_TAB_PSD = "PSD 曲线"
     FEAT_TAB_BARS = "特征柱状图"
     FEAT_CHART_CURVE_TRUNC = "曲线共 {total} 条，仅显示前 {n} 条（可收窄通道/时间窗后重算）"
-    FEAT_CHART_EP_AGG = "分段数据已按事件码求均值聚合（每类事件一条系列）"
+    FEAT_CHART_EP_AGG = "分段数据按事件码分箱展示（箱线：中位线/四分位箱/1.5×IQR 须/离群点）"
     FEAT_CHART_SERIES_TRUNC = "系列共 {total} 条，仅显示前 {n} 条"
     FEAT_CHART_FEATURE_TRUNC = "特征共 {total} 项，仅显示前 {n} 项（可在参数里收窄频段/统计量）"
 

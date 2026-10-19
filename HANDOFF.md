@@ -54,7 +54,7 @@ pip install -e ".[dev]"
 ```bash
 conda activate dlv
 dataloadv                                    # 启动应用（或 python -m dataloadv）
-QT_QPA_PLATFORM=offscreen pytest             # 全部单测（2026-10-14 M13 精修后：335 passed，含 real 数据项；
+QT_QPA_PLATFORM=offscreen pytest             # 全部单测（2026-10-15 M14：364 passed，含 real 数据项；
                                              #   MainWindow 级测试须 offscreen——坑 #45）
 pytest -m real                               # 仅真实数据冒烟（data/sheep 缺失自动跳过；建议同带 offscreen）
 python scripts/e2e_m9.py                     # M9 端到端：连续导出 EDF/FIF+批处理逐文件（幂等；须 offscreen）
@@ -304,6 +304,27 @@ src/dataloadv/
   逐一核对，测试别只用默认窗口。另：`_set_x_range` 路径的两级防抖（30ms refresh +
   300ms TFR）窗口内 timer/running 都是"未跑"状态——负向条件（not isActive/not running）
   全部提前满足，等待必须用正向业务终态（`_tfr_seq` 递增）——本坑第三次实证。
+  ⑨**M14 图表三则**：a）pg 0.14 箱线是 **`pg.BoxplotItem`（小写 p）**，`hasattr(pg,
+  'BoxPlotItem')`=False；正确用法 `BoxplotItem(loc=[...], data=[每箱样本数组...],
+  width=, pen=, brush=, medianPen=)`——旧式 x/height 参数**不报错但静默画不出**
+  （generatePicture 只读 loc/data）；默认须长 IQR×1.5、outlier=True 收集离群点。
+  b）**`GraphicsLayout.items` 是 {item→'list'} 注册表**——keys() 才是布局内控件
+  （values() 是属性名字符串，拿 PlotItem 用 items.keys() 过滤 isinstance）。
+  c'）**并排条形/箱线的"贴合"要用槽位制根除**（2026-10-15 四次迭代教训）：组内均分制
+  （组宽/n_ser 再乘填充系数）下系列间绝对间隙只有百分之几通道距——改填充系数
+  （0.9→0.68→0.55）三轮都"看不出变化"（间隙像素级）；散点 jitter 越箱缘还会把间隙
+  填满。定稿：**每（通道×系列）独占宽 1.0 的 x 槽位**（x=j*n_ser+k），箱/柱宽恒定
+  槽距比例（0.55/0.9），刻度放组中心 j*n_ser+(n_ser-1)/2——空隙 45% 槽距恒定，
+  与系列数无关。
+  c"）**BoxplotItem 遇 NaN 值组闪退**（2026-10-15 用户滚动崩溃，日志实锤）：pg 的
+  IQR_1p5 须函数 `np.max(data[data<=upper_theory])`——NaN 比较恒 False，组内全 NaN
+  或混合时筛选结果空数组 → np.max 抛 ValueError → ViewBox.prepareForPaint（滚动重绘）
+  全链崩。NaN 源头：常数序列（饱和/平线通道）的 scipy kurtosis 返回 NaN。**修在
+  数据入口**（groups 构造滤 NaN）而非替换 whiskerFunc——单点防御。教训：喂 pg 绘制
+  项的数据先滤 NaN（pg 大量 `data[mask]` 聚合无空数组防御）。
+c）**FeatureTable.to_wide 的 aggfunc="first" 丢同键重复值**——需要原始值分布
+  （箱线/ violin）的场景直接用长表 df groupby；另：**特征单位映射**在
+  features/units.py（后缀规则+qc 特殊表+bandpower 判定；未知名兜底 "" 不猜）。
 
 ## 当前接手要点（2026-09-01，M10 双平台打包机器验证完成、人工验收与 CI push 待办）
 

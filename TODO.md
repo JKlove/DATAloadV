@@ -396,3 +396,17 @@ Qt 6.x 后续版本须换 `filterInvalidated` 信号或 `beginFilterChange`，�
       静默截断/max 池化保窄峰/legacy 标记注记）
 - [x] 同日挂死根因闭环（16 处 qtbot.waitUntil → conftest wait_until；规则入
       坑 #57⑥：测试禁用 waitUntil；时间戳探针转常设）
+
+## M14 特征图表区改造（✅ 完成 2026-10-15：PSD dB 轴/箱线图）
+
+- [x] M14-1 features/units.py：feature_unit 单位映射（@窗剥后缀→qc 特殊表→
+      _uv2/_uv/_rate→_log 剥后判 _rel→标准带名 µV²→兜底 "" 不猜）
+- [x] M14-2 PsdCurvesChart/PsdView：y=_to_db（10·log10 re 1µV²/Hz）+删双对数+
+      _PlainAxis 双轴（tickStrings 强制 f"{v:g}" 无科学计数）；y 标签
+      PIPE_PSD_AXIS_Y_DB
+- [x] M14-3 FeatureBarGrid 箱线：groupby.apply(list) 原始值分箱（self.groups 替代
+      aggregated）；BoxplotItem（loc/data；每特征一色 intColor(i)，格内系列 alpha
+      梯度）；纵轴单位标注；FEAT_CHART_EP_AGG 文案改箱线口径
+- [x] M14-4 测试：units 26 参数化 + m4 箱线口径重写 + dB/普通刻度/特征色与单位
+      3 新用例；pytest 362 绿零回归
+- [x] M14-5 e2e_m4 ALL OK + e2e_m1 + smoke 回归；坑 #64⑨ 三则；治理七文件同步
