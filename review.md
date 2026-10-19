@@ -1320,3 +1320,22 @@ fixture 收窄 `channels=["EEG00"]` 保 1 条下游零改，新增窗进列头/a
   在 import 重库前调用（代价：Windows 冷启动约 +1s）。
 - **验证**：test_utf8_bootstrap.py 四分支打桩（368 绿全量）+ 源码/重打包 macOS
   冒烟；**Windows 真机复验待用户（v0.2.1 下载后开原崩文件）**。
+
+## v0.2.2 — v0.2.1 打不开事故修复（2026-10-19 当天）
+
+- **现象**（用户中文 Windows 照片 traceback 实锤）：v0.2.1 双击直接弹
+  "Unhandled exception in script：'NoneType' object has no attribute 'write'"，
+  入口链 entry.py:20 → app.py main → argparse。
+- **根因（v0.2.1 自举代码的低级错误）**：`os.execv(exe, [exe, *sys.argv])` 把
+  `sys.argv[0]`（exe 路径）重复拼成位置参数 → 子进程 argparse 未知位置参数 →
+  报错路径写 `sys.stderr` → windowed（console=False）打包版 stderr 为 None →
+  AttributeError。子进程 UTF-8 模式本身已生效（环境变量传递成功）——死在 argparse。
+- **修三层**：①`_restart_argv()` 收敛参数构造（冻结态 `[exe, *argv[1:]]`／源码态
+  重建 `-m dataloadv`）；②execv 包 OSError 兜底（杀软拦截清标记照常启动）；
+  ③`app.main()` 入口给 stderr 垫 devnull（windowed 模式通用防线，参数错→静默
+  退出码 2 而非崩溃框）。
+- **验证**：新增 frozen/source 两形态参数断言 + execv 失败兜底测试（**正是 v0.2.1
+  缺的回归网**——macOS 上自举 no-op，真机行为只有参数构造断言能拦）；事故现场
+  本地复现（stderr=None + 位置参数）修复后 SystemExit(2) 干净退出；pytest
+  **372 绿**（+4）；重打包 macOS offscreen 冒烟 SMOKE OK；坑 #66。
+- 待办：用户 Windows 复验 v0.2.2（双击能开 + 原崩文件能打开）。

@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import sys
 import traceback
 
@@ -92,6 +93,12 @@ def main(argv: list[str] | None = None) -> int:
     :param argv: 命令行参数，缺省取 ``sys.argv[1:]``（测试可显式传入）
     :returns: 进程退出码，0 表示正常退出
     """
+    # console=False 的打包版 sys.stderr 为 None——argparse 报错路径
+    # （print_usage/_print_message）要写 stderr，不垫会 AttributeError
+    # （v0.2.1 事故链最后一环，坑 #66）。垫 devnull：参数错→静默退出码 2，
+    # 而不是崩溃对话框。
+    if sys.stderr is None:
+        sys.stderr = open(os.devnull, "w")  # noqa: SIM115 - 进程级垫底，随进程退出
     parser = argparse.ArgumentParser(prog="dataloadv", description="DataloadV 电生理数据平台")
     parser.add_argument(
         "--smoke",

@@ -1,9 +1,9 @@
-"""UTF-8 模式自举（坑 #65）的单元测试——打桩层面验证决策逻辑.
+"""UTF-8 模式自举（坑 #65/#66）的单元测试——打桩层面验证决策逻辑与参数构造.
 
-真机 GBK 崩溃无法在 macOS 复现（locale 即 UTF-8，且 pyqtgraph 0.14.0
-PyPI/conda 两渠道 wheel 的渐变 CSV 实测均 GBK 安全——用户 Windows 包的
-字节级差异本机不可复现），故此处验证：何种环境触发重启、重启参数正确、
-防循环双保险。端到端证明靠 Windows 真机复验（v0.2.1）。
+v0.2.1 事故（Windows 打不开）根因：execv 参数表把 argv[0] 重复拼成位置
+参数——本文件新增的 frozen/source 两形态参数断言就是当时的缺口（macOS
+上自举 no-op，真机行为只有参数构造断言能拦）。真机 GBK 崩溃本身无法在
+macOS 复现（locale 即 UTF-8），端到端证明靠 Windows 真机复验（v0.2.2）。
 """
 
 from __future__ import annotations
@@ -14,11 +14,11 @@ import types
 
 import pytest
 
-from dataloadv._utf8 import ensure_utf8_mode
+from dataloadv._utf8 import _restart_argv, ensure_utf8_mode
 
 
 class TestEnsureUtf8Mode:
-    """四分支：posix 不重启 / 已 UTF-8 不重启 / Windows 旧编码重启 / 防循环放弃."""
+    """分支与兜底：posix 不重启 / 已 UTF-8 不重启 / Windows 旧编码重启 / 防循环 / execv 失败兜底."""
 
     @staticmethod
     def _patch_env(monkeypatch, os_name: str, utf8_mode: int) -> None:
@@ -50,11 +50,15 @@ class TestEnsureUtf8Mode:
         calls: list = []
         monkeypatch.setattr(os, "execv", lambda *a: calls.append(a))
         self._patch_env(monkeypatch, "nt", 0)
+        # 冻结态打桩：exe 路径 + 原 argv[0]（模拟 v0.2.1 事故现场）
+        monkeypatch.setattr(sys, "frozen", True, raising=False)
+        monkeypatch.setattr(sys, "argv", ["C:\\app\\DataloadV.exe", "--smoke"])
+        monkeypatch.setattr(sys, "executable", "C:\\app\\DataloadV.exe")
         assert ensure_utf8_mode() is True
         assert os.environ["PYTHONUTF8"] == "1"
         assert os.environ["DLV_UTF8_RESTARTED"] == "1"
-        # 自重启带全参（--smoke 等命令行参数不丢）
-        assert calls == [(sys.executable, [sys.executable, *sys.argv])]
+        # 关键断言（坑 #66 回归）：exe 路径不得重复成位置参数
+        assert calls == [("C:\\app\\DataloadV.exe", ["C:\\app\\DataloadV.exe", "--smoke"])]
 
     def test_no_loop_guard(self, monkeypatch):
         """标记仍在但 UTF-8 模式未生效（异常环境）——放弃重启防无限循环."""
@@ -64,3 +68,41 @@ class TestEnsureUtf8Mode:
         monkeypatch.setenv("DLV_UTF8_RESTARTED", "1")
         assert ensure_utf8_mode() is False
         assert calls == []
+
+    def test_execv_failure_falls_back(self, monkeypatch):
+        """execv 抛 OSError（杀软/权限）——清标记照常启动，绝不死于自举."""
+        def _boom(*a):
+            raise OSError("blocked")
+        self._patch_env(monkeypatch, "nt", 0)
+        monkeypatch.setattr(os, "execv", _boom)
+        assert ensure_utf8_mode() is False
+        assert "DLV_UTF8_RESTARTED" not in os.environ  # 标记已清（可诊断重试）
+
+
+class TestRestartArgv:
+    """参数构造两形态（v0.2.1 事故的直接回归网）."""
+
+    def test_frozen_no_argv0_duplication(self, monkeypatch):
+        """冻结态：exe + 原参数——argv[0]（exe 路径）绝不能重复拼入."""
+        monkeypatch.setattr(sys, "frozen", True, raising=False)
+        monkeypatch.setattr(sys, "argv", ["C:\\app\\DataloadV.exe"])
+        monkeypatch.setattr(sys, "executable", "C:\\app\\DataloadV.exe")
+        assert _restart_argv() == ["C:\\app\\DataloadV.exe"]
+
+    def test_frozen_keeps_user_args(self, monkeypatch):
+        monkeypatch.setattr(sys, "frozen", True, raising=False)
+        monkeypatch.setattr(sys, "argv", ["C:\\app\\DataloadV.exe", "--smoke"])
+        monkeypatch.setattr(sys, "executable", "C:\\app\\DataloadV.exe")
+        assert _restart_argv() == ["C:\\app\\DataloadV.exe", "--smoke"]
+
+    def test_source_mode_reconstructs_dash_m(self, monkeypatch):
+        """源码态（python -m dataloadv）：重启命令必须重建 -m dataloadv."""
+        monkeypatch.delattr(sys, "frozen", raising=False)
+        monkeypatch.setattr(
+            sys, "argv",
+            ["/repo/src/dataloadv/__main__.py", "--smoke"],
+        )
+        monkeypatch.setattr(sys, "executable", "/opt/python3.10/bin/python3.10")
+        assert _restart_argv() == [
+            "/opt/python3.10/bin/python3.10", "-m", "dataloadv", "--smoke",
+        ]

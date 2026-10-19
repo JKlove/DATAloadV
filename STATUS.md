@@ -369,6 +369,14 @@
 
 ## 最近变更记录（新条目加在最上面）
 
+- 2026-10-19（v0.2.1 打不开事故，当天修复发 v0.2.2）：v0.2.1 在用户中文 Windows
+  **双击打不开**——自举 execv 参数把 argv[0]（exe 路径）重复拼成位置参数 → 子进程
+  argparse 报错写 stderr 又逢 windowed 模式 stderr=None → AttributeError（照片
+  traceback 实锤）。修三层：`_restart_argv()` 冻结/源码两形态正确构造（回归测试
+  覆盖，正是当时缺口）+ execv OSError 兜底（清标记照常启动）+ main() 入口给
+  stderr 垫 devnull（windowed 模式通用防线）。事故现场本地复现验证：SystemExit(2)
+  干净退出无 AttributeError；pytest **372 绿**（+4）；坑 #66。待用户 Windows 复验。
+
 - 2026-10-19（v0.2.0 Windows 崩溃修复，发 v0.2.1）：用户中文 Windows（GBK locale）
   **打开任何数据必崩**——pyqtgraph `colormap.get("turbo")`（M13 起浏览器构建必经）
   按平台默认编码读 UTF-8 渐变 CSV 炸 `UnicodeDecodeError`；macOS 默认 UTF-8 故本机

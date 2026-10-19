@@ -334,7 +334,10 @@ Qt 6.x 后续版本须换 `filterInvalidated` 信号或 `beginFilterChange`，�
 - [x] **v0.2.0 Windows 崩溃修复 → v0.2.1（同日）**：中文 Windows GBK locale 打开
       任何数据必崩（pyqtgraph 按平台默认编码读 UTF-8 渐变 CSV，坑 #65）；修=
       PEP 540 UTF-8 模式自举（`_utf8.py` + entry/__main__ 前置调用）；pytest 368 绿
-- [ ] **用户 Windows 复验 v0.2.1**：打开数据不再崩（含原崩的 01号 DGDJ 文件）
+- [x] **v0.2.1 打不开事故 → v0.2.2（同日）**：execv 参数重复拼 argv[0] → argparse
+      报错写 None stderr → AttributeError（坑 #66）；修=`_restart_argv()` 两形态
+      构造 + OSError 兜底 + main() 垫 stderr；事故现场本地复现过；pytest 372 绿
+- [ ] **用户 Windows 复验 v0.2.2**：①双击能打开 ②打开原崩的 01号 DGDJ 文件不崩
 
 ## 已知问题 / Backlog（v1 收官后暂缓项）
 
