@@ -38,7 +38,18 @@ jobs:
       - name: 测试门禁（offscreen；绿了才打包）
         env:
           QT_QPA_PLATFORM: offscreen
-        run: python -m pytest -q
+        # 失败详情经 ::error:: 注解外显——日志匿名不可读，注解公共仓库匿名可见
+        run: |
+          set +e
+          python -m pytest -q -ra --tb=short > pytest_out.txt 2>&1
+          rc=$?
+          if [ "$rc" -ne 0 ]; then
+            grep -E "^(FAILED|ERROR)" pytest_out.txt | head -8 | while IFS= read -r line; do
+              echo "::error::${line:0:200}"
+            done
+            echo "::error::以上为失败用例摘要（每步注解上限 10 条）；完整输出见本步日志"
+          fi
+          exit $rc
 
       - name: PyInstaller 打包
         run: python -m PyInstaller dataloadv.spec --noconfirm
@@ -75,7 +86,17 @@ jobs:
       - name: 测试门禁（offscreen；绿了才打包——Windows 侧回归在此拦截）
         env:
           QT_QPA_PLATFORM: offscreen
-        run: python -m pytest -q
+        # 失败详情经 ::error:: 注解外显（同 mac job，注解匿名可见）
+        run: |
+          python -m pytest -q -ra --tb=short > pytest_out.txt 2>&1
+          if ($LASTEXITCODE -ne 0) {
+            Get-Content pytest_out.txt | Where-Object { $_ -match "^(FAILED|ERROR)" } |
+              Select-Object -First 8 | ForEach-Object {
+                $l = $_.Substring(0, [Math]::Min(200, $_.Length))
+                Write-Output "::error::$l"
+              }
+          }
+          exit $LASTEXITCODE
 
       - name: PyInstaller 打包
         run: python -m PyInstaller dataloadv.spec --noconfirm
