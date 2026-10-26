@@ -29,7 +29,8 @@ from ..strings_zh import S
 
 logger = logging.getLogger(__name__)
 
-# 支持的文件选择过滤器（随读取器扩充；M2 起可从注册表自动生成）
+# 支持的文件选择过滤器——手写清单（未从 READER_REGISTRY 自动生成；未列的
+# 扩展名 .csv/.txt/.h5/.nwb/.rhd 等靠「所有文件 (*)」兜底仍可选）
 _FILE_FILTER = "电生理数据文件 (*.edf *.bdf *.gdf *.vhdr *.fif *.set *.cnt *.mff *.mat);;所有文件 (*)"
 
 

@@ -23,24 +23,14 @@ class S:
     ACT_ABOUT = "关于"
     ACT_IMPORT_FILES = "导入文件…"
     ACT_IMPORT_FOLDER = "导入文件夹…"
-    ACT_EXPORT = "导出…"
-    ACT_NEW_WORKSPACE = "新建工作区…"
-    ACT_OPEN_WORKSPACE = "打开工作区…"
 
     # Dock / 面板标题
     DOCK_WORKSPACE = "工作区"
     DOCK_PIPELINE = "处理"
     DOCK_LOG = "日志"
 
-    # 占位提示（M0 骨架；后续里程碑逐一替换为真实控件）
-    PLACEHOLDER_WORKSPACE = "工作区（M1：数据导入与元数据浏览）"
-    PLACEHOLDER_PIPELINE = "处理管线（M3：预处理步骤编排与预览）"
-    PLACEHOLDER_TAB_WELCOME = "欢迎——使用 文件 菜单导入数据（M1 起可用）"
 
     # 通用按钮/状态
-    BTN_CLOSE = "关闭"
-    BTN_OK = "确定"
-    BTN_CANCEL = "取消"
     STATUS_READY = "就绪"
     STATUS_VERSION_FMT = "版本 {version}"
 
@@ -62,7 +52,6 @@ class S:
     IMPORT_ERR_COL_MSG = "错误"
     IMPORT_ERR_TITLE = "部分文件导入失败（{n} 个）"
     BTN_SHOW_ERRORS = "查看失败详情"
-    BTN_IMPORT_ANOTHER = "继续导入"
 
     COL_NAME = "名称"
     COL_SUBJECT = "被试"
@@ -93,8 +82,6 @@ class S:
     BTN_JUMP = "跳转"
     LBL_TIME = "时间 (s)"
     LBL_GAIN = "纵向增益"
-    LBL_CHANNELS = "通道"
-    LBL_EVENT_LANE = "事件"
     EVENT_LANE_NONE = "无事件"
     UNIT_UV = "µV"
     TIME_FMT = "{t:.2f} s / {total:.1f} s"
@@ -102,10 +89,20 @@ class S:
 
     # ===== M14：特征图表区改造（PSD dB 轴 / 箱线图）=====
     PIPE_PSD_AXIS_Y_DB = "功率谱密度 (dB, re 1 µV²/Hz)"
+
+    # ===== M15：通道全选切换 / 比例尺自动持续更新 / 特征通道选择 =====
+    BTN_CHANNELS_ALL_TOGGLE = "全选/全不选"
+    BTN_CHANNELS_TIP = "当前全部勾选时点击=全部取消；否则点击=全部勾选。"
+    CH_PICK_ALL_FMT = "全部（{n} 通道）"
+    CH_PICK_SEL_FMT = "已选 {k}/{n}"
+    CH_PICK_TITLE = "选择通道"
+    CH_PICK_BTN_ALL = "全选"
+    CH_PICK_BTN_NONE = "清空"
+    CH_PICK_EMPTY_HINT = "（不勾任何通道 = 全部数据通道）"
     FEAT_CHART_VIEW_BOX = "箱线图"
     FEAT_CHART_VIEW_BAR = "柱状图"
 
-    # ===== M11：事件 marker 列表（浏览器底部横条，双击行跳转波形）=====
+    # ===== M11：事件 marker 列表（左栏通道列表下方——M12 自底部移入；双击行跳转波形）=====
     COL_EVENT_IDX = "#"
     COL_EVENT_NAME = "名称"
     COL_EVENT_TIME = "时间 (s)"
@@ -262,8 +259,6 @@ class S:
     PIPE_EPOCHS_TAB_FMT = "分段预览 · {name}"
     PIPE_EPOCHS_TOTAL = "分段总数：{n}"
     PIPE_EPOCHS_PER_CODE = "各类分段数"
-    PIPE_EPOCHS_AVG_PLOT = "各通道分段平均波形（跨段平均，µV）"
-    PIPE_EPOCHS_NO_PLOT = "（无分段可画）"
     # M9：单文件连续数据导出（最近一次预览的管线产物）
     PIPE_BTN_EXPORT_RAW = "导出连续数据…"  # 面板按钮 + 处理菜单项共用
     PIPE_EXPORT_RAW_TITLE = "导出连续数据"
@@ -298,10 +293,9 @@ class S:
     FEAT_EXPORT_DONE_FMT = "已写出 {n} 个文件：\n{files}"
     FEAT_EXPORT_FAIL_TITLE = "导出失败"
     FEAT_TABLE_EMPTY = "（无特征结果）"
-    FEAT_EPOCHS_FMT_HINT = "分段数据：{fmt}"
     FEAT_EXPORT_EPOCHS_H5 = "HDF5（跨工具）"
     FEAT_EXPORT_EPOCHS_FIF = "FIF（mne 无损）"
-    # M8.3：特征结果图表区（PSD 曲线 tab + 柱状图 tab）
+    # M8.3：特征结果图表区（PSD 曲线 tab + 特征网格 tab——M14 起箱线默认、可切柱状）
     FEAT_TAB_PSD = "PSD 曲线"
     FEAT_TAB_BARS = "特征柱状图"
     FEAT_CHART_CURVE_TRUNC = "曲线共 {total} 条，仅显示前 {n} 条（可收窄通道/时间窗后重算）"

@@ -8,7 +8,6 @@ from __future__ import annotations
 
 from typing import Literal, Optional
 
-import mne
 from pydantic import BaseModel, Field, model_validator
 
 from .base import ProcStep, StepError, register_step
@@ -95,6 +94,7 @@ class NotchStep(ProcStep):
         bad = [f for f in params.freqs if f <= 0 or f >= nyquist]
         if bad:
             raise StepError(f"陷波频点 {bad} 超出有效范围（0 < 频点 < Nyquist={nyquist:g} Hz）")
-        obj = ctx.raw if ctx.stage == "raw" else ctx.epochs
-        obj.notch_filter(freqs=params.freqs, picks=None, verbose="ERROR")
+        # applies_to={"raw"} 已在 apply_pipeline 拦截 epochs（mne Epochs 无
+        # notch_filter——直取 ctx.raw；旧三目分支不可达且会 AttributeError，M16 删）
+        ctx.raw.notch_filter(freqs=params.freqs, picks=None, verbose="ERROR")
         return ctx

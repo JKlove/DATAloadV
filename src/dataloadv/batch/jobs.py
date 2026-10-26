@@ -102,13 +102,6 @@ class JobSpec(BaseModel):
     export_raw_fif: bool = False
     export_dir: str = ""
 
-    def wants_export(self) -> bool:
-        """是否需要在批处理结束后写文件（特征表与连续数据任一勾选即算）."""
-        return bool(self.export_dir) and (
-            self.export_csv or self.export_hdf5
-            or self.export_raw_edf or self.export_raw_fif)
-
-
 class FileStatus(str, Enum):
     """单文件的处理结局.
 
@@ -116,7 +109,7 @@ class FileStatus(str, Enum):
       可提的东西，不是错误）
     - ``failed``：读取/管线/特征任一环节失败（error 里有中文原因）
     - ``cancelled``：取消时尚未开始或进行中被放弃
-    - ``skipped``：保留状态（v1 未用——如未来按条件过滤文件）
+    - ``skipped``：**预留**状态（当前流程不产生——batch_view 与文案映射保留占位）
     """
 
     OK = "ok"

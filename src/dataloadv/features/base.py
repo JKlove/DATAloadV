@@ -30,7 +30,6 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, ClassVar, Optional
 
-import numpy as np
 from pydantic import BaseModel
 
 if TYPE_CHECKING:  # 仅类型标注，避免运行时循环 import

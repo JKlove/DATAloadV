@@ -54,7 +54,7 @@ pip install -e ".[dev]"
 ```bash
 conda activate dlv
 dataloadv                                    # 启动应用（或 python -m dataloadv）
-QT_QPA_PLATFORM=offscreen pytest             # 全部单测（2026-10-15 M14：364 passed，含 real 数据项；
+QT_QPA_PLATFORM=offscreen pytest             # 全部单测（2026-10-26 M15：375 passed，含 real 数据项；
                                              #   MainWindow 级测试须 offscreen——坑 #45）
 pytest -m real                               # 仅真实数据冒烟（data/sheep 缺失自动跳过；建议同带 offscreen）
 python scripts/e2e_m9.py                     # M9 端到端：连续导出 EDF/FIF+批处理逐文件（幂等；须 offscreen）
@@ -74,7 +74,7 @@ python scripts/e2e_m5.py                     # M5 端到端：45 文件批处理
 ```bash
 # 本机 macOS 包（dlv 环境、项目根；产物 dist/DataloadV.app + onedir 目录 dist/DataloadV/）
 python -m PyInstaller dataloadv.spec --noconfirm          # 全量 ~40s，解压 293MB
-cd dist && zip -r -y DataloadV-0.1.0-macOS-arm64.zip DataloadV.app   # -y 保符号链接
+cd dist && zip -r -y DataloadV-<版本>-macOS-arm64.zip DataloadV.app   # 版本取 pyproject；-y 保符号链接
 
 # 打包产物无头自检（app 内置 --smoke 分支：起主窗口自检后自动退出）
 QT_QPA_PLATFORM=offscreen dist/DataloadV.app/Contents/MacOS/DataloadV --smoke   # 末行 SMOKE OK
@@ -88,7 +88,7 @@ QT_QPA_PLATFORM=offscreen dist/DataloadV.app/Contents/MacOS/DataloadV --smoke   
 #   PyPI wheel）——二进制同为官方发布，行为等价；Windows 侧首跑后须真人双击验收
 ```
 
-## 架构导览（M6.8 后的实际结构）
+## 架构导览（M16 清理后的实际结构；MANUAL §1.5 为缩略版，本节为权威）
 
 ```
 src/dataloadv/
@@ -109,7 +109,9 @@ src/dataloadv/
 │   ├── hdf5.py              # 通用 HDF5：零数据 IO 定位 2-D 信号集，歧义拒绝
 │   ├── neo_reader.py        # _NeoRawReader 模板（structured array 头/选点数最多流/逐列单位换算）
 │   │                        #   + Blackrock(.nev/.ns*)/OpenEphys(.continuous→目录)/Intan(.rhd/.rhs)（M5，可选）
-│   └── nwb_reader.py        # NWB：acquisition/processing 找 ElectricalSeries；trials/epochs→EventTable（M5，可选）
+│   └── nwb_reader.py        # NWB（M5，可选）
+│
+│   （export/ 尚有 continuous_io.py——M9 连续数据 EDF/FIF 导出）
 ├── proc/                    # 预处理层（M3 建，M4 加 crop；禁止 import Qt）——每步=pydantic参数+apply(ctx)
 │   ├── context.py           # ProcessingContext：raw/epochs/stage/events/history/logs + from_recording（副本隔离）
 │   ├── base.py              # ProcStep ABC + STEP_REGISTRY + register_step + step_to/from_dict + apply_pipeline
@@ -124,7 +126,8 @@ src/dataloadv/
 ├── features/                # 特征提取层（M4；禁止 import Qt）——与 proc 层完全同构的注册表
 │   ├── base.py              # FeatureExtractor ABC + FEATURE_REGISTRY + apply_features（M5 加 cancel_check）+ 通道选择
 │   ├── qc.py                # compute_channel_qc 纯函数（get_window 闭包分窗采样）+ QualityCheckFeature（M7；排"添加特征"菜单首位；坏道参检不排除——与 pick_channels 语义相反）
-│   ├── spectral.py          # mean_welch/array_welch（scipy 广播）+ BandPowerFeature（δθαβγ+自定义+相对/对数+M8 time_windows 时间窗）+ WelchPsdFeature（仅 raw）
+│   ├── spectral.py          # mean_welch/array_welch + BandPowerFeature（δθαβγ+自定义+相对/对数+time_windows）+ WelchPsdFeature（仅 raw）
+│   ├── units.py             # feature_unit 特征名→单位映射（M14，图表纵轴用）
 │   ├── tfr.py               # compute_epochs_tfr：morlet 段平均功率→基线 dB（M8；禁 import Qt，UI 只编排）+ default_tfr_freqs 对数频率轴
 │   └── timedomain.py        # TimeDomainStatsFeature：rms/var/mav/ptp/iqr/zc_rate/kurt/skew 8 统计量纯 numpy
 ├── batch/                   # 批处理层（M4 results + M5 引擎；禁止 import Qt——引擎是纯 Python）
@@ -149,6 +152,7 @@ src/dataloadv/
     ├── dialogs/batch_dialog.py    # 批处理两页对话框：选择(过滤/全选/导出组)↔运行；queue.Queue+QTimer 事件泵（M5）
     ├── dialogs/settings_dialog.py # 设置：线程数/缓存 GB/默认导出目录（M5）
     └── widgets/             # workspace_tree / meta_table / signal_browser / event_lane /
+                              #   event_list（M11 事件清单）/ feature_charts（M8.3/M14 图表区）/ log_panel /
                               #   event_list（M11 事件 marker 列表：双击行 _center_at 定位；M12 移入左栏）/
                               #   signal_browser（M12：比例尺下拉/紧凑显示/三行 gfx 主图+同段时频图
                               #   turbo+turbo 色标+事件条，setXLink 像素对齐见坑 #64）/
@@ -284,7 +288,7 @@ src/dataloadv/
 
 63. **`QTableView.setSortingEnabled(True)` 会触发一次隐式初始排序，行为不可依赖（M11 实测）**：本 PySide6 6.11 构建实测启用时按**第 0 列降序**排（Qt 文档未承诺此行为，proxy 初始顺序因此不确定）——事件列表首跑双击"行 2"实际命中 source 行 0。规则：①启用排序后**必须 `horizontalHeader().setSortIndicator(列, 序)` 显式定初始序**（本项定为时间列升序=事件清单天然序），箭头显示与实际排序一致；②测试/调用方**不得硬编码 proxy 行号**——按业务键（如 onset）经 `onset_at_row` 反查目标行；③显隐断言用 `isHidden()`（显式 setVisible 语义）而非 `isVisible()`——offscreen 下顶级窗口未 show，isVisible 恒 False。
 
-64. **M12 浏览器四项改造的五则（pyqtgraph 0.14 / mne 1.12 实测）**：①**`setXLink` 是像素对齐不是复制范围**——两图数据区需在屏幕重叠，左轴宽度不等时主图 [30,40] 映射成副图 [30.56,40]（事件时间错位 0.56s，Plan agent 离屏实测）；解法=三行左轴统一 `setWidth(46)`（主图/事件条从"整体隐藏"改"定宽空刻度"，常量 `event_lane.ROW_AXIS_W`）；link 必须在首次 setXRange 前建立（构造顺序天然满足，注释固化）。②**mne 时频 Nyquist 硬边界**：sfreq=80 文件默认 2–45Hz 抛 "Cannot compute freq above Nyquist"——必须 `fmax=min(45, sfreq*0.475)` 自建频率表；**短窗硬边界**：<2s 抛 "wavelet longer than signal"（2Hz 核≈1.6s）。③**浏览器 TFR 防抖必须用实例 `QTimer(singleShot).start()`**——重启即取消旧定时；`QTimer.singleShot` 不可取消，连续拖动会堆叠计算。④**复位类按钮批量 setCheckState 要 `blockSignals` 包住**——否则 N 次 itemChanged→N 次刷新（与 `_refresh_ch_list_text` 同模式）。⑤**e2e 时频 rect 断言口径**：双击跳转居中 0 时视口 [-5,5] 左半为负（无数据段），TFR image 只覆盖 `get_window` clamp 后的实际窗 [0,5]——断言用视口与数据域 [0,dur] 的**交集**，别拿视口直接比。另：raw 窗口 TFR 的 dB 口径是"相对各频点峰值"（times≥0 无基线分支），文案勿复用"基线校正"。⑥**ColorBarItem 的联动方向是单向 cb→img（离屏实证）**：`cb.setLevels(low, high)` 自动同步绑定的 ImageItem；`img.setImage(autoLevels=True)` **不**联动 cb（色标留在旧范围）——程序侧更新范围一律经 cb.setLevels；用户拖动结束发 `sigLevelsChangeFinished`（程序 setLevels 不发，可安全用作"用户调过"的锁定信号）；无内置双击行为，eventFilter 拦 GraphicsSceneMouseDoubleClick 自定义。**HistogramLUTItem 慎用于纯展示场景**：自带渐变编辑器（色标上双击/拖动会生成多个三角切分点），用户会误触且无意义——只需色标+范围时用 ColorBarItem。
+64. **M12 浏览器四项改造的五则（pyqtgraph 0.14 / mne 1.12 实测）**：①**`setXLink` 是像素对齐不是复制范围**——两图数据区需在屏幕重叠，左轴宽度不等时主图 [30,40] 映射成副图 [30.56,40]（事件时间错位 0.56s，Plan agent 离屏实测）；解法=三行左轴统一 `setWidth(46)`（主图/事件条从"整体隐藏"改"定宽空刻度"，常量 `event_lane.ROW_AXIS_W`）；link 必须在首次 setXRange 前建立（构造顺序天然满足，注释固化）。②**mne 时频 Nyquist 硬边界**：sfreq=80 文件默认 2–45Hz 抛 "Cannot compute freq above Nyquist"——必须钳制自建频率表（初版 0.475；**M13 精修后 = min(150, Nyq×0.49)**，见 TfrConfig）；**短窗硬边界**：<2s 抛 "wavelet longer than signal"（2Hz 核≈1.6s）。③**浏览器 TFR 防抖必须用实例 `QTimer(singleShot).start()`**——重启即取消旧定时；`QTimer.singleShot` 不可取消，连续拖动会堆叠计算。④**复位类按钮批量 setCheckState 要 `blockSignals` 包住**——否则 N 次 itemChanged→N 次刷新（与 `_refresh_ch_list_text` 同模式）。⑤**e2e 时频 rect 断言口径**：双击跳转居中 0 时视口 [-5,5] 左半为负（无数据段），TFR image 只覆盖 `get_window` clamp 后的实际窗 [0,5]——断言用视口与数据域 [0,dur] 的**交集**，别拿视口直接比。另：raw 窗口 TFR 的 dB 口径是"相对各频点峰值"（times≥0 无基线分支），文案勿复用"基线校正"。⑥**ColorBarItem 的联动方向是单向 cb→img（离屏实证）**：`cb.setLevels(low, high)` 自动同步绑定的 ImageItem；`img.setImage(autoLevels=True)` **不**联动 cb（色标留在旧范围）——程序侧更新范围一律经 cb.setLevels；用户拖动结束发 `sigLevelsChangeFinished`（程序 setLevels 不发，可安全用作"用户调过"的锁定信号）；无内置双击行为，eventFilter 拦 GraphicsSceneMouseDoubleClick 自定义。**HistogramLUTItem 慎用于纯展示场景**：自带渐变编辑器（色标上双击/拖动会生成多个三角切分点），用户会误触且无意义——只需色标+范围时用 ColorBarItem。
   ⑦**M13 时频四方法四则**：a）**invertY(True) 与 ImageItem y 向下坐标的组合实际
   朝向是高频在下**（`vb.mapFromView` 像素实证；M8 起两处注释"低频在下"均写反——
   浏览器 M13 已去 invertY 翻转、epochs_preview 仅勘误注释行为未动）；b）
@@ -330,33 +334,22 @@ c）**FeatureTable.to_wide 的 aggfunc="first" 丢同键重复值**——需要�
 
 66. **execv 的 args[0] 是程序名占位 + windowed 模式 sys.stderr 为 None（v0.2.1 事故，2026-10-19 当天修复发 v0.2.2）**：v0.2.1 在中文 Windows **双击直接打不开**——自举写 `os.execv(exe, [exe, *sys.argv])` 把 `sys.argv[0]`（exe 路径本身）**重复拼成了位置参数**，子进程 argparse 遇未知位置参数走报错路径 → `print_usage` 写 `sys.stderr` → **console=False 的打包版 sys.stderr 是 None** → `AttributeError: 'NoneType' object has no attribute 'write'` → PyInstaller 弹 "Unhandled exception in script"（用户照片 traceback 实锤：entry.py:20 → app.py main → argparse）。三层教训：①**execv 参数语义**——args 列表 [0] 位是程序名占位，不是要追加的参数；原进程 argv[0] 绝不能再拼入（冻结态 `[exe, *sys.argv[1:]]`，源码 `python -m` 态须重建 `["-m", "dataloadv", ...]`——参数构造收敛到 `_restart_argv()` 并有形态回归测试）；②**windowed 打包版的 sys.stderr/stdout 是 None**——任何写它们的库路径（argparse 报错、print、第三方 warning）都会 AttributeError，main() 入口垫 devnull 兜底；③**macOS 上 no-op 的平台分支，单测必须覆盖参数构造**——真机行为拦不住时，把"将传给系统调用的值"的断言做全（本坑的 frozen/source 两形态断言就是当时缺口）。另：execv 包 OSError 兜底（杀软拦截时清标记照常启动——自举是增强不是依赖）。
 
-## 当前接手要点（2026-09-01，M10 双平台打包机器验证完成、人工验收与 CI push 待办）
+## 当前接手要点（2026-10-26，M16 全项目清理完成；M11–M15 均已交付）
 
-- **M10 双平台打包（按 PACKAGING_HANDOFF.md 执行）**：①**本机 macOS 包已可用**——`dataloadv.spec`（仓库根，单份跨平台）+ `packaging/entry.py` shim + `app.py --smoke` 自检分支；构建命令与产物自检见上方"打包"节；踩坑七则见坑 #59。②**验证状态**：offscreen 冒烟/真窗口存活退出/PYZ 延迟依赖核实/pytest 287 零回归全过；**用户真窗口五步流程（羊导入→浏览→带通+陷波预览→特征→CSV+EDF 导出）尚未亲眼验收**——这是 PACKAGING_HANDOFF 的硬要求，收尾前必须做。③**CI（.github/workflows/build.yml）已写好、actionlint 过、未 push**——push 是外发动作须用户批准；首跑后下载 win artifact 找真人双击验收（CI 绿≠能跑）。④**瘦身（M10-4）已裁决取消**：全量 293MB≪900MB 目标，excludes 留空。⑤发版路径：push → workflow_dispatch 或打 tag `v*` → Actions 页下载两平台 zip；版本号取 pyproject（改版本先改 pyproject）。未签名分发说明（右键打开/更多信息仍要运行）已写进 README/MANUAL。
-- **M9 连续数据导出（"推进 M9 开发"，v2 第三里程碑收官）**：①**`export/continuous_io.export_continuous(raw, path, fmt)`**——EDF 走 `mne.export.export_raw(physical_range="channelwise")`（动机与陷阱见坑 #58①②），FIF 走 `raw.save(fmt="single")` 强制 `_raw` 后缀（坑 #58③）；类型白名单+标签 ≤16 ASCII 前置中文守卫（坑 #58④）。②**单文件双入口**：面板第 4 按钮 `_btn_export` + 处理菜单（均 lambda 接线——坑 #58⑤）；`export_processed(fmt=None)` 参数化（e2e/单测绕过模态菜单直调走完整 guard+dialog+worker 路径）；挂靠 `panel._last_ctx`（预览产物，`_last_src_name` 记默认名——ctx 自身不带源名）；stage≠raw 中文指引指向分段导出。③**批处理**：JobSpec `export_raw_edf/fif` + `_export_continuous` 内嵌 `_process_one`（**apply_pipeline 后 apply_features 前**——epoching 会把 ctx.raw 换成 epochs；失败降级日志不杀特征）；**run() 尾部已改序**——「勾 csv/h5 之一且表非空才调 _export，`_raw_written` 独立并入」，修了只勾 raw 误写特征 CSV 的旧分支漏洞（回归哨兵用例钉死）；批级 sidecar extra 加 raw_files_written。④验证：pytest **287 绿**（+16）+ e2e_m9 **16 项**（50Hz 压制随导出保真 0.0000 / FIF 往返 2.9e-11V / 批处理 3 羊文件全 ok）+ e2e_m3/m5/smoke 零回归。限制（EDF 16-bit ~1e-4 相对误差/整秒补齐/注解仅 description·onset·duration/FIF float32）已写 MANUAL §3.10 限制小节。
-- **M8.3 特征结果图表区（用户两点需求驱动）**：①**`welch_psd` 逐通道语义**——channels 留空=全部数据通道各一条（通道平均分支删除、"(通道平均)"字面量不再存在；`mean_welch` 保留给对比 PSD）；新增 `time_windows`（raw 绝对秒多窗）；curve dict 加 `"window"`（纯 str，`@起-止s`/空=全量）→ results/`features_io` 透传（宽表列头带窗标记、HDF5 attrs、回读兜底旧文件）。窗校验抽 `_resolve_spans(t_axis, spec)`（spectral.py 模块级）BandPower/WelchPsd 共用，错误消息逐字保留（测试钉死）。②**`ui/widgets/feature_charts.py` 新建**——`PsdCurvesChart`（log-log、`intColor(i,hues=n)`、蝶形同款分列图例 `_make_legend`、MAX_CURVES=60 截断+hint）；`FeatureBarGrid`（**每特征一格** 3 列网格 Y 独立、分段 `groupby(recording,event_code,channel,feature).mean()` 按事件码聚合、系列=code（多录制 `rec · code`）、MAX_FEATURES=24/MAX_SERIES=12、通道>12 隔名、QScrollArea；`self.aggregated`/`feature_names` 暴露给测试数值断言）；`make_charts_area(table)` 三态（双有=QTabWidget 两 tab/单有=单图/全无=None）。feature_table `_build_ui` 拆 `_build_table_area` + QSplitter 3:2，构造签名/`_model`/`_proxy` 全不动（e2e 寻址安全）；teardown 加 `_charts=None`。批处理结果 tab 同一控件。验证：pytest **271 绿**（+10）+ e2e_m4 **19 项** + smoke + 三形态白底截图确认。**新坑**：①pg 全局白底在 `MainWindow.__init__` 里 `setConfigOptions` 设置——独立离屏截图脚本必须手动复刻，否则黑底、且图像分析器会跟着误报"黑白割裂"（本次靠 PIL 像素统计证伪）；②视觉验证结论要交叉验证：同一分析器对同一图可自相矛盾（图例"半透明"vs"不透明"），色一致性靠代码层同源保证（图例 symbolBrush 与柱 brush 同 `intColor(k,hues)` 参数）比靠读图可靠。
-- **M8.2 视图观感精修（用户三截图反馈驱动）**：①**堆叠系通道名行首内嵌**——各通道平均/单段浏览两视图的通道名从 y 轴 setTicks（25 导联必挤叠，用户截图证实）改 `_draw_stacked` 里 TextItem（`anchor=(0,0.5)`+半透明白底+行首行基线 `setPos(times[0], i*spacing)`，M6 浏览器同款）；预览 tab 矮，显式 **8pt** 压盒高（默认字号盒高≥行距相邻相触——坑 #57④）。②**蝶形图图例**——`_legend` 惰性建（`addLegend(labelTextSize="8pt")`+白底+灰框+`setColumnCount(ceil(n/12))` 分列）；`_redraw` 统一 `legend.clear()+hide()`（clear 清条目不清框——坑 #57②）。③**切视图 ticks 残留清理**——`_make_plot` 预置+`_redraw` 统一 `getAxis("left").setTicks([])`，`_draw_tfr` 里 `setTicks(None)` 恢复自动频率刻度（单段浏览→时频左上角飘通道名的根因+蝶形→时频频率刻度被砍暗病——坑 #57①）。验证：pytest **261 绿**（+4）+ e2e_m8 13 项 + e2e_m81 12 项零回归 + smoke + 离屏渲染 25 通道四视图截图亲眼确认（分析器辅助读图：标签盒高<行距/图例 3 列全可见/时频无残留）。
-- **M8.1 三锚定分段+时频观感+单段浏览（用户三问题反馈+时频截图驱动）**：①**epoching 三锚定**——`EpochingParams.anchor/step_s/anchors_s`（中文 Literal 值兼作下拉显示与序列化值，冻结格式；默认事件锚定=旧 JSON 零回归）；锚点构造 `_events/_fixed/_manual_anchors` 三个 @staticmethod 统一返回 (samples, codes, event_id)，apply 三分支分发+尾段共享；滑窗/手动**不查事件表**（CSV/HDF5/ds1/ds4 无事件数据可分段）；手动越界 StepError 列全部无效锚点；锚点样本域构造防 off-by-one。②**时频三修**——`_draw_tfr` 末尾 `autoRange()`（堆叠/蝶形 setYRange 禁用 autoRange 的残留压扁根因）；配色下拉 `_TFR_CMAPS=("viridis","jet","hot")`（jet/hot 公式 **uint8** 生成——坑 #56①；换色不扰动 levels）；`_tfr_cache: dict[int, tuple]` 按通道缓存（命中同步绘制零线程；`_on_tfr_done` 守卫回填）。③**第五视图「单段浏览」**（索引 4 append 尾部保 e2e_m8 寻址稳定）——`_draw_stacked(rows_uv)` 与平均视图共用；段号 SpinBox+◀▶+←→（QShortcut WidgetWithChildrenShortcut 作用域限预览内）。验证：pytest **257 绿**（+15）+ e2e_m81 **12 项**（滑窗 538 段样本域公式现算）+ e2e_m8 13 项零回归 + smoke。
-- **M8 分段分析可视化（"可以按计划继续开发"，v2 第二里程碑）**：①**EpochsPreviewView 四视图重构**——构造一次取齐 `_data/_times/_codes/_ch_names/_sfreq` 缓存（切换零重算）；视图下拉 + 通道下拉（单通道/时频模式启用）；`_redraw` 分发并**复位时频残留**（invertY/轴标签/LUT——坑 #55）；teardown 幂等（`_data=None` 早退 + 二调保护，e2e fixture 与关 tab 双路径）。视图=堆叠（M3 零回归）/蝶形（`pg.intColor(i,hues=n)` 同坐标+零线）/单通道（逐段 alpha-60 灰细线 + 按事件码 `event_color` 分色平均粗线 + 尾部 TextItem 标码——不用 legend 防 clear 状态残留）/时频（`run_in_thread` 后台算 `compute_epochs_tfr`，ImageItem+setRect+invertY+HistogramLUT；迟到回调双保险丢弃）。②**`features/tfr.py`**：morlet 段平均功率→基线 dB；频率轴 2-45Hz 对数 24 点、n_cycles=max(freqs/2,2)、段数上限 80、基线需 `times[0]<0` 且 ≥2 采样点否则峰值归一（tfr_array_morlet 的 (None,0) 在 tmin≥0 只罩单样本）。③**`BandPowerParams.time_windows`**：`起-止` 秒可负；epochs 相对事件锚点/raw 绝对秒；越界容差一个采样周期；窗进特征名 `alpha@0-1s`；spans=`[(None,"")]+窗`——整段条目始终并存，默认空零回归。验证：pytest **242 绿**（+29：tfr 17 含真实 A01T/四视图 8/time_windows 4）+ e2e_m8 **13 项**（守恒式 8.2%<12%）+ e2e_m1–m5/m7/smoke 回归全过。
+- **唯一真实待办**：用户 Windows 复验 v0.2.2 打包版（TODO 末条）。
+- **M11 事件 marker 列表**：左栏下方（M12 自底部移入）；双击行 `_center_at`；面板常驻
+  （空态"无事件"——用户裁定，勿改回自动隐藏）。
+- **M12 浏览器四项**：比例尺下拉（自动档**持续**重估——M15 改）、紧凑显示（`_row_map`
+  每帧重算）、事件列表左栏、同段时频图（setXLink 像素对齐——三行左轴统一 46px，坑 #64①）。
+- **M13 时频四方法**：`TfrConfig`+`compute_window_tfr`（morlet/multitaper/stockwell/stft）；
+  fmax 默认 150、上限 Nyquist×**0.49**（250Hz→122.5）；线性轴方法分段 max 池化保窄峰；
+  stft 时间轴须平移回绝对秒（坑 #64⑧）。
+- **M14 图表区**：PSD y=dB/x=线性/`_PlainAxis` 普通数字刻度；特征网格默认箱线（jitter
+  散点+槽位制 x=j·n_ser+k 根除贴合——组内均分制调参四轮无效的教训在坑 #64⑨）；
+  NaN 特征值须在 groups 入口滤（pg IQR 须函数遇 NaN 闪退）。
+- **M15 三件套**：全选/全不选切换；比例尺自动档持续重估；特征 channels 字段
+  `_ChannelPickerEdit`（空=全部语义；无活动录制回退 QLineEdit）。
+- **M16 清理**：代码层 40 项（死代码 24 处/注释过时 22 处）+ 文档计数校准（e2e 实测
+  154 项）+ 六处冗余收敛（环境/版本/架构树/打包/数据/功能清单各留一份权威）。
+- 打包版功能=发版 tag 时点：**v0.2.2 含至 M14+sheep4 兜底**；M15 及以后须发新 tag。
 
-- **M7 信号质量体检（"直接按计划开始推进开发"，v2 首里程碑）**：`features/qc.py` 双入口一算力——`compute_channel_qc(get_window 闭包)` 纯函数（浏览器传 `rec.get_window`、提取器传 `ctx.raw` 分窗闭包；`_plan_windows` 均匀撒窗拼接，LAZY 不整载）+ `QualityCheckFeature` 注册（qc 排"添加特征"菜单首位；**通道选择与 pick_channels 相反——坏道参检不排除**）；指标=开路复用/死值/平直占比/钉极值占比（无绝对阈值）/漂移 µV/min/直流中位（只进指标不定级），三级 good/suspect/bad。浏览器：工具栏「质量体检」→ `run_in_thread` 防重入 → 列表 ✓/?/✗ 前缀 + tooltip 中文明细（`_refresh_ch_list_text` 统一拼前缀+偏移，blockSignals 包 setText/setToolTip）→ 坏道**建议确认**（question 弹窗 Yes→逐个 `toggle_bad`，复用现有灰显/info["bads"]/bads_changed，不静默改 bads）。**黄金标准全复现**：羊 CH5-8 开路复用 4 坏、CH1-4 真信号不坏（实测判疑似——低频峰值平台 2.3% 触发疑似线，属设计语义）、TPDJ-位置1 八通道全坏（M7 精化 M6.7b"全平"概括：平线型 CH2/4/8 含 CH2≡CH4 复用 + 钉满量程跳变型）；02号脑电 2 文件顺带诊断入册（DATA_NOTES §8）。验证：pytest **213 绿**（+20）+ e2e_m7 **16 项×2 幂等**（坑 #54：须逐模块 patch signal_browser.QMessageBox）+ e2e_m1–m5/smoke 回归全过。
-
-- **M6.8 浏览器四功能（用户四项需求驱动）**：①**行居中开关**（`_center_cb` 默认开=M6.7b 行为；关=绝对电平 `out_v*gain` 无行偏移 + `_apply_y_range` y 自适配本窗口数据±2%，绝对模式行标签贴曲线中位 `ch["_med"]`）；②**通道列表直流偏移显示**（后台 `_compute_channel_offsets`：≤20 个均匀 2s 窗分窗中位数取中位数，不整载 LAZY；主线程 `blockSignals` 包住 setText 拼 `"CH1  +68.9k µV"`；名称权威源迁 UserRole——右键/坏道不得再用 item.text()）；③**增益输入框**（QDoubleSpinBox 0.01–100× 权威源，三入口统一 `_set_gain(float)`：滑杆粗调吸附/键盘 ±1.0 dB×10 保小数/`_gain_syncing` 防环——坑 #53）；④**总览时间轴滑块**（EventLane：LinearRegionItem 逐线冻结边缘=只平移、x 三重锁死 [0,dur]、`set_viewport`/`viewport_moved` + `_syncing` 双向防环；browser `_on_lane_viewport` 只取中心按自身宽度重锚——坑 #52）+ **±1s 按钮**（`_step_s`）。验证：pytest **193 绿**×2（+22：TestStepSecond/TestGainInput/TestDcToggle/TestChannelOffsets/TestOverviewLane——event_lane 首次有测试）+ e2e_m1 22 项 + e2e_m3/smoke 回归 + 真窗口 DGDJ-位置4 四态截图亲眼确认（A 居中+列表偏移 / B 绝对 y 自适配含饱和平线 / C 2.50× / D 回居中+滑块 [31,41]+时间标签 36.00s/76.0s）。
-
-- **M6.7b "第二个数据打开后 tab 空白"修复（用户四连开截图驱动）**：**不是加载问题**（日志无错误、worker 健全、refresh 跑完）——是显示几何问题。两个根因都已修：①主因 = y 锁定 + 堆叠假设基线 0，clinicaldata（BioSemi BDF **DC 耦合**）通道带 4.5k–69k µV 直流偏移 → 曲线画在锁定 yRange 外数千 µV 处，工具栏/标签照常画="加载成功的空白"；修法 = **行居中**（每通道减本窗口中位数再贴行，坑 #49）。②次因 = `minmax_decimate` 双 t 笔误（随 M6.6 潜伏，坑 #50），包络档上半包络塌 0。**"第一个能看"是巧合**（位置1 偏移恰好落在范围内）。验证：pytest 171 绿×2 + e2e_m1/m3/smoke 回归 + 真窗口四连开（用户精确时序 0/11/13/14s）逐 tab 截图亲眼确认 4/4 波形可见（含用户截图中空白的 位置4）。clinicaldata 通道质量定论已写入 DATA_NOTES §8（CH5–8 饱和平线、TPDJ-位置1 全平无信号）。
-
-- **M6.7 浏览渲染修复 + 工作区测试污染事故修复（用户"10s 密集/9s 发虚"反馈驱动）**：①signal_browser 两档绘制——raw 透传 `connect="all"`（旧版无条件 pairs 隔段漏画=虚线根因）、抽取阈值 `_SAMPLES_PER_PIXEL` 2→3（Retina 逻辑px 下 9s/10s 恰跨旧阈值的悬崖，见坑 #48）、antialias 恢复 True；新增 TestRenderTwoModes 回归 2 项（pytest 165 绿）+ e2e_m1/smoke 回归。②test_ui_workspace_remove fixture 三重隔离重写（坑 #47）：旧 teardown 清的路径从不存在 + `current_workspace.txt` 标记被劫持不恢复——**用户 08-27 当天 1574 条真实导入曾被困在 `test_删除_*` 测试名目录里**，已修复（清合成来源并入 默认工作区 1572 条/7 来源、标记恢复、残留目录清除；完整备份 `/tmp/dataloadv_repair_backup_20260827_160326`）。
-
-- **M6.6 工作区移除条目 + 羊通道质量定论完成（用户两问驱动）**：①"读出来都是噪声"——诊断定论（零代码改动，结论入 DATA_NOTES §1）：**不是读取 bug**——羊 CH5–CH8 逐样本完全相同（开路通道复用，钉 ±375000µV 饱合或 std=0）、CH4 部分饱和；CH1–CH3 真实皮层信号（去直流+带通后 std≈279µV）带大直流偏移；换算 0.125µV/LSB 正确。**用法**：右键标 CH4–CH8 坏道 + 对 CH1–CH3 加去均值/重参考+带通 1–40Hz 预览。②树右键/Del 移除条目：`remove_requested(list)` → `_remove_from_workspace`（多条确认 → remove_recording+save+notify）——**只清工作区索引不删磁盘文件**，已开 tab 保留。pytest 163 绿（+6；**须 offscreen**，坑 #45）+ e2e_m1 19 项 + smoke 回归（见 review.md M6.6 节）
-- **M6.5 读取派发魔数校验完成（用户发现羊数据实为 BDF 驱动）**：`open_file` 走 `_dispatch_readers` 魔数内容优先派发（EDF/BDF/GDF/BrainVision 唯一定位时以内容为准、不兜底；hdf5 家族除外）；`_read_mne_robust` 扩展名不符时**file-like 绕过**（用户指定：走 read_raw_* 公共入口、不直接实例化 Raw*；读后 `_detach_file_handles` 剥离残留句柄，坑 #42）+latin1 回退；sniff EDF 分支 off-by-one 修复；workspace 重导入刷新 meta——**纠正了 M1 以来羊数据错位解码的数据正确性 bug**。**羊标注通道核查定论（2026-08-24）**：6 个羊 BDF 的 BDF Annotations 通道全是纯 ASCII TAL（`+N\x14\x14\x00` 每秒一条空注释），满足 UTF-8、零事件是数据本身属性——"羊需要 latin1"是 M1 误解码副产品，机制保留给真 latin1 文件。pytest 157 绿 + e2e_m1 19 项 + m2–m5/smoke 回归全过（见 review.md M6.5 节）
-- **用户工作区旧羊条目需重导入一次刷新**（format/时长从 EDF/270s → BDF/真实时长）——`add_metas` 现在重复导入即刷新（rec_id 稳定）；data/sheep、sheep2、sheep3 三个文件夹都重导
-- **M6 浏览体验优化完成（用户实测 v1 三点反馈驱动）**：通道标签行内嵌（y 轴 setTicks 已废弃）、幅值标尺、窗口导航（一屏时长下拉/翻屏按钮/滚轮平移/Ctrl+滚轮缩放/键盘 ←→ Home End ↑↓）、全局浅色主题、增益双 bug 修复
-- **v1 全部里程碑（M0–M5）完成并验证**：pytest + e2e_m1–m5 + smoke_gui 全过（见 review.md 各节）。后续事项见 TODO.md「Backlog」（Blackrock/OE/Intan/NWB 真实数据实测、ds3、eeglabio/pybv 等）
-- **批处理架构（M5 关键决策）**：BatchEngine 是**纯 Python**（无 QObject——架构规则 #1 优先于 plan.md 原文"BatchEngine(QObject)"）；回调（on_progress/on_file_done）在 worker 线程执行 → UI 侧 `queue.Queue` + QTimer 150ms 事件泵（batch_dialog._drain_events）转主线程；`run()` 整体经 `run_in_thread` 丢进一个 QThread，内部 ThreadPoolExecutor 提供并发；取消 = `engine.cancel()`（threading.Event）立即返回，引擎在**步骤边界**停止（proc/features 的 cancel_check 逐步骤检查，抛 PipelineCancelled）
-- 批处理新增文件三件套已定型：管线/特征输入用 `pipeline_panel.pipeline_dicts()`/`feature_dicts()`（dict 快照，JobSpec 零转换）；结果并入 `FeatureTable.add_result()`（多文件长表 recording 列区分）；导出走 engine._export（sidecar extra.batch 记 n_files/n_workers/files_written）
-- **特征范围决策（用户 2026-08-18 确认）：四层组合**——全量默认 + epochs 逐段 + crop 步骤（显式时间窗，进 sidecar）+ 视口一键预填（不隐式绑定）；滤波类预处理仍全量（边界效应），crop 只裁数据范围
-- **ProcStep/FeatureExtractor 同构注册表**：pydantic 参数模型 + `apply(ctx)`；注册后 params_form 零 UI 代码自动出表单（FeatureExtractor 的 `step_id` property 别名是零改动复用的关键）。**新步骤/特征三件套：参数模型 + 类 + strings_zh 文案**
-- 预览机制：`ProcessingContext.from_recording` 强制 PRELOAD + `raw.copy()`（原始逐位不变，pytest 有断言）；处理副本经 `make_preview_recording` 包装成不注册、不入工作区的 Recording → 复用全部浏览器机制
-- 读取器新格式套路：mne 系用 `_MneRawReader` 模板基类，只声明 `_fmt`/`_read_fn`（**staticmethod 包住**，坑 #12）/`_extra`，EDF 家族再加 `_robust=True`（file-like 绕过+latin1 回退，坑 #40/#42）；neo 系用 `_NeoRawReader` 模板（坑 #33）；NWB 单独实现（坑 #34）；`RecordingMeta(**self.common_meta_fields(path, fmt), ...)` 一次构造；neo/pynwb 均为 import-guard 可选依赖（缺失时应用照常运行）
-- 真实数据路径速查：羊数据（**BDF 内容的 .edf**）`data/sheep|sheep2|sheep3/*.edf`；PhysioNet `data/dataset/files/S001/`；2a GDF `data/dataset/BCICIV_2a_gdf/A01T.gdf`；2b GDF `data/dataset/BCICIV_2b_gdf/`（M5 批处理验收用整个目录 45 文件）；ds1 mat `data/dataset/BCICIV_1_mat/BCICIV_calib_ds1a.mat`；ds4 mat `data/dataset/BCICIV_4_mat/sub1_comp.mat`
-- **数据集详细信息（来源/结构/参数/事件码表/已知坑）全部在根目录 `DATA_NOTES.md`**（2026-08-18 按用户要求建立），改读取器前先读它；新数据/新实证发现要回写它

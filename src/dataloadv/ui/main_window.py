@@ -3,7 +3,7 @@
 布局（plan.md §4）：
 - 左 Dock：工作区树（WorkspaceTree）
 - 中央：QTabWidget——元数据表（全局）+ 每条打开的录制一个 SignalBrowserView
-- 右 Dock：处理管线（M3 前为占位）
+- 右 Dock：处理管线（M3 起为真实面板）
 - 下 Dock：日志面板
 - 状态栏：消息 + 导入进度条 + 版本号
 
@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QDockWidget,
     QTabWidget,
+    QWidget,
 )
 
 from .. import __version__

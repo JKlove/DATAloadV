@@ -20,6 +20,11 @@
   review）；commit 等用户指令。
 - 实施偏差与坑：SPECDIR→SPECPATH、mne lazy_loader→collect_submodules（四包）——详见
   HANDOFF 坑 #59 与 STATUS "M10 关键实证结论"。剩余待办清单见 TODO.md M10 节。
+- **发版沿革（M16 回填）**：v0.1.1（2026-09-01，小屏布局修复）→ v0.2.0（2026-10-19，
+  含 M11–M14 + sheep4 兜底）→ v0.2.1/v0.2.2（Windows GBK/execv 修复，坑 #65/#66）。
+  **打包版功能 = 发版 tag 时点**——旧 tag（≤v0.1.1）产物不含 M11 及以后功能；发新包
+  须打新 tag。当前版本与测试基线以 pyproject.toml 与 STATUS.md 为准（本文件事实卡
+  的 287/143/0.1.0 为 M10 时点快照，勿直接引用）。
 
 
 ## 使用方式

@@ -1,8 +1,38 @@
 # STATUS — 项目状态快照
 
-> 本文件回答"现在做到哪了"。每里程碑完成及重要提交后更新。最后更新：2026-10-15（M14 特征图表区改造 **✅ 完成**：PSD dB 轴/箱线图（数据点散点）+柱状切换下拉）
+> 本文件回答"现在做到哪了"。每里程碑完成及重要提交后更新。最后更新：2026-10-26（M16 **✅ 完成**：全项目清理——代码 40 项+文档计数校准+六处冗余收敛；同日 M15 完成）
 
 ## 当前里程碑
+
+- **M16 全项目清理：✅ 完成（2026-10-26，用户"通读代码与文档、修正、不冗余"指令）**：
+  双 Explore agent 全面审计（代码层 40 项 + 文档层 40+ 项）后分四批执行——
+  **C1 代码**：删死代码（state.open_recording/selection_changed 死链、meta_table 死选区链、
+  jobs.wants_export+专测、strings 15 个死常量、unused imports×8、NotchStep 不可达分支、
+  恒等条件）；修注释/docstring 与实现不符（0.475→0.49 两处、io/base 事件钩子描述、
+  on_loaded 幽灵参数、QtLogHandler 缓存假述、柱状→特征网格术语×4、M11"底部横条"残留等
+  22 处）。**D1 计数**：实跑全部 9 个 e2e 脚本回填真实计数（**共 154 项**：m1 32/m2 16/
+  m3 10/m4 20/m5 19/m7 16/m8 13/m81 12/m9 16；此前文档记 143-156 不等且多项未随里程碑
+  追加回填）；坑清单 37→66、读取器 11→13+4。**D2 事实**：plan M10 行 🔶→✅、HANDOFF
+  接手要点重写（删三项已完成"待办"、补 M11–M16 要点）、DATA_NOTES sheep4 补 2 文件+
+  sheep5/6 入册（16 导 1000Hz 随访/术中 4 文件实测）+速查表消"必须 _fixed"矛盾、
+  PACKAGING 补 v0.1.1–v0.2.2 发版沿革+旧 tag 产物功能边界、MANUAL 深色→浅色等 13 处。
+  **D3 冗余收敛**：环境命令/版本表/架构树（HANDOFF 为权威）/数据速查（DATA_NOTES 为
+  权威）单源化；README 打包节裁决保留（已是摘要级）。验证：pytest **375 绿**（376−1 删
+  wants_export 死方法专测）+ smoke + e2e_m1 ALL OK；**行为零变更**（仅注释/死代码/文档）。
+
+
+- **M15 通道操作三件套：✅ 完成（2026-10-26）**——用户三项需求：①**「全选/全不选」
+  切换按钮**（通道列表下方——全勾→点=全不勾、否则=全勾；blockSignals 批量模板，
+  全不选后 picks 空路径安全）；②**比例尺"自动"档持续重估**（改首帧一次即冻的门控：
+  自动档每次刷新按**当前勾选通道**的当前窗 MAD×8 重估——勾选变化/翻页行距跟随
+  实际波动；固定档仍锁死；TestCompact 断言改断言前重读）；③**特征通道选择控件**
+  （params_form 新 `_ChannelPickerEdit`：按钮弹勾选对话框+全选/清空快捷——特征表单
+  注入当前录制通道名后 channels 字段从手输文本框升级为可视化选择；**空=全部数据
+  通道**语义对齐 params 约定（0 勾/全勾按钮都显示「全部（N 通道）」）；无活动录制
+  回退旧行为；批处理链零改动——collect 仍产 list[str]）。QC 的 channels 是 str 且
+  现状本无表单编辑器，本期不动。验证：pytest **376 绿**（+12）+ e2e_m1 33 项 +
+  smoke。
+
 
 - **M14 特征图表区改造：✅ 完成（2026-10-15）**——用户两项需求（截图指认现状）：
   ①**PSD 曲线轴系**（特征结果 tab 的 PSD 曲线页 + 处理面板「对比 PSD」两处）：y 改
@@ -178,6 +208,8 @@
 | M11 事件 marker 列表 | ✅ 完成 | 2026-09-24 | 浏览器底部横条 QSplitter（5 列 #/名称/时间/样本点/持续；名称色=事件线色）；双击行 `_center_at` 定位全联动；无事件面板常驻空态；坑 #63 初始排序显式化；pytest 305 / e2e_m1 27 项 |
 | M14 特征图表区改造 | ✅ 完成 | 2026-10-15 | PSD dB 轴+线性频率+普通数字刻度（_PlainAxis）；柱状→箱线+柱状切换下拉（原始值分箱/均值柱两模式、每特征一色/纵轴单位 features.units 映射）；坑 #64⑨；pytest 364 |
 | M13 时频图改进 | ✅ 完成 | 2026-10-14 | 频率轴翻转（低频/0 在下）+Nyquist 钳制（150 硬顶后放开→×0.49）+行高 5:3.5:0.55；四方法统一入口（分段 max 池化保窄峰）+设置对话框（按钮在左栏）；修 STFT 相对时间轴 bug；挂死根因闭环（waitUntil→wait_until）；pytest 335 / e2e_m1 32 项 |
+| M15 通道操作三件套 | ✅ 完成 | 2026-10-26 |
+| M16 全项目清理 | ✅ 完成 | 2026-10-26 | 代码 40 项（死代码 24/注释 22）+e2e 实测 154 项校准+文档 13 处事实修+六处冗余单源化；零行为变更；pytest 375 | 全选/全不选切换按钮；比例尺自动档按勾选通道持续重估；特征 channels 字段可视化勾选控件（空=全部，批处理零改动）；pytest 376 |
 | M12 浏览器四项改造 | ✅ 完成 | 2026-10-13 | 比例尺下拉（自动+13 档 µV）/紧凑显示（优化选择通道+复位）/事件列表移左栏/同段时频图（turbo+setXLink 像素对齐+Nyquist 收口+300ms 防抖代币）；坑 #64 六则；同日色标精修（ColorBarItem+范围锁定跨屏保持）；pytest 321 / e2e_m1 31 项 |
 
 ## 环境
@@ -187,12 +219,12 @@
 
 ## 测试
 
-- `QT_QPA_PLATFORM=offscreen pytest`：**364 passed**（335 后 + **M14 净增 27**：units 映射 26 参数化（时域后缀/qc/bandpower rel·log·@窗/兜底）+ 箱线分组值列表/dB 数值+普通刻度/特征色+单位标注 4 改增。（M12 后 322 + 挂死根因替换适配 +2 + **M13 净增 10**：四方法峰检出（4 参数化）/dB 口径/行数统一/stft 窗参数/Nyquist 钳制与 min_window/未知方法拒（features 7）+ 低频在下像素断言/频率轴 0 起+118.75 钳制/设置对话框应用重算（browser 3）。（M11 后 305 + **M12 净增 15**：比例尺 3（固定值锁定 spacing+yRange/手动切自动按当前窗重估 MAD×8/与增益正交）+ 紧凑显示 4（留 3 通道紧凑重排首行贴 0/紧凑下再勾选即时收缩/复位全选恢复原布局/默认留空位回归哨兵）+ 三行对齐 3（vb 数据区左右缘一致/setXRange 后 TFR viewRange 跟随/三左轴统一 46 空刻度·TFR 自动频率刻度）+ 时频 5（img 回填+rect 覆盖视口+turbo LUT/ch0 α 峰 10Hz vs 30Hz 差>6dB·纯噪声通道无差异/1s 窗占位/teardown 竞态/通道切换代币递增）——test_ui_browser_m12.py）。2026-09-07 净增 8：EDF 非标单位兜底（AuV 件按 µV 缩放/LAZY 强制整载/meta 标记/正常件零扰动+保持 lazy/mV·V 白名单不碰/空单位不猜/MainWindow 弹窗一次+清标记+ws 同步——test_io_edf_unit_fallback.py）。历史累计：M9 后 287（M9 净增 16：连续导出 8（EDF 往返 rtol 1e-3/prefiltering 头 highpass=1 往返/FIF 往返 rtol 1e-6+annotations 3 条/未知 fmt 拒/超长名拒/非 ASCII 名拒/misc 类型拒/平坦通道可导/单通道双格式）+ 面板守卫 2（无 ctx 提示/stage=epochs 指向分段导出）+ 批处理 5（wants_export 四开关语义/epochs 管线跳过+日志/引擎级 3 文件每文件 _proc.edf+sidecar kind=raw+files_written 汇总/导出失败降级日志特征照算/**只勾 raw 不产特征 CSV·H5——run() 分支修正的回归哨兵**）；M8.3 净增 10：welch 语义 5 + 导出 2 + 图表区 3；M8.2 净增 4；M8.1 净增 15（epoching 锚定 9 + 预览 6）；M8 净增 29（tfr 17 + 四视图 8 + bandpower 4）；M7 后 213。**须 offscreen：MainWindow 级测试在 macOS 真窗口模式会挂住**）
-- `python scripts/e2e_m1.py`：**ALL OK（22 项）**——sheep + S001 真实导入 → 浏览 → 释放（幂等总量断言）；M6 追加 5 项 + M6.5 追加 1 项（羊数据按 BDF 解码：魔数优先于扩展名）+ M6.8 追加 3 项（±1s 平移/绝对模式 y 自适配/总览滑块跟随视口）
+- `QT_QPA_PLATFORM=offscreen pytest`：**375 passed**（M16 清理删 1 个 wants_export 死方法专测）（364 后 + **M15 净增 12**：全选切换往返三态 1 + 自动档跟踪（大信号子集 spacing↑/固定档不动）1 + picker 往返（默认空=全部/选 2 子集/全选文案回全部）与无候选回退 2 + TestCompact 断言适配等。（335 后 + **M14 净增 27**：units 映射 26 参数化（时域后缀/qc/bandpower rel·log·@窗/兜底）+ 箱线分组值列表/dB 数值+普通刻度/特征色+单位标注 4 改增。（M12 后 322 + 挂死根因替换适配 +2 + **M13 净增 10**：四方法峰检出（4 参数化）/dB 口径/行数统一/stft 窗参数/Nyquist 钳制与 min_window/未知方法拒（features 7）+ 低频在下像素断言/频率轴 0 起+118.75 钳制/设置对话框应用重算（browser 3）。（M11 后 305 + **M12 净增 15**：比例尺 3（固定值锁定 spacing+yRange/手动切自动按当前窗重估 MAD×8/与增益正交）+ 紧凑显示 4（留 3 通道紧凑重排首行贴 0/紧凑下再勾选即时收缩/复位全选恢复原布局/默认留空位回归哨兵）+ 三行对齐 3（vb 数据区左右缘一致/setXRange 后 TFR viewRange 跟随/三左轴统一 46 空刻度·TFR 自动频率刻度）+ 时频 5（img 回填+rect 覆盖视口+turbo LUT/ch0 α 峰 10Hz vs 30Hz 差>6dB·纯噪声通道无差异/1s 窗占位/teardown 竞态/通道切换代币递增）——test_ui_browser_m12.py）。2026-09-07 净增 8：EDF 非标单位兜底（AuV 件按 µV 缩放/LAZY 强制整载/meta 标记/正常件零扰动+保持 lazy/mV·V 白名单不碰/空单位不猜/MainWindow 弹窗一次+清标记+ws 同步——test_io_edf_unit_fallback.py）。历史累计：M9 后 287（M9 净增 16：连续导出 8（EDF 往返 rtol 1e-3/prefiltering 头 highpass=1 往返/FIF 往返 rtol 1e-6+annotations 3 条/未知 fmt 拒/超长名拒/非 ASCII 名拒/misc 类型拒/平坦通道可导/单通道双格式）+ 面板守卫 2（无 ctx 提示/stage=epochs 指向分段导出）+ 批处理 5（wants_export 四开关语义/epochs 管线跳过+日志/引擎级 3 文件每文件 _proc.edf+sidecar kind=raw+files_written 汇总/导出失败降级日志特征照算/**只勾 raw 不产特征 CSV·H5——run() 分支修正的回归哨兵**）；M8.3 净增 10：welch 语义 5 + 导出 2 + 图表区 3；M8.2 净增 4；M8.1 净增 15（epoching 锚定 9 + 预览 6）；M8 净增 29（tfr 17 + 四视图 8 + bandpower 4）；M7 后 213。**须 offscreen：MainWindow 级测试在 macOS 真窗口模式会挂住**）
+- `python scripts/e2e_m1.py`：**ALL OK（32 项，2026-10-26 实测）**——sheep + S001 真实导入 → 浏览 → 释放（幂等总量断言）；沿革：M6 +5、M6.5 +1（BDF 魔数优先）、M6.8 +3（±1s/绝对模式/滑块跟随）、M11 +4、M12 +4、M13 +1、M15 +1
 - `python scripts/e2e_m7.py`：**ALL OK（16 项）×2 幂等**——羊浏览器体检（4 bad 全复用→Yes 自动标坏道→列表 ✗/✓ 前缀→tooltip 明细→按钮恢复）/ TPDJ-位置1 八通道全坏 / 特征链（注册表→FeatureTable→CSV·HDF5 回读分级一致）；**须逐模块 patch signal_browser.QMessageBox**（该模块 M7 起有模块级引用，MainWindow 的 patch 罩不到）
-- `python scripts/e2e_m2.py`：**ALL OK（17 项）**——4.9GB dataset 扫描 5.2s / 识别 1606 条 / 3 条已知结构报错 / 六格式（EDF/GDF 2a/GDF 2b/ds1/ds4/CSV）逐个打开均有真实曲线 / GDF 中文标签 / 六 tab 关闭释放
+- `python scripts/e2e_m2.py`：**ALL OK（16 项，实测）**——4.9GB dataset 扫描 5.2s / 识别 1606 条 / 3 条已知结构报错 / 六格式（EDF/GDF 2a/GDF 2b/ds1/ds4/CSV）逐个打开均有真实曲线 / GDF 中文标签 / 六 tab 关闭释放
 - `python scripts/e2e_m3.py`：**ALL OK（10 项）**——羊 BDF（.edf 误标）三步预览（带通+陷波+重参考）50Hz PSD 压制比 0.0001、坏道标记联动、A01T 分段预览 288 段、tab 释放
-- `python scripts/e2e_m4.py`：**ALL OK（18 项）**——羊 EDF 管线（带通+陷波+裁剪前 30s）+三特征 104 行（8 导×13 特征）、处理后 PSD 50Hz 峰已消（0.4 vs 7130 µV²/Hz）、「用当前显示窗口」预填 crop=视口 [125,145]s、CSV BOM+中文表头 104 行、sidecar 含全管线、A01T 逐段特征 288 段×25 导×2 频段=14400 行、事件码 769-772 逐段带入、分段 HDF5 形状一致、FIF 回读 288 段
+- `python scripts/e2e_m4.py`：**ALL OK（20 项，实测）**——羊 EDF 管线（带通+陷波+裁剪前 30s）+三特征 104 行（8 导×13 特征）、处理后 PSD 50Hz 峰已消（0.4 vs 7130 µV²/Hz）、「用当前显示窗口」预填 crop=视口 [125,145]s、CSV BOM+中文表头 104 行、sidecar 含全管线、A01T 逐段特征 288 段×25 导×2 频段=14400 行、事件码 769-772 逐段带入、分段 HDF5 形状一致、FIF 回读 288 段
 - `python scripts/e2e_m5.py`：**ALL OK（19 项）**——45 个 2b GDF + 1 损坏文件批处理（分段 769/770/783 + bandpower 双频段）：45 成功 1 失败不杀整批、78240 行特征 8.5s（2 worker）、UI 心跳 86 次≈9s 全程响应、失败行红显+tooltip+日志对话框、批处理结果 tab、CSV BOM 中文表头 78240 行一致、sidecar 含 epoching+bandpower(params.bands=αβ)+45 文件+batch extra(n_files=46/n_workers=2)、中途取消（4 成功/41 已取消/0 误跑）、neo/nwb 四读取器注册、tab 关闭释放；**m1/m2/m3/m4 + smoke_gui 回归全绿**
 - `python scripts/e2e_m9.py`：**ALL OK（16 项）**——羊 EDF 打开→bandpass+notch+crop(0,30) 预览 `_last_ctx.stage=="raw"`→面板导出 EDF（fmt 参数化直调）读回通道 8/采样率 250/时长整秒补齐 ≤1 记录（裁剪窗 7501 样本读回 7750）、50Hz 压制随导出保真（PSD 比值中位数 0.0000）、sidecar 管线 [bandpass,notch,crop]+kind=raw、按钮恢复；同一 ctx 导 FIF `_raw` 后缀+往返最大偏差 2.9e-11V；批处理直构 JobSpec（3 羊文件×bandpass+notch+bandpower、export_raw_edf、2 worker）同步直跑全 ok、每文件 `_proc.edf`+sidecar、任一读回 50Hz 压制；逆序关 tab+工作区幂等
 
@@ -368,6 +400,18 @@
    macOS 右键→打开（或 `xattr -cr DataloadV.app`）；Windows "更多信息→仍要运行"
 
 ## 最近变更记录（新条目加在最上面）
+
+- 2026-10-26（M15 完成，用户三项需求驱动）：**①全选/全不选**：`_toggle_all_channels`
+  切换按钮（列表与按钮行之间）；**②自动比例尺持续重估**：`_scale_is_auto()` helper +
+  门控放宽（自动档每次刷新重估，data_uv 本就是 enabled 通道现窗数据；TestCompact 三处
+  捕获过期断言修正 + TestAutoScale 新断言——方向注意：全通道 MAD 中位数被多数噪声通道
+  主导，测重估要用大信号子集）；**③`_ChannelPickerEdit`**（params_form 私有类：按钮
+  文案三态「全部（N 通道）/已选 k/N」，QDialog 勾选+全选/清空，value()→list[str] 空即
+  全部）；ParamsForm 加 channel_candidates 可选参（None=旧行为零影响）；
+  pipeline_panel `_channel_candidates()`（活动浏览 tab 的 rec.meta.channel_names）注入
+  特征表单。测试 +12（toggle 往返三态/自动档跟踪+固定档不动/picker 往返+无候选回退）；
+  pytest **376 绿** + e2e_m1 33 项（+全选往返）+ smoke。
+
 
 - 2026-10-19（v0.2.1 打不开事故，当天修复发 v0.2.2）：v0.2.1 在用户中文 Windows
   **双击打不开**——自举 execv 参数把 argv[0]（exe 路径）重复拼成位置参数 → 子进程

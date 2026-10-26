@@ -1339,3 +1339,70 @@ fixture 收窄 `channels=["EEG00"]` 保 1 条下游零改，新增窗进列头/a
   本地复现（stderr=None + 位置参数）修复后 SystemExit(2) 干净退出；pytest
   **372 绿**（+4）；重打包 macOS offscreen 冒烟 SMOKE OK；坑 #66。
 - 待办：用户 Windows 复验 v0.2.2（双击能开 + 原崩文件能打开）。
+
+## M15 — 通道操作三件套（2026-10-26 完成，用户三项需求驱动）
+
+### 做了什么
+
+- **全选/全不选切换**：`_toggle_all_channels`（全勾→全不勾、否则→全勾）；
+  通道列表下方单按钮；批量勾选 blockSignals（_set_compact 模板）。
+- **比例尺自动档持续重估**：`_scale_is_auto()` + 门控 `not estimated or auto`
+  ——自动档每次刷新按当前勾选通道的当前窗 MAD×8 重估（data_uv 输入本来就是
+  enabled 通道现窗数据，零数据流改动）；固定档由 `_spacing_estimated=True` 锁死不变。
+- **特征通道选择控件**：`_ChannelPickerEdit`（按钮三态文案+QDialog 勾选+全选/
+  清空快捷；`value()→list[str]`，**空=全部数据通道**语义对齐 params 约定）；
+  ParamsForm 加 `channel_candidates` 可选参；pipeline_panel 特征表单注入活动
+  录制的通道名（无活动 tab 回退 QLineEdit 旧行为）；批处理链只看
+  `collect()→model_dump()`——零改动。
+
+### 发现的问题与修正
+
+- TestAutoScale 首版断言方向反了：全通道的 MAD 中位数被多数噪声通道主导
+  （synthetic 8 通道 6 个纯噪声），纯噪声子集的估计≈全通道值——测"重估发生"
+  要用大信号子集（正弦通道）看 spacing 变大；另有一处 `_leave` 调用笔误。
+- 全量跑出现过一次段错误 dump（faulthandler 输出、无我们栈帧）——复跑未现，
+  环境瞬态记档观察。
+
+### 验证
+
+- pytest **376 绿**（+12）+ e2e_m1 **33 项 ALL OK**（+全选往返）+ smoke。
+
+### 计划偏离
+
+- 无（QC 的 str channels 不在用户点名范围，现状本无编辑器，未动）。
+
+
+## M16 — 全项目清理（2026-10-26 完成，用户"通读代码与文档、修正、不冗余"指令）
+
+### 方法
+
+双 Explore agent 并行全面审计（代码层逐模块 / 文档层逐份交叉核对），产出带证据的
+问题清单（代码 40 项、文档 40+ 项），按 C1（代码）→D1（计数）→D2（事实）→D3（冗余）
+四批执行；每处修改以审计证据为据，**行为零变更**（仅注释/docstring/死代码/文档）。
+
+### 清理统计
+
+- **死代码删除**：`state.open_recording`+`selection_changed`（M5 残留死链）、
+  `meta_table.selected_metas`/死选区信号、`jobs.wants_export`（引擎注释自证已弃用）
+  及其专测、strings_zh 15 个零引用常量、unused imports×8、NotchStep 不可达 epochs
+  分支（与 docstring 矛盾）、import_dialog 恒等条件。
+- **注释/docstring 修正 22 处**：0.475→0.49 数字漂移×2、事件钩子描述、幽灵参数
+  on_loaded、QtLogHandler 假缓存+死参数、vendored Intan→neo、"M3 现状"→"M3 引入"、
+  M11"底部横条"布局残留、"柱状"术语×4、高 DPI 注释、`.cdt` 补注、空横幅等。
+- **计数校准**（全部实跑）：e2e 共 **154** 项（此前 143–156 不等）；坑清单 66；
+  读取器 13+4；pytest 375（−1 死方法专测）。
+- **事实修正**：plan M10 🔶→✅；HANDOFF 接手要点重写（M11–M16+唯一待办）；DATA_NOTES
+  sheep4 补 2 文件+sheep5/6 入册+速查表消矛盾；PACKAGING 补发版沿革；MANUAL 13 处。
+- **冗余单源化**：环境命令+版本表+架构树→HANDOFF 权威；数据速查→DATA_NOTES 权威；
+  README 打包节裁决保留（已摘要级）。
+
+### 验证
+
+- pytest **375 绿** + smoke + e2e_m1 ALL OK（32 项）；期间一次 wants_export 删除误吞
+  FileResult 类（切分锚找错）——git 恢复后正则锚精确重删，全量复绿。
+
+### 计划偏离
+
+- README 功能清单未收缩（审计建议细节归 MANUAL）——现状已是模块级摘要且为门面文档，
+  裁决保留；FeatureBarGrid 类名未改（docstring 补注记）——3 个测试寻址点的稳定性
+  优先于命名洁癖。

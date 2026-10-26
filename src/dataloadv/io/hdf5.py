@@ -15,7 +15,7 @@
 ``load_raw`` 才把数据集读进内存。
 
 注：NWB / Intan rhs.md 也是 HDF5，但有各自的标准结构——M5 用专用
-读取器（pynwb / vendored Intan reader）接管，不归本读取器猜。
+读取器（pynwb / neo 的 IntanRawIO）接管，不归本读取器猜。
 """
 
 from __future__ import annotations

@@ -9,8 +9,8 @@
 > + v2 方向：M7 信号质量体检（2026-08-28）+ M8 分段分析可视化（2026-08-28）
 > + M8.1 三锚定分段+时频观感+单段浏览（2026-08-28）+ M8.2 视图观感精修（2026-08-28）
 > + M11 事件 marker 列表（2026-09-24）+ M12 浏览器四项改造（2026-10-13）
-> + M13 时频图改进（2026-10-14）+ M14 特征图表区改造（2026-10-15）；
-> 验证口径：pytest 364 绿 + e2e_m1–m9·m81 共 156 项 + GUI 冒烟全过。
+> + M13 时频图改进（2026-10-14）+ M14 特征图表区改造（2026-10-15）+ M15 通道操作三件套（2026-10-26）；
+> 验证口径：pytest 375 绿 + e2e_m1–m9·m81 共 154 项（2026-10-26 实测）+ GUI 冒烟全过。
 
 ---
 
@@ -36,16 +36,17 @@ DataloadV 是面向**介入式 BCI 研究**的电生理数据桌面工作台（m
 | 模块 | 能力 | 入口 |
 |---|---|---|
 | 数据管理 | 16 格式导入（单文件/整目录递归）、元数据表（10 列排序过滤）、工作区持久化、逐文件错误报告 | 文件菜单 → 导入文件…/导入文件夹… |
-| 波形浏览 | 多通道滚动浏览（两档绘制：稀疏折线整段连线/密集 min-max 包络防混叠）、一屏时长选择+翻屏/±1s 步进导航（按钮/滚轮/键盘）、底部总览时间轴滑块（拖动/点击定位）、行居中开关+通道直流偏移显示、**比例尺下拉（M12：自动/1–2000µV 固定行距）**、增益（滑杆+精确输入框 0.01–100×）、幅值标尺、**紧凑显示（M12：只显勾选通道紧凑重排+一键复位）**、**同段时频图（M12 建 M13 改：四方法可选+参数窗，低频在下 0–150Hz）**、事件竖线叠加与跳转、**事件 marker 列表（M11，M12 移左栏：双击行定位波形）**、通道显隐、右键坏道标记、**一键信号质量体检（M7）** | 工作区树/元数据表双击 |
+| 波形浏览 | 多通道滚动浏览（两档绘制）、一屏时长+翻屏/±1s 导航、总览时间轴滑块、行居中+直流偏移显示、增益+**比例尺下拉（M12/M15：自动档随勾选通道持续重估/固定 µV 锁定）**、幅值标尺、**紧凑显示（M12）**、**同段时频图（M12/M13：四方法+参数窗，低频在下 0–150Hz）**、事件竖线跳转、**事件 marker 列表（M11 左栏，双击行定位）**、通道显隐+**全选/全不选（M15）**、右键坏道标记、一键质量体检（M7） | 工作区树/元数据表双击 |
 | 预处理 | 7 种步骤组成链（自上而下执行）、pydantic 参数自动表单、当前文件预览（处理副本新 tab）、原始 vs 处理后 PSD 对比 | 右侧「处理」Dock |
-| 特征提取 | 4 种提取器（**信号质量体检**/频带功率/PSD 曲线/时域统计）、raw 全量摘要或 epochs 逐段、「用当前显示窗口」一键预填时间窗；PSD 曲线逐通道+可选时间窗，结果 tab 表格+图表（**dB 轴 PSD 曲线/特征箱线网格**，M14） | 右侧「处理」Dock → 计算特征 |
+| 分段分析可视化 | 预览**五视图**：平均堆叠/ERP 蝶形/单通道按码分色/时频热图/单段浏览（M8/M8.1，配置与缓存零重算） | 预览 tab 视图下拉 |
+| 特征提取 | 4 种提取器（**信号质量体检**/频带功率/PSD 曲线/时域统计）、raw 全量或 epochs 逐段、**通道勾选控件（M15：空=全部）**、「用当前显示窗口」预填；结果 tab 表格+图表（**dB 轴 PSD 曲线/箱线·柱状网格**，M14） | 右侧「处理」Dock → 计算特征 |
 | 批处理 | 面板管线+特征链批量套到工作区任意文件子集；2–8 线程并行、逐文件进度/日志、单文件失败不杀整批、随时取消、UI 全程响应 | 处理菜单 → 批处理… |
 | 导出 | 特征 CSV（UTF-8 BOM，Excel 直开）/HDF5、分段数据 HDF5/FIF、**连续数据 EDF/FIF（M9，单文件+批处理）**、每次导出自动随写 sidecar | 特征结果 tab → 导出按钮；管线面板 → 导出连续数据… |
 | 设置 | 批处理默认线程数、数据缓存预算（GB）、默认导出目录 | 文件菜单 → 设置… |
 
 ### 1.3 支持的数据格式
 
-**内置 11 个读取器（核心依赖即可用）**：
+**内置 13 个读取器（核心依赖即可用；其中通用 .mat 读取器专职"拒绝猜测"）**：
 
 | 格式 | 扩展名 | 读取途径 | 备注 |
 |---|---|---|---|
@@ -71,16 +72,10 @@ DataloadV 是面向**介入式 BCI 研究**的电生理数据桌面工作台（m
 | Intan | `.rhd` `.rhs` | neo.rawio | — |
 | NWB | `.nwb` | pynwb | 取第一个 ElectricalSeries；trials/epochs 表→事件 |
 
-### 1.4 技术栈与版本（2026-08-18 实测安装）
+### 1.4 技术栈与版本
 
-| 包 | 版本 | 来源 |
-|---|---|---|
-| Python | 3.10 | conda env `dlv` |
-| numpy / scipy / pandas | 1.26.4 / 1.15.2 / 2.3.3 | conda-forge |
-| PySide6 / pyqtgraph | 6.11.0 / 0.14.0 | conda-forge |
-| pydantic / h5py | 2.13.4 / 3.16.0 | conda-forge |
-| mne / edfio | 1.12.0 / 0.4.16 | pip |
-| neo / pynwb（可选） | 0.14.5 / 4.1.0 | pip / conda-forge |
+Python 3.10 · PySide6 · pyqtgraph · MNE · numpy/scipy/pandas · pydantic v2 ·
+neo/pynwb（可选）。**逐包版本表以 [HANDOFF.md](HANDOFF.md) 为权威**（M16 起单源）。
 
 ### 1.5 架构与目录
 
@@ -93,7 +88,7 @@ DataloadV 是面向**介入式 BCI 研究**的电生理数据桌面工作台（m
 
 ```
 src/dataloadv/
-├── app.py / __main__.py      # 入口：QApplication、深色主题、excepthook→日志
+├── app.py / __main__.py / _utf8.py   # 入口：QApplication、浅色主题、excepthook→日志
 ├── core/                     # 计算层（无 Qt）
 │   ├── recording.py          #   Recording / RecordingMeta / EventTable / LoadPolicy / LoadedRawCache(LRU)
 │   ├── workspace.py          #   工作区 + ~/.dataloadv/ JSON 持久化
@@ -101,18 +96,21 @@ src/dataloadv/
 │   └── app_settings.py       #   应用设置（原子写 + 热生效）
 ├── io/                       # 读取器层（无 Qt）：注册表模式，每格式一个 Reader 类
 │   ├── registry.py           #   @register_reader + open_file/scan_folder（容错+进度）
+│   ├── base.py               #   BaseReader ABC/魔数嗅探/文件名实体
 │   ├── mne_readers.py        #   _MneRawReader 模板 + 8 格式子类
-│   ├── bciciv_mat.py / table.py / hdf5.py / sniffing.py / event_maps.py
+│   ├── bciciv_mat.py / table.py / hdf5.py / sniffing.py / event_maps.py / registry.py
 │   └── neo_reader.py / nwb_reader.py   # 可选依赖读取器（import-guard）
 ├── proc/                     # 预处理层（无 Qt）：7 步骤 + STEP_REGISTRY + apply_pipeline
-├── features/                 # 特征层（无 Qt）：3 提取器 + FEATURE_REGISTRY + apply_features（与 proc 同构）
+├── features/                 # 特征层（无 Qt）：4 提取器 + units 单位映射 + tfr 时频纯函数 + FEATURE_REGISTRY（与 proc 同构）
 ├── batch/                    # 批处理层（无 Qt）：jobs.py 任务模型 + engine.py 纯 Python 引擎 + results.py 长表
-├── export/                   # 导出层（无 Qt）：features_io / epochs_io / provenance(sidecar)
+├── export/                   # 导出层（无 Qt）：features_io / epochs_io / continuous_io(M9) / provenance(sidecar)
 ├── workers/generic.py        # run_in_thread：后台任务 + _MainRelay 主线程回调保护
 └── ui/                       # 全部 Qt 代码：main_window + state(信号中枢) + strings_zh(全中文文案)
-    ├── dialogs/              #   import / batch / settings
-    └── widgets/              #   工作区树/元数据表/信号浏览器/事件条/管线面板/参数表单/
-                              #   PSD 视图/分段预览/特征表/批处理视图/日志面板
+    ├── dialogs/              #   import / batch / settings / tfr_settings(M13)
+    └── widgets/              #   工作区树/元数据表/信号浏览器/事件条/事件列表(M11)/
+                              #   管线面板/参数表单(含通道勾选 M15)/PSD 视图/分段预览/
+                              #   特征表/特征图表(M8.3/M14)/批处理视图/日志面板
+（**详版架构导览见 HANDOFF.md**——每模块带设计要点注释，两处以 HANDOFF 为权威）
 ```
 
 ### 1.6 核心设计模型
@@ -142,7 +140,7 @@ src/dataloadv/
 
 | 位置 | 内容 | 权限 |
 |---|---|---|
-| `data/` | 原始数据集（4.9GB：dataset/sheep/sheep2） | **只读**，应用绝不写入 |
+| `data/` | 原始数据集（dataset + 羊系列 sheep–sheep6 + 临床数据；目录清单见 DATA_NOTES.md） | **只读**，应用绝不写入 |
 | `~/.dataloadv/` | settings.json（设置）、workspaces/（工作区）、logs/（日志）、table_fs.json（采样率记忆） | 应用可写 |
 | 用户选择的目录 | 导出产物（CSV/HDF5/FIF/sidecar） | 经保存对话框 |
 
@@ -150,37 +148,15 @@ src/dataloadv/
 
 ## 2. 运行
 
-### 2.1 从零安装（macOS，完整命令）
+### 2.1 从零安装（macOS）
 
-```bash
-# 1. conda 环境（专用；绝不使用 py310lg——那是 pipelineMotor 的冻结研究环境）
-source ~/miniconda3/etc/profile.d/conda.sh
-conda create -y -n dlv python=3.10
-conda activate dlv
+**完整命令五步（conda 建 env → conda-forge 科学/GUI 栈 → pip 补 mne/edfio →
+可选 neo/pynwb → 项目根 `pip install -e ".[dev]"）与依赖版本表以
+[HANDOFF.md](HANDOFF.md) 为权威**（两处同步维护曾致漂移——M16 起单源）。要点：
 
-# 2. 科学/GUI 栈（conda-forge 优先）
-conda install -y -c conda-forge "numpy=1.26.4" "scipy>=1.10" "pandas>=2.0" \
-    "h5py>=3.8" "pydantic>=2.4,<3" "PySide6>=6.5,<7" "pyqtgraph>=0.13.7" \
-    pyyaml pytest pytest-qt
-
-# 3. MNE 等 conda 缺失的包（pip 补）
-pip install "mne==1.12.0" edfio
-
-# 4. 可选格式依赖（Blackrock/Open Ephys/Intan/NWB；不装则这四种格式不可用）
-conda install -y -c conda-forge "pynwb>=3.0"   # pynwb 走 conda
-pip install "neo>=0.13"                        # neo 不在 conda-forge，pip 例外
-
-# 5. 本包可编辑安装（含 dev 依赖）——先进入项目根目录（含 pyproject.toml 的那一层，
-#    即本仓库的克隆位置），再用相对路径 "." 安装：不写死本机绝对路径，
-#    换终端用户/换机器/换克隆位置都照跑（路径含空格时靠引号或 Tab 补全）
-cd <项目根目录>             # 例：cd ~/VSproject/"intervention BCI"/DataloadV
-pip install -e ".[dev]"
-```
-
-一条命令的替代路径：仓库根的 `environment.yml`（M7 导出，**全部依赖含版本锁**，已去掉
-机器绑定的 prefix 行）——`conda env create -f environment.yml` 一步建出同款环境（M5 时
-neo/pynwb 的 conda/pip 混装已定格在文件里），再补第 5 步的本包安装即可。上面分步版适合
-想自己挑版本的场合。
+- conda 环境名 **dlv**（绝不使用 py310lg——pipelineMotor 冻结环境）；
+- 一条命令替代路径：仓库根 `environment.yml`（全依赖含版本锁）；
+- 安装用相对路径 `.`（项目根 = 含 pyproject.toml 那层），不写死绝对路径。
 
 ### 2.2 启动
 
@@ -205,9 +181,9 @@ dataloadv            # 或 python -m dataloadv
 
 | 命令 | 预期 |
 |---|---|
-| `pytest` | 364 passed（含真实数据项；含 MainWindow 级 UI 测试，**须 `QT_QPA_PLATFORM=offscreen`**） |
+| `pytest` | 375 passed（含真实数据项；含 MainWindow 级 UI 测试，**须 `QT_QPA_PLATFORM=offscreen`**） |
 | `python scripts/smoke_gui.py` | 末行 SMOKE OK（真窗口自检后自动退出） |
-| `python scripts/e2e_m1.py` … `e2e_m8.py` | 各打印 ALL OK（真实数据端到端，幂等可反复跑；m1 含 M6 浏览交互 22 项） |
+| `python scripts/e2e_m1.py` … `e2e_m9.py`、`e2e_m81.py` | 各打印 ALL OK（真实数据端到端，幂等可反复跑；m1 32 项（2026-10-26 实测；全部脚本共 154 项）） |
 | `python scripts/e2e_m7.py` | ALL OK（16 项；质量体检真实黄金标准：羊/TPDJ 浏览器路径 + 特征/导出链，幂等） |
 
 ### 2.4 无头/远程环境
@@ -323,10 +299,12 @@ pyproject.toml）。
 | 底部**事件 marker 列表**（M11） | 有标记数据的清单面板（默认在总览时间轴下方、约 4-5 行高，可拖分隔条调高）：5 列 = 序号/名称（label 中文优先）/时间 (s)/样本点（=时间×采样率）/持续 (s)，点列头排序（数值列按数值）；**双击任意行 → 波形立即居中到该事件**（事件线/时间标签/总览滑块全部联动）；名称颜色与波形中该事件的竖线同色。无事件的数据（如羊 BDF）面板仍显示（表头在、数据区居中灰字「无事件」）。M12 起面板在**左栏通道列表下方**（上下可拖比例）|
 | 点击底部事件概览条 | 主视图居中到点击时刻（视口宽度不变） |
 | 「纵向增益」滑杆 + 输入框 | 滑杆 0.01×–100× 指数刻度粗调；输入框可键入精确倍率（如 2.50×，M6.8 起）；只缩放波形不挪基线 |
-| 「比例尺 (µV)」下拉（M12） | 纵向敏感度：**相邻通道行的纵向间距**。自动=按数据振幅估计（默认）；固定值（1/3/5/…/2000 µV）=锁定行距——选小值波形铺满行（灵敏）、选大值波形压扁（看全局）。与增益正交：增益缩波形本身、比例尺定行距 |
+| 「比例尺 (µV)」下拉（M12/M15） | 纵向敏感度：**相邻通道行的纵向间距**。自动=按当前勾选通道的实际波动**持续**估计（勾选/翻页即跟随，M15）；固定值（1/3/5/…/2000 µV）=锁定行距——小值灵敏、大值看全局。与增益正交 |
 | 「优化显示选择通道 / 复位通道显示」按钮（M12） | 在左侧通道列表下方。优化=**只显示勾选通道并紧凑重排**（不留空位、均匀铺满 y 轴；紧凑下再勾选/取消通道即时重排）；复位=恢复全部通道显示与原布局（勾选状态恢复全选） |
 | **同段时频图**（M12 建，M13 改） | 波形与时间轴之间：当前视口单通道功率谱热图（turbo 配色+色标带能量分布直方图；**低频/0 在下、往上增高**（M13 翻转）；dB 相对各频点峰值；默认 [0, 150Hz]——250Hz 文件受 Nyquist 钳到 ~122.5Hz；更高范围可在设置窗显式调高至 Nyquist×0.49）。通道用「时频通道」下拉选；左侧按钮行下方**「时频设置…」**弹方法与参数窗：**方法**=Morlet 复小波（默认）/Multitaper 多锥/Stockwell S 变换/STFT 短时傅里叶 + 各自参数（周期数系数/time_bandwidth/width/窗长与重叠）+ 公共频率范围与点数（**默认上界 150Hz**、可显式调高至采样率 Nyquist×0.49（如 250Hz 文件最高 122.5、500Hz 默认 150/可调到 245）；点数 4–400；周期数系数下限 1/重叠上限 0.9 等保留——过小/过近的值会使小波核退化或窗重叠无意义）；随视口移动自动重算（300ms 防抖）；窗口过短按方法提示（morlet ≥2s、stockwell ≥1s、stft ≥2×窗长）。**色标范围**：默认每屏自动适配，拖动直方图上下缘手动调整后**跨屏保持**；**双击色标区域恢复自动** |
 | 通道列表勾选 | 显示/隐藏对应曲线与名称标签（顺序即文件通道顺序） |
+| **「全选/全不选」按钮**（M15，列表下方） | 全部勾选时点击=全部取消；任一未勾时点击=全部勾选 |
+| 特征参数的**通道选择**（M15） | 频带功率/PSD 曲线/时域统计的参数表单中「通道」字段为按钮式勾选控件（弹窗多选+全选/清空快捷）：不勾=全部数据通道（默认），选子集=只算所选通道的特征/曲线；无活动浏览 tab 时回退为逗号分隔文本框 |
 | **「质量体检」按钮**（M7） | 后台逐通道体检（不卡浏览）→ 通道列表每行加前缀 **✓ 好 / ? 疑似 / ✗ 坏**；**悬停看明细**：中文问题清单（开路复用/死值/平直/疑似饱和/漂移）+ 全部指标（直流/标准差/漂移/平直%/钉极值%）。发现坏通道时弹确认框，**「Yes」自动标记为坏道**（曲线灰显、进 raw.info['bads']、联动管线面板），不静默改标记 |
 | 通道**右键 → 标记为坏道** | 曲线变灰；写入 raw.info['bads'] 并联动管线面板（之后添加「坏导联处理」步骤时自动带入这些通道） |
 
@@ -548,7 +526,7 @@ sidecar（extra.batch 记 n_files/n_workers/files_written/raw_files_written）�
 ### 4.3 测试体系
 
 ```bash
-QT_QPA_PLATFORM=offscreen pytest   # 全部 364 项（有 MainWindow 级测试，须 offscreen）
+QT_QPA_PLATFORM=offscreen pytest   # 全部 375 项（有 MainWindow 级测试，须 offscreen）
 pytest -m real            # 仅真实数据冒烟（data/sheep 缺失自动跳过）
 pytest tests/test_proc_m3.py -k "epoching"   # 单文件/单关键字
 QT_QPA_PLATFORM=offscreen python scripts/e2e_m5.py   # 无头跑端到端
@@ -605,16 +583,18 @@ UI 新控件不直接计算；跨线程只传纯 Python/mne 对象。
 | review.md | 每里程碑验证执行记录 | 每里程碑 |
 | STATUS.md | 进度快照/实证结论/变更记录 | 每里程碑 |
 | TODO.md | 待办与 backlog | 随进展 |
-| HANDOFF.md | 环境复现/架构导览/37 条坑清单 | 每里程碑 |
+| HANDOFF.md | 环境复现/架构导览/66 条坑清单 | 每里程碑 |
 | DATA_NOTES.md | 数据集来源/结构/事件码表/坑 | 新数据实证 |
 | MANUAL.md | 本手册（使用+排障+扩展） | 重大功能变化 |
+| README.md | 简介与快速上手 | 重大功能变化 |
+| PACKAGING_HANDOFF.md | 打包实施指令+发版沿革 | 发版时 |
 
 ### 5.2 真实数据路径速查
 
-羊数据（BDF 内容的 .edf）`data/sheep|sheep2|sheep3/*.edf`；PhysioNet `data/dataset/files/S001/`；2a GDF
-`data/dataset/BCICIV_2a_gdf/A01T.gdf`；2b GDF 目录 `data/dataset/BCICIV_2b_gdf/`（45 文件，
-批处理验收集）；ds1 `data/dataset/BCICIV_1_mat/BCICIV_calib_ds1a.mat`；ds4
-`data/dataset/BCICIV_4_mat/sub1_comp.mat`。
+数据目录清单、各批次参数（采样率/导联/时长）与已知坑**以 [DATA_NOTES.md](DATA_NOTES.md)
+为权威**（羊系列 sheep–sheep6、dataset 四数据集、clinicaldata 均在册）。常用路径：
+PhysioNet `data/dataset/files/S001/`；2a `…/BCICIV_2a_gdf/`；2b `…/BCICIV_2b_gdf/`（批处理
+验收集）；ds1/ds4 `…/BCICIV_1_mat|4_mat/`。
 
 ### 5.3 已知边界（v1 收官时点）
 
@@ -623,4 +603,3 @@ UI 新控件不直接计算；跨线程只传纯 Python/mne 对象。
   `open_file()` 冒烟即可，风险低）；
 - ds3 分段 MEG 明确拒绝；.edf.event 边车不需要（内嵌注释已完整）；
 - 除浏览 tab 导航键（§3.5，M6 加入）外无全局快捷键、无通道拖拽排序、无导出对话框（导出按钮内嵌在结果 tab）——均记 backlog 见 TODO.md；
-- epochs 分段预览的通道名仍走 y 轴刻度（静态图、通道少，未触发重叠问题；记 backlog）。

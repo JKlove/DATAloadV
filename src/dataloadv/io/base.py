@@ -64,7 +64,9 @@ class BaseReader(ABC):
         """打开文件返回 Recording（meta + events；数据按需）.
 
         默认流程：read_meta → 构造空/头事件表 → 按需 ensure_raw。
-        事件需特殊解析的格式（GDF 码表、.edf.event 边车）覆盖本方法。
+        事件需特殊解析的格式覆盖 ``events_from_raw`` 钩子（如 GDF 数字码
+        翻译中文标签）；.edf.event 边车不解析（PhysioNet 内嵌注释已完整，
+        边车是冗余副本——M2 决策）。
         """
         meta = self.read_meta(path)
         events = EventTable()

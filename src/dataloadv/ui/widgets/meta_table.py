@@ -99,7 +99,6 @@ class MetaTableView(QWidget):
     """元数据表 tab 内容（筛选框 + 表格）."""
 
     open_requested = Signal(str)  # 双击行的 meta.path
-    selection_changed = Signal(list)  # 当前选中行的 meta 列表（批处理输入）
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -121,7 +120,6 @@ class MetaTableView(QWidget):
         self._table.setEditTriggers(QTableView.EditTrigger.NoEditTriggers)
         self._table.horizontalHeader().setStretchLastSection(True)
         self._table.doubleClicked.connect(self._on_double_click)
-        self._table.selectionModel().selectionChanged.connect(self._on_selection)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(2, 2, 2, 2)
@@ -149,18 +147,3 @@ class MetaTableView(QWidget):
         if meta is not None:
             self.open_requested.emit(meta.path)
 
-    def _on_selection(self, *_args) -> None:
-        metas = [self._proxy_row_meta(i) for i in self._table.selectedIndexes()]
-        # ExtendedSelection 下同一行多列会产生重复 index，按 rec_id 去重
-        seen: dict[str, RecordingMeta] = {}
-        for m in metas:
-            if m is not None:
-                seen[m.rec_id] = m
-        self.selection_changed.emit(list(seen.values()))
-
-    def selected_metas(self) -> list[RecordingMeta]:
-        """当前选中行（供批处理对话框取文件集）."""
-        return [
-            self._proxy_row_meta(i)
-            for i in sorted(self._table.selectionModel().selectedRows())
-        ]

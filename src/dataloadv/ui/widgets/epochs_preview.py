@@ -329,8 +329,6 @@ class EpochsPreviewView(QWidget):
             self._plot.addItem(label)
         self._plot.autoRange()
 
-    # ------------------------------------------------------------------ 视图 4：时频图
-
     # ------------------------------------------------------------------ 视图 5：单段浏览
 
     def _draw_segment(self) -> None:

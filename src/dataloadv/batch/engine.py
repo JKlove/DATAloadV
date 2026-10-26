@@ -159,7 +159,7 @@ class BatchEngine:
         )
         # 末尾导出（整批一次；文件级字段 recording 已在长表里，跨文件可区分）。
         # 特征表导出与连续数据导出相互独立：只勾连续格式时不得误写特征文件
-        # （旧逻辑 wants_export() 一票通过就进 _export，会把 CSV/HDF5 都写出去）
+        # （历史教训：曾用一票通过式开关进 _export，只勾 raw 时误写特征文件——方法已随 M16 清理删除，这里按 csv/h5 直判）
         files: list[str] = []
         if (job.export_csv or job.export_hdf5) and len(self._table) > 0:
             files += self._export(job)

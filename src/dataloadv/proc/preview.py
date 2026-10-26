@@ -10,10 +10,9 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional
 from uuid import uuid4
 
-from ..core.recording import EventTable, LoadPolicy, Recording, RecordingMeta
+from ..core.recording import LoadPolicy, Recording, RecordingMeta
 from ..io.base import BaseReader
 from .context import ProcessingContext
 

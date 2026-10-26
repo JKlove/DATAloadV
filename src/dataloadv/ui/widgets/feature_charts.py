@@ -129,7 +129,7 @@ class PsdCurvesChart(QWidget):
 
 
 class FeatureBarGrid(QWidget):
-    """标量特征网格（M14 箱线；同日加切换下拉）：每特征一格，x=通道，纵轴标注单位.
+    """标量特征网格（类名承 M8.3 柱状，M14 起默认箱线）：每特征一格，x=通道，纵轴标注单位.
 
     两种展示形式（顶部下拉切换，2026-10-15 用户要求柱状回归）：
     - **箱线图**（默认）：按事件码分箱展示**全部段的原始值**（中位线/四分位箱/
@@ -314,7 +314,7 @@ class FeatureBarGrid(QWidget):
 
 
 def make_charts_area(table: FeatureTable) -> QWidget | None:
-    """按 table 内容组装图表区：双有=QTabWidget（PSD|柱状）、单有=单图、全无=None.
+    """按 table 内容组装图表区：双有=QTabWidget（PSD|特征网格）、单有=单图、全无=None.
 
     feature_table._build_ui 用 None 分支保持空表零观感变化。
     """

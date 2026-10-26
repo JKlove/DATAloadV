@@ -397,3 +397,48 @@ class TestBoxScatterOverlay:
         assert all(abs(b.opts["width"] - 0.55) < 1e-9 for b in boxes)
         locs = sorted(float(b.opts["loc"][0]) for b in boxes)
         assert [round(x, 6) for x in locs] == [0.0, 1.0]  # 两系列相邻槽位
+
+
+class TestChannelPicker:
+    """M15：特征表单的通道选择控件（有候选=勾选控件；无候选=旧行为）."""
+
+    def test_picker_roundtrip(self, qtbot):
+        from dataloadv.features import FEATURE_REGISTRY
+        from dataloadv.ui.widgets.params_form import ParamsForm, _ChannelPickerEdit
+
+        feat = FEATURE_REGISTRY["bandpower"]
+        form = ParamsForm(feat, feat.default_params(),
+                          channel_candidates=[f"EEG{i:02d}" for i in range(8)])
+        qtbot.addWidget(form)
+        picker = form._getters_candidates_test() if hasattr(form, "_getters_candidates_test") else None
+        # 找到 channels 字段的控件（布局第 2 项=field）
+        picker = None
+        for w in form.findChildren(_ChannelPickerEdit):
+            picker = w
+            break
+        assert picker is not None
+        assert picker.value() == []  # 默认空=全部
+        assert "全部" in picker._btn.text() and "8" in picker._btn.text()
+        # 模拟选择 2 个（不走模态对话框——直接改内部态 + 刷新文案）
+        picker._selected = ["EEG00", "EEG01"]
+        picker._refresh_text()
+        assert form.collect().channels == ["EEG00", "EEG01"]
+        # 全选（k==n）文案回"全部"
+        picker._selected = [f"EEG{i:02d}" for i in range(8)]
+        picker._refresh_text()
+        assert "全部" in picker._btn.text()
+        assert form.collect().channels == [f"EEG{i:02d}" for i in range(8)]
+
+    def test_picker_not_used_without_candidates(self, qtbot):
+        from PySide6.QtWidgets import QLineEdit
+
+        from dataloadv.features import FEATURE_REGISTRY
+        from dataloadv.ui.widgets.params_form import ParamsForm
+
+        feat = FEATURE_REGISTRY["bandpower"]
+        form = ParamsForm(feat, feat.default_params())  # 无候选
+        qtbot.addWidget(form)
+        # channels 字段仍是 QLineEdit（旧行为）
+        edits = [e for e in form.findChildren(QLineEdit)]
+        assert edits, "channels 应回退为文本框"
+        assert form.collect().channels == []

@@ -139,12 +139,14 @@ class TestCompactDisplay:
         view._refresh_data()
 
     def test_compact_repacks_rows(self, browser):
-        s = browser._spacing_uv
         self._leave(browser, [0, 3, 5])
         browser._set_compact(True)
+        # 自动档下 spacing 随勾选集持续重估（M15）——断言前重读当前值，
+        # 不捕获改勾选前的旧值
+        s = browser._spacing_uv
         y0, y1 = browser._plot.getViewBox().viewRange()[1]
-        assert y0 == pytest.approx(-1.5 * s)
-        assert y1 == pytest.approx(3.5 * s)  # n=勾选数 3
+        assert y0 == pytest.approx(-1.5 * s, rel=1e-6)
+        assert y1 == pytest.approx(3.5 * s, rel=1e-6)  # n=勾选数 3
         # 首通道贴 0 行、第三通道（原 idx5）贴 2 行（紧凑不留空位）；容差
         # 1µV——曲线 yData 是 min-max 抽取后的 (min,max) 对序列，中位数相对
         # 原始中位数有亚 µV 偏移（M6.6 平线贴行断言同款口径）
@@ -365,3 +367,39 @@ class TestTfrM13:
         # stft 结果已回填（时间点数 = 窗中心数 ≪ 原始采样点数）
         assert browser._tfr_img.image is not None
         assert browser._tfr_img.image.shape[0] < 100  # n_times'（窗中心）
+
+
+class TestToggleAllChannels:
+    """M15：全选/全不选切换按钮."""
+
+    def test_toggle_roundtrip(self, browser):
+        assert all(c["enabled"] for c in browser._channels)
+        browser._toggle_all_channels()  # 全勾 → 全不勾
+        assert not any(c["enabled"] for c in browser._channels)
+        assert not browser._channels[0]["curve"].isVisible()
+        browser._toggle_all_channels()  # 非全勾 → 全勾
+        assert all(c["enabled"] for c in browser._channels)
+        assert browser._channels[0]["curve"].isVisible()
+        # 部分勾选状态再点 → 全勾（"否则=全勾"语义）
+        browser._ch_list.item(0).setCheckState(Qt.CheckState.Unchecked)
+        browser._toggle_all_channels()
+        assert all(c["enabled"] for c in browser._channels)
+
+
+class TestAutoScaleTracksSelection:
+    """M15：自动档按勾选通道的实际波动持续重估比例尺."""
+
+    def test_selection_change_updates_spacing(self, browser):
+        # synthetic：ch0/ch1=10Hz 20µV 正弦（大信号 MAD），ch2-7=5µV 噪底
+        # ——8 通道的 MAD 中位数被 6 个噪声通道主导（≈噪声级）
+        full = browser._spacing_uv
+        # 只留大信号正弦通道 → 波动大 → spacing 显著大于全通道估计
+        # （方向注意：全通道中位数=噪声级，纯噪声子集与它几乎相同——用
+        # 大信号子集才能拉开差值）
+        TestCompactDisplay._leave(browser, [0, 1])
+        big = browser._spacing_uv
+        assert big > full * 1.5
+        # 固定档不受勾选影响
+        browser._scale_combo.setCurrentText("50")
+        TestCompactDisplay._leave(browser, [2, 3])
+        assert browser._spacing_uv == 50.0

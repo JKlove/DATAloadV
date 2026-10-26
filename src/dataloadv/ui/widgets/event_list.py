@@ -147,7 +147,7 @@ class EventListView(QWidget):
         # 列宽自适应内容（M12 移入左栏后宽度有限，固定列宽会截断中文名）
         self._table.horizontalHeader().setSectionResizeMode(
             QHeaderView.ResizeMode.ResizeToContents)
-        self._table.verticalHeader().setVisible(False)  # # 列已有序号
+        self._table.verticalHeader().setVisible(False)  # 序号列已有
         self._table.setSortingEnabled(True)
         # 启用排序会触发一次隐式初始排序（本 PySide6 构建实测按第 0 列降序，
         # 行为不可依赖）——显式定为时间列升序（事件清单的天然顺序），箭头同步
@@ -182,7 +182,7 @@ class EventListView(QWidget):
         self._empty_lbl.setGeometry(self._table.geometry())
 
     def row_count(self) -> int:
-        """当前事件行数（浏览器决定面板显隐用）."""
+        """当前事件行数（测试/e2e 断言用；面板常驻显示——无显隐消费者）."""
         return len(self._model._events)
 
     def onset_at_row(self, proxy_row: int) -> float | None:

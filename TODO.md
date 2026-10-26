@@ -1,6 +1,6 @@
 # TODO — 待办清单
 
-> 本文件回答"接下来做什么"。随进展勾选与增删。完成项移入 STATUS.md 变更记录。
+> 本文件回答"接下来做什么"。随进展勾选与增删。完成里程碑整节保留勾选存档（变更记录见 STATUS.md）。
 
 ## M0 收尾（✅ 2026-08-18 完成，验证见 review.md）
 
@@ -339,16 +339,6 @@ Qt 6.x 后续版本须换 `filterInvalidated` 信号或 `beginFilterChange`，�
       构造 + OSError 兜底 + main() 垫 stderr；事故现场本地复现过；pytest 372 绿
 - [ ] **用户 Windows 复验 v0.2.2**：①双击能打开 ②打开原崩的 01号 DGDJ 文件不崩
 
-## 已知问题 / Backlog（v1 收官后暂缓项）
-
-- .edf.event WFDB 边车解析：M1 实测 PhysioNet EDF 内嵌注释已完整，边车为冗余副本，暂不需要；若未来遇到只有边车、无内嵌注释的数据集再补
-- **ds3 分段 MEG 读取**（data/dataset 里的 S1/S2.mat，BCI-IV 数据集 3）：数据是分段结构（非连续），与当前连续 raw 模型不匹配；M2 已识别并明确拒绝（提示记入 backlog）。若未来分段数据需求明确再实现
-- **CNT/EGI/BrainVision/EEGLAB 无真实数据实测**：M2 只有模板基类 + FIF 合成往返测试保证；拿到真实文件后跑 `open_file()` 冒烟即可（读取器走同一模板路径，风险低）。BDF 已于 M6.5 用真实羊数据实测（6 个 .edf 误标文件，含标注通道逐字节核查）
-- **Blackrock/Open Ephys/Intan/NWB 无真实数据实测**（M5）：neo 系用桩 rawio 验证模板关键逻辑（换算/转置/选流/事件）、NWB 用 pynwb 完整写支持做真实往返；拿到真实文件后跑 `open_file()` 冒烟即可（neo 模板路径统一，风险低）
-- eeglabio / pybv 装入 dev 依赖做 EEGLAB/BrainVision 合成往返：v1 收官时评估——neo/pynwb 已覆盖 M5 验收，暂缓，等真实数据再决定
-- 2b GDF 头自带 highpass 100 > lowpass 0.5 触发 mne RuntimeWarning（每文件两条，无害）；如需清净可在读取器预处理 info（暂缓——不改数据语义，仅日志噪音）
-- **白底对比度人工目检**：M6 换色均按白底可辨原则挑选并有测试覆盖存在性，但整体观感（如网格浓度、事件色区分度）未做截图级人工评审——用户日常使用中如有个别颜色不顺眼，改 strings_zh/各控件色值即可（均为一处常量）
-- **clinicaldata 事件通道核查**（2026-08-28 更新）：通道质量诊断已完成且**可复跑**——M6.7b 手工定论（DATA_NOTES §8）+ M7 质量体检自动复现并精化（TPDJ-位置1 全坏、02号脑电 2 文件已入册诊断）；仅剩 BDF TAL 注释/事件有无待用到的场合再核查
 
 ## M11 事件 marker 列表（✅ 完成 2026-09-24：浏览器底部横条 + 双击行跳转波形）
 
@@ -394,7 +384,7 @@ Qt 6.x 后续版本须换 `filterInvalidated` 信号或 `beginFilterChange`，�
       （morlet/multitaper/stockwell/stft；dB 统一每频点减峰值；stockwell 恒 3 元组
       解包；线性轴方法 _pool_rows 分段 max 池化保窄峰——均匀抽样实测漏 0.06Hz 峰）
 - [x] M13-2 频率轴：去 invertY（旧组合实际高频在下，注释勘误）+ setYRange(0, fmax)
-      + fmax=min(150, Nyq×0.475) 钳制 + 行 stretch 5:3.5:0.55
+      + fmax=min(150, Nyq×0.475)（**勘误**：精修后 ×0.49、160Hz→78.4） 钳制 + 行 stretch 5:3.5:0.55
 - [x] M13-3 TfrSettingsDialog：方法下拉+按方法参数显隐+fmax SpinBox 上限=Nyquist
       钳制值；工具栏「时频设置…」；应用段更新 cfg/频率轴/重算；短窗守卫
       cfg.min_window_s()（morlet/mt 2.0s、stockwell 1.0s、stft 2×窗长）
@@ -421,3 +411,27 @@ Qt 6.x 后续版本须换 `filterInvalidated` 信号或 `beginFilterChange`，�
 - [x] M14-4 测试：units 26 参数化 + m4 箱线口径重写 + dB/普通刻度/特征色与单位
       3 新用例；pytest 362 绿零回归
 - [x] M14-5 e2e_m4 ALL OK + e2e_m1 + smoke 回归；坑 #64⑨ 三则；治理七文件同步
+
+## M15 通道操作三件套（✅ 完成 2026-10-26：全选切换/自动比例尺/特征通道选择）
+
+- [x] M15-1 「全选/全不选」切换按钮（列表下方；全勾→全不勾/否则→全勾；
+      blockSignals 批量模板；全不选 picks 空路径安全）
+- [x] M15-2 比例尺自动档持续重估（_scale_is_auto 门控放宽——勾选变化/翻页
+      行距跟随当前通道实际波动；固定档仍锁；TestCompact 断言适配）
+- [x] M15-3 _ChannelPickerEdit 通道选择控件（params_form；空=全部语义；
+      ParamsForm channel_candidates 可选参；pipeline_panel 注入活动录制通道名；
+      无候选回退文本框；批处理零改动；QC str 字段不动）
+- [x] M15-4 测试 +12（切换三态/自动档跟踪+固定档不动/picker 往返+回退）；
+      pytest 376 绿零回归
+- [x] M15-5 e2e_m1 +1（全选往返）→ 33 项 ALL OK + smoke；治理七文件同步
+
+## 已知问题 / Backlog（v1 收官后暂缓项）
+
+- .edf.event WFDB 边车解析：M1 实测 PhysioNet EDF 内嵌注释已完整，边车为冗余副本，暂不需要；若未来遇到只有边车、无内嵌注释的数据集再补
+- **ds3 分段 MEG 读取**（data/dataset 里的 S1/S2.mat，BCI-IV 数据集 3）：数据是分段结构（非连续），与当前连续 raw 模型不匹配；M2 已识别并明确拒绝（提示记入 backlog）。若未来分段数据需求明确再实现
+- **CNT/EGI/BrainVision/EEGLAB 无真实数据实测**：M2 只有模板基类 + FIF 合成往返测试保证；拿到真实文件后跑 `open_file()` 冒烟即可（读取器走同一模板路径，风险低）。BDF 已于 M6.5 用真实羊数据实测（6 个 .edf 误标文件，含标注通道逐字节核查）
+- **Blackrock/Open Ephys/Intan/NWB 无真实数据实测**（M5）：neo 系用桩 rawio 验证模板关键逻辑（换算/转置/选流/事件）、NWB 用 pynwb 完整写支持做真实往返；拿到真实文件后跑 `open_file()` 冒烟即可（neo 模板路径统一，风险低）
+- eeglabio / pybv 装入 dev 依赖做 EEGLAB/BrainVision 合成往返：v1 收官时评估——neo/pynwb 已覆盖 M5 验收，暂缓，等真实数据再决定
+- 2b GDF 头自带 highpass 100 > lowpass 0.5 触发 mne RuntimeWarning（每文件两条，无害）；如需清净可在读取器预处理 info（暂缓——不改数据语义，仅日志噪音）
+- **白底对比度人工目检**：M6 换色均按白底可辨原则挑选并有测试覆盖存在性，但整体观感（如网格浓度、事件色区分度）未做截图级人工评审——用户日常使用中如有个别颜色不顺眼，改 strings_zh/各控件色值即可（均为一处常量）
+- **clinicaldata 事件通道核查**（2026-08-28 更新）：通道质量诊断已完成且**可复跑**——M6.7b 手工定论（DATA_NOTES §8）+ M7 质量体检自动复现并精化（TPDJ-位置1 全坏、02号脑电 2 文件已入册诊断）；仅剩 BDF TAL 注释/事件有无待用到的场合再核查

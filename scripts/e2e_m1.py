@@ -131,6 +131,12 @@ def main() -> int:
                 t0r, t1r = v._visible_range()
                 check("M6.8 总览滑块跟随视口",
                       abs(r0 - t0r) < 1e-3 and abs(r1 - t1r) < 1e-3)
+                # M15：全选/全不选切换往返
+                v._toggle_all_channels()
+                off = all(not c["enabled"] for c in v._channels)
+                v._toggle_all_channels()
+                on = all(c["enabled"] for c in v._channels)
+                check("M15 全选/全不选往返", off and on)
                 # M11：无事件数据（羊 BDF 无标记）事件列表面板常驻显示空态
                 check("M11 无事件面板常驻空态",
                       (not v._event_list.isHidden())

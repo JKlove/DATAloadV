@@ -4,7 +4,7 @@
 - 表格只读展示 ``FeatureTable.df``（QAbstractTableModel + 排序过滤代理，
   数万行级别流畅——288 段×22 通道×13 特征 ≈ 8 万行是常态）
 - 图表区（M8.3）：``make_charts_area`` 按内容组装——PSD 曲线多通道一图 +
-  标量特征柱状网格（feature_charts.py，展示聚合先例 _draw_average）
+  标量特征箱线/柱状双模式网格（feature_charts.py）
 - 导出按钮 → ``run_in_thread`` 里调 export 层写文件 + provenance sidecar
   → 主线程弹完成提示（文件清单）
 

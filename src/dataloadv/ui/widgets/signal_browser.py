@@ -58,7 +58,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ...core.recording import EventTable, LoadPolicy, Recording
+from ...core.recording import EventTable, Recording
 from ...features.qc import QualityCheckParams, compute_channel_qc
 from ...features.tfr import TfrConfig, compute_window_tfr, default_tfr_freqs
 from ...workers.generic import run_in_thread
@@ -200,7 +200,6 @@ class SignalBrowserView(QWidget):
     """一条录制的浏览 tab 内容.
 
     :param recording: 已就绪的 Recording（数据未加载也可——首帧异步 ensure_raw）
-    :param on_loaded: 数据就绪回调（主窗口用来解除"打开中"状态）
     """
 
     gain_changed = Signal(float)
@@ -412,6 +411,11 @@ class SignalBrowserView(QWidget):
         btn_row = QHBoxLayout()
         btn_row.addWidget(self._btn_compact)
         btn_row.addWidget(self._btn_reset)
+        # 全选/全不选切换（M15）：当前全勾 → 点击全部取消；否则全部勾选——
+        # 批量勾选走 blockSignals 模板（_set_compact 复位分支同款）
+        self._btn_all = QPushButton(S.BTN_CHANNELS_ALL_TOGGLE)
+        self._btn_all.setToolTip(S.BTN_CHANNELS_TIP)
+        self._btn_all.clicked.connect(self._toggle_all_channels)
         # 时频设置（M13；2026-10-14 用户反馈从工具栏移入左栏——工具栏过长会
         # 挤压主窗口左侧工作区 Dock，全屏后工作区名录显示不全）
         self._btn_tfr_cfg = QPushButton(S.BTN_TFR_SETTINGS)
@@ -425,6 +429,7 @@ class SignalBrowserView(QWidget):
         ch_lay = QVBoxLayout(ch_block)
         ch_lay.setContentsMargins(0, 0, 0, 0)
         ch_lay.addWidget(self._ch_list, 1)
+        ch_lay.addWidget(self._btn_all)
         ch_lay.addLayout(btn_row)
         ch_lay.addWidget(self._btn_tfr_cfg)
         self._event_list = EventListView()
@@ -476,7 +481,7 @@ class SignalBrowserView(QWidget):
           坐标组合的实际效果是**高频在下**（M8 起注释一直写反，2026-10-14
           离屏实证）——去掉后低频/0 在下、往上增高（用户要求）。
         - 频率显示范围 [0, fmax]（fmax = cfg.effective_fmax，默认 150 受
-          Nyquist×0.475 钳制——250Hz 采样 →118.75、500Hz →150）。
+          Nyquist×0.49 钳制——250Hz 采样 →122.5、500Hz →245）。
         - LUT 顺序约束：``setImageItem`` 必须先于 ``setColorMap``（M8 实证）；
           turbo 用 ``pg.colormap.get("turbo")``（安装自带 csv；jet/hot 才需公式）。
         """
@@ -728,7 +733,14 @@ class SignalBrowserView(QWidget):
             data_uv = data * _UV
             width_px = max(int(self._plot.vb.width()), 100)
             max_points = width_px * _SAMPLES_PER_PIXEL
-            if data_uv.shape[1] > 0 and not self._spacing_estimated:
+            # 比例尺估计门控（M15 改）：固定档由 _spacing_estimated=True 锁死；
+            # **自动档每次刷新都按当前勾选通道的当前窗重估**（用户需求：勾选
+            # 变化/翻页时行距跟随实际波动——data_uv 本就是 enabled 通道现窗数据）。
+            # 门控在 if picks: 块内——全不选时块跳过、data_uv 未定义不能引用
+            # （首版把门控留在块外，全不选路径 UnboundLocalError 被 _refresh_data
+            # 的 try/except 吞进日志，2026-10-26 实修）
+            if data_uv.shape[1] > 0 and (
+                    not self._spacing_estimated or self._scale_is_auto()):
                 self._estimate_spacing(data_uv)
             # 行居中的基线 = 每通道**本窗口**中位数（随视口重算）：不管通道
             # 带多大直流偏移/慢漂移，波形始终落在自己行的附近（M6.7b）。
@@ -1008,6 +1020,10 @@ class SignalBrowserView(QWidget):
             return
         self._set_gain(10.0 * math.log10(value))
 
+    def _scale_is_auto(self) -> bool:
+        """比例尺下拉当前是否"自动"档（M15：自动档每次刷新持续重估）."""
+        return self._scale_combo.currentText() == S.SCALE_AUTO
+
     def _on_scale_changed(self, text: str) -> None:
         """比例尺下拉（M12）：固定行距 µV 或切回"自动"重估.
 
@@ -1213,6 +1229,30 @@ class SignalBrowserView(QWidget):
         if self._compact:
             return sum(1 for c in self._channels if c["enabled"])
         return len(self._channels)
+
+    def _toggle_all_channels(self) -> None:
+        """「全选/全不选」切换按钮（M15）.
+
+        当前全部勾选 → 点击全部取消；否则（任一未勾）→ 全部勾选。
+        批量 setCheckState 连发 N 次 itemChanged → blockSignals 包住
+        （_set_compact 复位分支同款），一次性改完再手动刷一帧。全不选后
+        picks 为空：_refresh_data_inner 的 if picks: 分支跳过数据读取、
+        _apply_y_range 照常（行数按全部通道），安全。
+        """
+        all_on = all(c["enabled"] for c in self._channels)
+        target = Qt.CheckState.Unchecked if all_on else Qt.CheckState.Checked
+        self._ch_list.blockSignals(True)
+        try:
+            for i in range(self._ch_list.count()):
+                self._ch_list.item(i).setCheckState(target)
+        finally:
+            self._ch_list.blockSignals(False)
+        on = target == Qt.CheckState.Checked
+        for ch in self._channels:
+            ch["enabled"] = on
+            ch["curve"].setVisible(on)
+            ch["label"].setVisible(on)
+        self._refresh_data()
 
     def _set_compact(self, on: bool) -> None:
         """「优化显示选择通道 / 复位通道显示」按钮（M12）.

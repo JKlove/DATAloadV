@@ -22,12 +22,10 @@ class SessionState(QObject):
     :signals:
         workspace_changed: 工作区内容变化（导入/删除后，树与表全量刷新）
         recording_opened(object): 浏览 tab 请求（携带 Recording）
-        selection_changed(list[RecordingMeta]): 元数据表多选变化（批处理输入）
     """
 
     workspace_changed = Signal()
     recording_opened = Signal(object)
-    selection_changed = Signal(list)
 
     def __init__(self) -> None:
         super().__init__()
@@ -51,20 +49,9 @@ class SessionState(QObject):
         self.workspace_changed.emit()
 
     # ------------------------------------------------------------ 打开/关闭
-
-    def open_recording(self, meta_path: str) -> Recording | None:
-        """按路径打开（或复用已打开的）Recording，发 recording_opened 信号.
-
-        打开动作在后台线程执行（大文件头读取也要几十 ms），调用方是
-        workers 的 on_done 回调；本方法只在主线程调用。
-        """
-        existing = next(
-            (r for r in self.open_recordings.values() if r.meta.path == meta_path), None
-        )
-        if existing is not None:
-            self.recording_opened.emit(existing)
-            return existing
-        return None  # 未打开过的走后台 open_file 流程（见 MainWindow._open_recording_async）
+    # （打开流程入口是 MainWindow._open_recording_async：后台 open_file →
+    #  on_done → attach_open；早期设计的 open_recording 帮手方法已随
+    #  M16 清理删除——零调用且与真实流程重复）
 
     def attach_open(self, rec: Recording) -> None:
         """后台打开完成后登记并广播."""

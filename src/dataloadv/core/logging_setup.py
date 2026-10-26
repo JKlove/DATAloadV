@@ -5,7 +5,7 @@
   ``~/.dataloadv/logs/dataloadv.log``（文件便于事后排查崩溃原因）
 - UI 侧的日志面板（ui/widgets/log_panel.py）通过 ``attach_qt_handler()`` 拿到一个
   特殊 Handler 的引用，日志记录经 Qt 信号转发到主线程渲染——线程安全且不卡 UI
-- 批处理引擎给每个任务临时挂接独立 Handler 捕获逐文件日志（M5 实现，见 batch/）
+- 批处理的逐文件日志由 ProcessingContext.logs 列表收集进 FileResult（非 Handler 挂接）
 
 为什么用 logging 标准库而非 print：worker 线程、批处理、读取器报错统一走一个
 通道，UI 面板/文件/控制台三个出口自动同步。
@@ -63,13 +63,13 @@ def setup_logging(level: int = logging.INFO) -> None:
 class QtLogHandler(logging.Handler):
     """把日志记录转发给 UI 的桥接 Handler.
 
-    本类只做"收集"（emit 时缓存最近若干条 + 调用回调），**不依赖 Qt**——
+    本类只做"收集"（emit 即转发回调），**不依赖 Qt**——
     真正把记录送到主线程的信号装配件在 ui/widgets/log_panel.py 中完成，
     以此保持 core/ 不 import Qt 的架构约束。UI 未启动时（纯命令行/测试）
     本 Handler 静默丢弃，不影响任何功能。
     """
 
-    def __init__(self, capacity: int = 2000) -> None:
+    def __init__(self) -> None:
         super().__init__()
         self._callback = None  # 由 UI 注入：callable(str)，线程安全性由 UI 侧保证
         self.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s", "%H:%M:%S"))

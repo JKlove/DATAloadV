@@ -161,14 +161,6 @@ def _raw_export_job(paths, out_dir, **kw) -> JobSpec:
 
 
 class TestBatchRawExport:
-    def test_wants_export_semantics(self, tmp_path):
-        """⑪ 四个导出开关任一勾选 + 有目录 = 要写文件."""
-        base = dict(paths=["x"], pipeline=PipelineSpec())
-        assert not JobSpec(**base).wants_export()
-        assert not JobSpec(**base, export_csv=True).wants_export()  # 无目录
-        assert JobSpec(**base, export_csv=True, export_dir=str(tmp_path)).wants_export()
-        assert JobSpec(**base, export_raw_edf=True, export_dir=str(tmp_path)).wants_export()
-        assert JobSpec(**base, export_raw_fif=True, export_dir=str(tmp_path)).wants_export()
 
     def test_epochs_pipeline_skipped_with_log(self, tmp_path):
         """⑫ 管线产物是分段：记「已跳过」日志，不写文件."""

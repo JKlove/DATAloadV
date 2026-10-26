@@ -44,7 +44,7 @@ class TfrSettingsDialog(QDialog):
 
     def __init__(self, cfg: TfrConfig, sfreq: float, parent=None) -> None:
         """:param cfg: 当前配置（对话框初始值）。
-        :param sfreq: 该文件采样率——频率上限按 Nyquist×0.475 钳制。
+        :param sfreq: 该文件采样率——频率上限按 Nyquist×0.49 钳制（TFR_FMAX_NYQ_RATIO）。
         """
         super().__init__(parent)
         self.setWindowTitle(S.TFR_DLG_TITLE)

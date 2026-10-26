@@ -4,7 +4,7 @@
 释放（内存让位给 epochs）。后续仅接受 applies_to 含 "epochs" 的步骤。
 
 锚定方式（M8.1 起）：
-- **事件锚定**（默认，M3 现状）：锚点 = ``ctx.events``（读取器解析好的 EventTable，
+- **事件锚定**（默认，M3 引入）：锚点 = ``ctx.events``（读取器解析好的 EventTable，
   GDF 已带中文标签；code 为字符串，如 "769"/"T1"/"left"）中选中事件码的 onset。
   空事件表报错（本步骤历史行为，回归测试守门）。
 - **固定窗滑窗**：无事件数据按固定窗全程滑动切段——锚点 = 从数据起点起、
@@ -108,7 +108,7 @@ class EpochingStep(ProcStep):
 
     @staticmethod
     def _events_anchors(ev, params: EpochingParams, sfreq: float):
-        """事件锚定：事件表筛选/排序/event_id（M3 现状逻辑原样搬移）."""
+        """事件锚定：事件表筛选/排序/event_id（M3 逻辑原样搬移）."""
         codes_all = sorted(set(ev.code))
         keep = [c for c in codes_all if not params.event_codes or c in set(params.event_codes)]
         if not keep:

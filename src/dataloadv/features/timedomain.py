@@ -71,7 +71,7 @@ def zero_crossing_rate(x_uv: np.ndarray, threshold_uv: float) -> float:
 
 
 # 统计量名 → 计算函数（输入 µV 数组，输出 float；向量化沿最后轴）
-def _stat_functions(zc_threshold_uv: float) -> dict[str, object]:
+def _stat_functions() -> dict[str, object]:
     return {
         "rms_uv": lambda x: np.sqrt(np.mean(x * x, axis=-1)),
         "var_uv2": lambda x: np.var(x, axis=-1),
@@ -95,7 +95,7 @@ class TimeDomainStatsFeature(FeatureExtractor):
     applies_to = frozenset({"raw", "epochs"})
 
     def extract(self, ctx: ProcessingContext, params: TimeDomainParams) -> ExtractorResult:
-        funcs = _stat_functions(params.zc_threshold_uv)
+        funcs = _stat_functions()
         unknown = [s for s in params.stats if s not in funcs]
         if unknown:
             raise FeatureError(

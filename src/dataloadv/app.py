@@ -115,7 +115,7 @@ def main(argv: list[str] | None = None) -> int:
         logger.info("--smoke 自检模式")
         return _run_smoke()
 
-    # 高 DPI 缩放：Qt6 默认启用 PassThrough，这里显式声明以免行为随版本漂移
+    # 高 DPI 图标属性：Qt6 下恒为启用（Qt5 概念）——显式声明作跨版本兼容保险
     QApplication.setAttribute(Qt.AA_UseHighDpiPixmaps, True)
 
     app = QApplication(sys.argv)

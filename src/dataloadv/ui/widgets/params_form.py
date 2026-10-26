@@ -15,21 +15,29 @@
 from __future__ import annotations
 
 import logging
-from typing import Literal, Optional, Union, get_args, get_origin
+from typing import Literal, Union, get_args, get_origin
 
 from pydantic import BaseModel
 from pydantic.fields import FieldInfo
-from PySide6.QtCore import Signal
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
+    QDialog,
     QDoubleSpinBox,
     QFormLayout,
+    QHBoxLayout,
+    QLabel,
     QLineEdit,
+    QListWidget,
+    QListWidgetItem,
+    QPushButton,
     QSpinBox,
     QVBoxLayout,
     QWidget,
 )
+
+from ..strings_zh import S
 
 logger = logging.getLogger(__name__)
 
@@ -58,21 +66,111 @@ class _OptionalFloatBox(QWidget):
         return round(self.spin.value(), self.spin.decimals()) if self.check.isChecked() else None
 
 
+class _ChannelPickerEdit(QWidget):
+    """通道选择控件（M15）：按钮弹出勾选对话框，替代 channels 字段的手输文本框.
+
+    语义对齐 params 约定：**空选择 = 全部数据通道**（按钮显示「全部（N 通道）」、
+    value() 返回 []）——避免"全不勾"造成无通道可算的困惑；选了子集则按钮显示
+    「已选 k/N」并按候选顺序输出勾选名。仅当表单注入了通道候选时启用
+    （ParamsForm 的 channel_candidates 参数；无候选回退 QLineEdit 旧行为）。
+    """
+
+    edited = Signal()
+
+    def __init__(self, candidates: list[str], current: list[str],
+                 parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._candidates = list(candidates)
+        self._selected = [c for c in self._candidates if c in set(current)]
+        self._btn = QPushButton()
+        self._btn.clicked.connect(self._open_dialog)
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.addWidget(self._btn)
+        self._refresh_text()
+
+    def _refresh_text(self) -> None:
+        n, k = len(self._candidates), len(self._selected)
+        self._btn.setText(
+            S.CH_PICK_ALL_FMT.format(n=n) if k in (0, n)
+            else S.CH_PICK_SEL_FMT.format(k=k, n=n))
+
+    def _open_dialog(self) -> None:
+        """弹出勾选对话框（全选/清空快捷键 + 确定/取消）."""
+        dlg = QDialog(self)
+        dlg.setWindowTitle(S.CH_PICK_TITLE)
+        lay = QVBoxLayout(dlg)
+        hint = QLabel(S.CH_PICK_EMPTY_HINT)
+        lay.addWidget(hint)
+        lst = QListWidget()
+        for name in self._candidates:
+            item = QListWidgetItem(name)
+            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            item.setCheckState(
+                Qt.CheckState.Checked if name in set(self._selected)
+                else Qt.CheckState.Unchecked)
+            lst.addItem(item)
+        lay.addWidget(lst, 1)
+        quick = QHBoxLayout()
+        btn_all = QPushButton(S.CH_PICK_BTN_ALL)
+        btn_none = QPushButton(S.CH_PICK_BTN_NONE)
+
+        def _set_all(on: bool):
+            for i in range(lst.count()):
+                lst.item(i).setCheckState(
+                    Qt.CheckState.Checked if on else Qt.CheckState.Unchecked)
+
+        btn_all.clicked.connect(lambda: _set_all(True))
+        btn_none.clicked.connect(lambda: _set_all(False))
+        quick.addWidget(btn_all)
+        quick.addWidget(btn_none)
+        quick.addStretch(1)
+        lay.addLayout(quick)
+        btns = QHBoxLayout()
+        btn_ok = QPushButton("确定")
+        btn_ok.setDefault(True)
+        btn_ok.clicked.connect(dlg.accept)
+        btn_cancel = QPushButton("取消")
+        btn_cancel.clicked.connect(dlg.reject)
+        btns.addStretch(1)
+        btns.addWidget(btn_ok)
+        btns.addWidget(btn_cancel)
+        lay.addLayout(btns)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        picked = {lst.item(i).text()
+                  for i in range(lst.count())
+                  if lst.item(i).checkState() == Qt.CheckState.Checked}
+        new_sel = [c for c in self._candidates if c in picked]  # 候选序稳定
+        if new_sel != self._selected:
+            self._selected = new_sel
+            self._refresh_text()
+            self.edited.emit()
+
+    def value(self) -> list[str]:
+        """当前选择（空列表 = 全部数据通道；非空按候选顺序）."""
+        return list(self._selected)
+
+
 class ParamsForm(QWidget):
     """一个处理步骤的参数编辑表单.
 
     :param step: ProcStep 实例（提供 params_cls）
     :param params: 当前参数值（新步骤=默认值；选中已有步骤=其当前值）
+    :param channel_candidates: 通道名候选（M15；特征表单注入当前录制的通道
+        名——channels 字段渲染为勾选控件；None/步骤表单=旧行为）
     :signal edited: 任一控件被编辑（面板据此把值写回步骤条目）
     :raises ValueError: collect() 时若解析失败（中文信息，含字段名）
     """
 
     edited = Signal()
 
-    def __init__(self, step, params: BaseModel, parent=None) -> None:
+    def __init__(self, step, params: BaseModel, parent=None,
+                 channel_candidates: list[str] | None = None) -> None:
         super().__init__(parent)
         self._step = step
         self._params = params
+        self._ch_candidates = channel_candidates
         self._getters: dict[str, object] = {}  # 字段名 -> 取值 callable
         form = QFormLayout(self)
         form.setContentsMargins(4, 4, 4, 4)
@@ -142,6 +240,14 @@ class ParamsForm(QWidget):
             spin.valueChanged.connect(lambda *_: self.edited.emit())
             self._getters[name] = lambda: round(spin.value(), spin.decimals())
             return spin
+
+        # channels 字段 + 有候选 → 勾选控件（M15；空=全部数据通道的语义
+        # 由控件三态文案承载，value 返回 list[str] 与旧文本框完全兼容）
+        if name == "channels" and self._ch_candidates:
+            picker = _ChannelPickerEdit(self._ch_candidates, value or [])
+            picker.edited.connect(lambda: self.edited.emit())
+            self._getters[name] = picker.value
+            return picker
 
         # list[float] / list[str] → 文本框（逗号分隔）
         if origin is list:

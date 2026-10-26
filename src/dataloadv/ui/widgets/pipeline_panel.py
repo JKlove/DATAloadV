@@ -20,7 +20,6 @@ import logging
 from pathlib import Path
 from typing import Callable, Optional
 
-import numpy as np
 from PySide6.QtCore import Signal
 from PySide6.QtGui import QCursor
 from PySide6.QtWidgets import (
@@ -313,10 +312,22 @@ class PipelinePanel(QWidget):
         entry = chain[row]
         owner = (STEP_REGISTRY[entry["step"]] if kind == "step"
                  else FEATURE_REGISTRY[entry["feature"]])
-        self._form = ParamsForm(owner, entry["params"])
+        # 特征表单注入当前录制的通道名候选（M15）：channels 字段渲染为勾选
+        # 控件（空=全部数据通道）；无活动浏览 tab 时传 None 回退文本框旧行为
+        candidates = self._channel_candidates() if kind == "feature" else None
+        self._form = ParamsForm(owner, entry["params"],
+                                channel_candidates=candidates)
         # 表单编辑 → 实时写回条目 + 刷新列表行文字（try 容忍半填状态）
         self._form.edited.connect(lambda: self._live_collect())
         self._form_host.setWidget(self._form)
+
+    def _channel_candidates(self) -> Optional[list[str]]:
+        """当前活动浏览 tab 的通道名（特征表单的通道选择候选；无则 None）."""
+        browser = self._get_active()
+        if browser is None:
+            return None
+        names = list(browser.rec.meta.channel_names)
+        return names or None
 
     def _live_collect(self) -> None:
         if self._form is None or self._form_kind is None or self._selected_row is None:
@@ -337,7 +348,7 @@ class PipelinePanel(QWidget):
     # ------------------------------------------------------------------ 收集
 
     def collect_pipeline(self) -> list[dict]:
-        """收集步骤链（预览前统一校验；空链/非法直接抛 ValueError 中文）."""
+        """收集步骤链（空链抛 ValueError；参数合法性在执行时统一校验）."""
         self._write_back_form()
         if not self._steps:
             raise ValueError(S.PIPE_MSG_NO_STEPS)
