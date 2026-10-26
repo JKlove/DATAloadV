@@ -343,7 +343,10 @@ Qt 6.x 后续版本须换 `filterInvalidated` 信号或 `beginFilterChange`，�
 - [x] **v0.2.3（同日）**：`_utf8.py` 换运行时补丁 `builtins.open`（文本模式
       无显式 encoding 补 UTF-8；显式/位置 encoding 尊重、二进制不动、幂等），
       execv 整体移除；测试重写为行为级断言 8 项；pytest 375 绿 + 重打包冒烟
-- [ ] **用户 Windows 复验 v0.2.3**：双击打开 + 打开 01号 DGDJ 文件不崩（第三轮）
+- [ ] **用户 Windows 复验 v0.2.3**：双击打开 + 打开 01号 DGDJ 文件不崩（第三轮；
+      产物 run 40293240058，测试门禁该轮双平台自然通过——前两轮失败为竞态性）
+- [ ] CI 门禁恢复拦截（观察数轮稳定后）：竞态根因未明（本地复现不了），先保留
+      continue-on-error + pytest-timeout 180s（挂死爆栈走注解外显）
 
 
 ## M11 事件 marker 列表（✅ 完成 2026-09-24：浏览器底部横条 + 双击行跳转波形）

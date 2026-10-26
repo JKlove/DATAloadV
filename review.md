@@ -1449,3 +1449,17 @@ fixture 收窄 `channels=["EEG00"]` 保 1 条下游零改，新增窗进列头/a
 - 验证：pytest **375 绿**（8 项新测试全行为级）+ 重打包 macOS offscreen `--smoke`
   SMOKE OK；坑 #65 终章入 HANDOFF；PACKAGING_HANDOFF（文件地图/坑索引/红线）
   同步。待用户 Windows 复验 v0.2.3。
+
+## v0.2.3 出包 + CI 门禁竞态档案（2026-10-26）
+
+- **发版链三折**：首轮门禁双平台失败（Win 秒崩无摘要 / mac 挂死 1h+）→ 本地三重
+  CI 复刻（git 克隆无 data/ + env -i 纯净环境 + 全新 HOME 的 pip venv，numpy
+  2.2.6/PySide6 6.12/mne 1.12.1 最新浮动版）27s 全绿**复现不了** → 加 ::error::
+  注解外显（日志匿名不可读、注解匿名可见，WebFetch 实证）+ pytest-timeout →
+  用户批准方案 A（临时 continue-on-error）→ **第三轮全步自然双绿**。
+- **定性**：前两轮失败为**竞态性/负载相关**（坑 #57⑥ 家族：慢环境 + Qt 事件循环
+  时序），非代码回归——同 commit 本地绿、runner 上时挂时绿即证。180s 超时把未来
+  挂死转成可诊断的爆栈输出。
+- **产物**：`DataloadV-0.2.3-win64`（140MB）/ `-macOS-arm64`（98MB），run
+  40293240058——含 GBK 运行时补丁（builtins.open）终版。
+- 待办：用户 Windows 复验；门禁观察数轮稳定后恢复拦截（continue-on-error 撤除）。
