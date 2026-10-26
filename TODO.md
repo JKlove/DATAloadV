@@ -337,7 +337,13 @@ Qt 6.x 后续版本须换 `filterInvalidated` 信号或 `beginFilterChange`，�
 - [x] **v0.2.1 打不开事故 → v0.2.2（同日）**：execv 参数重复拼 argv[0] → argparse
       报错写 None stderr → AttributeError（坑 #66）；修=`_restart_argv()` 两形态
       构造 + OSError 兜底 + main() 垫 stderr；事故现场本地复现过；pytest 372 绿
-- [ ] **用户 Windows 复验 v0.2.2**：①双击能打开 ②打开原崩的 01号 DGDJ 文件不崩
+- [x] **用户 Windows 复验 v0.2.2（2026-10-26 截图反馈）**：①双击能打开 ✓
+      （execv/argparse 修复有效）②打开数据**仍 GBK 崩** ✗——冻结环境不吃
+      PYTHONUTF8，自重启路线从根无效（坑 #65 终章）
+- [x] **v0.2.3（同日）**：`_utf8.py` 换运行时补丁 `builtins.open`（文本模式
+      无显式 encoding 补 UTF-8；显式/位置 encoding 尊重、二进制不动、幂等），
+      execv 整体移除；测试重写为行为级断言 8 项；pytest 375 绿 + 重打包冒烟
+- [ ] **用户 Windows 复验 v0.2.3**：双击打开 + 打开 01号 DGDJ 文件不崩（第三轮）
 
 
 ## M11 事件 marker 列表（✅ 完成 2026-09-24：浏览器底部横条 + 双击行跳转波形）

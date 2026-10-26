@@ -1427,3 +1427,25 @@ fixture 收窄 `channels=["EEG00"]` 保 1 条下游零改，新增窗进列头/a
   offscreen `--smoke` SMOKE OK。
 - **注意**：CI 测试门禁本身要等**下一次 tag/dispatch** 才首次实战（main push 不
   触发 build）；首次发版留意该步日志。
+
+## v0.2.3 — UTF-8 补丁换运行时方案（2026-10-26，v0.2.2 复验驱动）
+
+- **v0.2.2 用户复验（正式截图）**：双击能打开（v0.2.1 修复有效）但打开数据
+  **仍同点 GBK 崩**（colormap.py:85/107，`'gbk' codec can't decode byte 0xa9`）。
+- **根因（冻结 probe 决定性实验）**：`PYTHONUTF8=1` 下运行 PyInstaller 冻结的
+  最小 probe → `sys.flags.utf8_mode` 仍为 **0**——**PyInstaller 6.22.2 冻结解释器
+  不应用 PYTHONUTF8**（bootloader 自行初始化 Python）→ execv 自重启路线在冻结
+  环境从根上无效；v0.2.1 修的只是"重启这步没把进程弄死"，方向本身错了。
+- **重写 `_utf8.py`**：运行时包装 `builtins.open`——文本模式且 encoding 未以
+  kwarg/位置（open 签名位置 encoding 在 args[1] → `len(args) < 2`）指定时补
+  `utf-8`；显式 encoding 透传、二进制不受影响、无 encoding 写文件同变 UTF-8
+  （= PEP 540 对 open() 的语义）；幂等；纯进程内，零环境/重启依赖。
+- **测试方法论修正**：从"参数构造断言"（拦不住环境不生效）升级为**行为级断言**
+  8 项——含试金石教训：**"文1号脑电©测试"式 CJK+ASCII 内容才是 GBK 必炸**
+  （3 字节 UTF-8 后跟 <0x40 尾字节配对必炸）；纯 ©/« 双字节恰好被 GBK 吞成
+  乱码**不报错**——早期验证用错内容差点误判补丁无效。另：测试打桩必须走
+  模块命名空间缝隙（全局改 os.name="nt" 会把 pathlib 炸成 WindowsPath
+  INTERNALERROR）。
+- 验证：pytest **375 绿**（8 项新测试全行为级）+ 重打包 macOS offscreen `--smoke`
+  SMOKE OK；坑 #65 终章入 HANDOFF；PACKAGING_HANDOFF（文件地图/坑索引/红线）
+  同步。待用户 Windows 复验 v0.2.3。

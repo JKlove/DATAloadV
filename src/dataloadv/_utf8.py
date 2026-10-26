@@ -1,22 +1,22 @@
-"""非 UTF-8 locale 自举（坑 #65/#66，v0.2.0 Windows 实锤事故）.
+"""非 UTF-8 locale 运行时补丁（坑 #65，v0.2.0/v0.2.2 Windows 两轮实锤）.
 
 中文 Windows 的 ANSI 代码页是 GBK（cp936），而 Python ``open()`` 不带
 encoding 时用平台默认编码——pyqtgraph ``colormap.get()`` 读自带渐变
 CSV（UTF-8）即 ``UnicodeDecodeError: 'gbk' codec can't decode ...``，
-v0.2.0 里浏览器构建必经 ``pg.colormap.get("turbo")`` → 打开任何数据都崩
+浏览器构建必经 ``pg.colormap.get("turbo")`` → 打开任何数据都崩
 （macOS 默认 UTF-8 故本机全绿）。同类隐患：任何第三方库按默认编码读
 UTF-8 资源文件（mne/pynwb 模板同理）。
 
-治本 = PEP 540 UTF-8 模式：解释器启动时读 ``PYTHONUTF8`` 环境变量生效，
-之后所有 ``open()`` 默认 UTF-8。**该模式只能在启动时开启**，故 Windows
-上首次启动设好变量后 ``execv`` 自重启一次；重启后 ``sys.flags.utf8_mode``
-为 1，不再触发（另设 ``DLV_UTF8_RESTARTED`` 标记双保险防异常循环）。
-
-v0.2.1 事故教训（坑 #66，已修）：execv 的 args[0] 是**程序名占位**不是
-要追加的参数——直接拼 ``[exe, *sys.argv]`` 会把 argv[0]（exe 路径）重复
-成位置参数，子进程 argparse 报错路径写 stderr 又逢 windowed 模式
-``sys.stderr is None`` → AttributeError → "打不开"。参数构造见
-``_restart_argv``（冻结/源码两形态，回归测试覆盖）。
+**策略沿革（为什么是运行时补丁）**：
+- v0.2.1 曾用「设 ``PYTHONUTF8`` + execv 自重启」走 PEP 540——v0.2.1 拼错
+  argv 打不开（坑 #66）；v0.2.2 修对后**仍然 GBK 崩**，本机决定性实验实锤：
+  **PyInstaller 6.22.2 冻结解释器不应用 ``PYTHONUTF8``**（冻结 probe 实测
+  ``PYTHONUTF8=1`` 下 ``sys.flags.utf8_mode`` 仍为 0）——自重启路线在冻结
+  环境从根上无效，整体移除。
+- 现行：包装 ``builtins.open``——文本模式且 encoding 未以任何形式指定
+  （kwarg 或位置参数）时补 UTF-8。不依赖解释器启动配置（冻结环境自带
+  Python 3.10 永远固定），语义等同 PEP 540 对 ``open()`` 的效果：显式
+  encoding 透传、二进制不受影响、无 encoding 的写文件也变 UTF-8。
 
 必须在 import PySide6/pyqtgraph/mne 等**之前**调用（本模块因此零第三方
 依赖，且经 ``dataloadv/__init__``（纯常量）导入不触发重库加载）。
@@ -24,44 +24,39 @@ v0.2.1 事故教训（坑 #66，已修）：execv 的 args[0] 是**程序名占�
 
 from __future__ import annotations
 
+import builtins
 import os
 import sys
 
-_RESTART_MARKER = "DLV_UTF8_RESTARTED"
-
-
-def _restart_argv() -> list[str]:
-    """构造自重启的完整参数表（execv 的 args[0]=程序名占位，原 argv[0] 不拼入）.
-
-    - 冻结态（PyInstaller）：``exe + sys.argv[1:]``——sys.argv[0] 是 exe
-      路径本身，再拼一次就成了多余位置参数（v0.2.1 事故根因）；
-    - 源码态（``python -m dataloadv``）：``python -m dataloadv + 原参数``。
-    """
-    if getattr(sys, "frozen", False):
-        return [sys.executable, *sys.argv[1:]]
-    return [sys.executable, "-m", "dataloadv", *sys.argv[1:]]
+_PATCH_FLAG = "_dataloadv_utf8_open"  # 打在包装函数上的幂等标记
 
 
 def ensure_utf8_mode() -> bool:
-    """Windows 非 UTF-8 模式下自重启进 UTF-8 模式；返回是否发起了重启.
+    """中文 Windows 下给 ``builtins.open`` 补 UTF-8 默认编码；返回是否打了补丁.
 
     - macOS/Linux（locale 即 UTF-8）与已开 UTF-8 模式的进程：no-op；
-    - Windows 首启：设 ``PYTHONUTF8=1`` 后 execv 自重启（GUI 无感，多约
-      1 秒启动）；重启后本函数因 utf8_mode=1 直接返回；
-    - 防循环双保险：若标记仍在但 UTF-8 模式未生效（异常环境），不再
-      重启、照常运行（宁可回退原行为也不无限拉起进程）；
-    - execv 本身失败（杀软拦截/权限等 OSError）：清掉标记照常启动——
-      自举是增强不是依赖，失败只退回 GBK 行为，绝不让应用起不来。
+    - Windows 非 UTF-8 模式：包装 ``builtins.open``（幂等，重复调用安全）；
+      之后所有不带 encoding 的文本 ``open()`` 默认 UTF-8——pyqtgraph 渐变
+      CSV、mne/pynwb 模板等第三方资源读取不再被 GBK 炸；
+    - 纯运行时手段，无进程重启、无环境变量依赖（冻结环境实证无效，见模块
+      docstring），任何失败模式都不影响应用启动。
     """
     if os.name != "nt" or sys.flags.utf8_mode:
         return False
-    if os.environ.get(_RESTART_MARKER):
-        return False  # 已重启过仍未生效——异常环境，放弃（防循环）
-    os.environ["PYTHONUTF8"] = "1"
-    os.environ[_RESTART_MARKER] = "1"
-    try:
-        os.execv(sys.executable, _restart_argv())
-    except OSError:
-        os.environ.pop(_RESTART_MARKER, None)
-        return False
-    return True  # execv 正常不返回；仅被打桩替换时可达（测试用）
+    if getattr(builtins.open, _PATCH_FLAG, False):
+        return False  # 已打过（幂等）
+    orig_open = builtins.open
+
+    def _utf8_open(file, mode: str = "r", *args, encoding=None, **kwargs):
+        # open 签名 file, mode, buffering, encoding, errors, ...——位置
+        # encoding 落在 args[1]，len(args) >= 2 说明调用方位置传了编码，
+        # 连同 kwarg 形式一律尊重原值，只在"完全未指定"时补 UTF-8。
+        if encoding is None:
+            if "b" not in mode and len(args) < 2:
+                kwargs["encoding"] = "utf-8"
+            return orig_open(file, mode, *args, **kwargs)
+        return orig_open(file, mode, *args, encoding=encoding, **kwargs)
+
+    setattr(_utf8_open, _PATCH_FLAG, True)
+    builtins.open = _utf8_open
+    return True

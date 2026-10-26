@@ -7,14 +7,14 @@
 
 ensure_utf8_mode()（坑 #65）必须在 import dataloadv.app（连带
 PySide6/pyqtgraph/mne）**之前**执行：中文 Windows ANSI=GBK，pyqtgraph
-colormap.get 按平台默认编码读 UTF-8 渐变 CSV 必炸，Windows 首启自重启
-一次进 PEP 540 UTF-8 模式（非 Windows 平台 no-op）。
+colormap.get 按平台默认编码读 UTF-8 渐变 CSV 必炸——运行时补丁
+builtins.open 的文本默认编码为 UTF-8（非 Windows 平台 no-op）。
 """
 
 from dataloadv._utf8 import ensure_utf8_mode
 
 ensure_utf8_mode()
 
-from dataloadv.app import main  # noqa: E402（须在 UTF-8 自举之后）
+from dataloadv.app import main  # noqa: E402（须在 UTF-8 补丁之后）
 
 raise SystemExit(main())

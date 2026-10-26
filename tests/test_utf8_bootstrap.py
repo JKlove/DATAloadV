@@ -1,108 +1,120 @@
-"""UTF-8 模式自举（坑 #65/#66）的单元测试——打桩层面验证决策逻辑与参数构造.
+"""UTF-8 运行时补丁（坑 #65）的单元测试——补丁行为在 macOS 上可完整验证.
 
-v0.2.1 事故（Windows 打不开）根因：execv 参数表把 argv[0] 重复拼成位置
-参数——本文件新增的 frozen/source 两形态参数断言就是当时的缺口（macOS
-上自举 no-op，真机行为只有参数构造断言能拦）。真机 GBK 崩溃本身无法在
-macOS 复现（locale 即 UTF-8），端到端证明靠 Windows 真机复验（v0.2.2）。
+策略沿革：v0.2.1 曾用 execv 自重启走 PEP 540——v0.2.2 用户复验仍 GBK 崩，
+冻结 probe 实验实锤 **PyInstaller 6.22.2 冻结解释器不应用 PYTHONUTF8**
+（设变量后 sys.flags.utf8_mode 仍 0），该路线整体移除。现行方案是纯运行时
+的 builtins.open 补丁，**行为不依赖平台**——本文件的行为断言（GBK 不安全
+内容的六种 open 形态）在 macOS 跑即等价于真机验证，不再有"本地拦不住"的
+平台分支。
 """
 
 from __future__ import annotations
 
+import builtins
 import os
-import sys
 import types
 
 import pytest
 
-from dataloadv._utf8 import _restart_argv, ensure_utf8_mode
+from dataloadv import _utf8 as utf8_mod
+from dataloadv._utf8 import ensure_utf8_mode
+
+# "文1号脑电©测试" 的 UTF-8 字节含 GBK 非法配对（CJK 三字节 + ASCII 数字/
+# 符号，GBK 首字节后跟 <0x40 的尾字节）——GBK 解码必炸，是补丁效果的试金石
+_GBK_UNSAFE = "文1号脑电©测试"
 
 
 class TestEnsureUtf8Mode:
-    """分支与兜底：posix 不重启 / 已 UTF-8 不重启 / Windows 旧编码重启 / 防循环 / execv 失败兜底."""
+    """分支与行为：posix no-op / 已 UTF-8 no-op / 补丁六语义 / 幂等."""
 
     @staticmethod
-    def _patch_env(monkeypatch, os_name: str, utf8_mode: int) -> None:
-        """打桩 os.name 与 sys.flags（structseq 只读，整体换 SimpleNamespace）.
+    def _force_nt(monkeypatch, utf8_mode: int = 0) -> None:
+        """只在 _utf8 模块命名空间内伪装成"中文 Windows 未开 UTF-8 模式".
 
-        顺带用 monkeypatch 清空两个环境变量——teardown 自动还原到测试前
-        状态（被测函数内的直接赋值也因此被回收，不污染后续测试）。
+        **不碰全局 os.name**——全局打桩会让 pathlib 以为在 Windows 上
+        （新建 WindowsPath 在 macOS 直接 NotImplementedError，曾把 pytest
+        报告链炸成 INTERNALERROR）；builtins.open 是真打（要验证的就是它）。
         """
-        monkeypatch.setattr(os, "name", os_name)
-        monkeypatch.setattr(sys, "flags", types.SimpleNamespace(utf8_mode=utf8_mode))
-        monkeypatch.delenv("PYTHONUTF8", raising=False)
-        monkeypatch.delenv("DLV_UTF8_RESTARTED", raising=False)
+        monkeypatch.setattr(utf8_mod, "os", types.SimpleNamespace(name="nt"))
+        monkeypatch.setattr(
+            utf8_mod, "sys",
+            types.SimpleNamespace(flags=types.SimpleNamespace(utf8_mode=utf8_mode)),
+        )
 
-    def test_noop_on_posix(self, monkeypatch):
-        calls: list = []
-        monkeypatch.setattr(os, "execv", lambda *a: calls.append(a))
-        self._patch_env(monkeypatch, "posix", 0)
+    @pytest.fixture()
+    def restore_open(self, monkeypatch):
+        """保底恢复 builtins.open——先让 monkeypatch 记住原对象，teardown
+        自动还原（即使被测代码替换了它）。"""
+        monkeypatch.setattr(builtins, "open", builtins.open)
+
+    def test_noop_on_posix(self):
+        """macOS/Linux（locale 即 UTF-8）：不打补丁，builtins.open 原样."""
+        if os.name != "posix":
+            pytest.skip("非 posix 平台")
         assert ensure_utf8_mode() is False
-        assert calls == []  # macOS/Linux（locale 即 UTF-8）永不重启
+        assert not getattr(builtins.open, "_dataloadv_utf8_open", False)
 
     def test_noop_when_utf8_mode_on(self, monkeypatch):
-        calls: list = []
-        monkeypatch.setattr(os, "execv", lambda *a: calls.append(a))
-        self._patch_env(monkeypatch, "nt", 1)
+        self._force_nt(monkeypatch, utf8_mode=1)
         assert ensure_utf8_mode() is False
-        assert calls == []  # 已是 UTF-8 模式（重启后的进程）不再触发
+        assert not getattr(builtins.open, "_dataloadv_utf8_open", False)
 
-    def test_restart_on_windows_legacy_encoding(self, monkeypatch):
-        calls: list = []
-        monkeypatch.setattr(os, "execv", lambda *a: calls.append(a))
-        self._patch_env(monkeypatch, "nt", 0)
-        # 冻结态打桩：exe 路径 + 原 argv[0]（模拟 v0.2.1 事故现场）
-        monkeypatch.setattr(sys, "frozen", True, raising=False)
-        monkeypatch.setattr(sys, "argv", ["C:\\app\\DataloadV.exe", "--smoke"])
-        monkeypatch.setattr(sys, "executable", "C:\\app\\DataloadV.exe")
+    def test_patch_reads_gbk_unsafe_utf8(self, monkeypatch, tmp_path, restore_open):
+        """核心行为：补丁后无 encoding 的 open 能读 GBK 不安全的 UTF-8 文件.
+
+        （内容确实 GBK 不可解由下方 explicit/positional 两测试的 raises 证明，
+        macOS 本地 locale 是 UTF-8，无法做"打桩前必炸"的对照——不假装有。）
+        """
+        p = tmp_path / "u8.txt"
+        p.write_bytes(_GBK_UNSAFE.encode("utf-8"))
+        self._force_nt(monkeypatch)
         assert ensure_utf8_mode() is True
-        assert os.environ["PYTHONUTF8"] == "1"
-        assert os.environ["DLV_UTF8_RESTARTED"] == "1"
-        # 关键断言（坑 #66 回归）：exe 路径不得重复成位置参数
-        assert calls == [("C:\\app\\DataloadV.exe", ["C:\\app\\DataloadV.exe", "--smoke"])]
+        with open(p) as f:  # 补丁后：不再炸
+            assert f.read() == _GBK_UNSAFE
 
-    def test_no_loop_guard(self, monkeypatch):
-        """标记仍在但 UTF-8 模式未生效（异常环境）——放弃重启防无限循环."""
-        calls: list = []
-        monkeypatch.setattr(os, "execv", lambda *a: calls.append(a))
-        self._patch_env(monkeypatch, "nt", 0)
-        monkeypatch.setenv("DLV_UTF8_RESTARTED", "1")
-        assert ensure_utf8_mode() is False
-        assert calls == []
+    def test_explicit_encoding_kwarg_respected(self, monkeypatch, tmp_path, restore_open):
+        """显式 encoding（kwarg）透传原语义——GBK 读仍按 GBK 炸."""
+        p = tmp_path / "u8.txt"
+        p.write_bytes(_GBK_UNSAFE.encode("utf-8"))
+        self._force_nt(monkeypatch)
+        ensure_utf8_mode()
+        with pytest.raises(UnicodeDecodeError):
+            with open(p, encoding="gbk") as f:
+                f.read()
 
-    def test_execv_failure_falls_back(self, monkeypatch):
-        """execv 抛 OSError（杀软/权限）——清标记照常启动，绝不死于自举."""
-        def _boom(*a):
-            raise OSError("blocked")
-        self._patch_env(monkeypatch, "nt", 0)
-        monkeypatch.setattr(os, "execv", _boom)
-        assert ensure_utf8_mode() is False
-        assert "DLV_UTF8_RESTARTED" not in os.environ  # 标记已清（可诊断重试）
+    def test_positional_encoding_respected(self, monkeypatch, tmp_path, restore_open):
+        """位置参数传 encoding（open(f,'r',-1,'gbk')）不被补丁覆盖."""
+        p = tmp_path / "u8.txt"
+        p.write_bytes(_GBK_UNSAFE.encode("utf-8"))
+        self._force_nt(monkeypatch)
+        ensure_utf8_mode()
+        with pytest.raises(UnicodeDecodeError):
+            with open(p, "r", -1, "gbk") as f:
+                f.read()
 
+    def test_binary_mode_unaffected(self, monkeypatch, tmp_path, restore_open):
+        """二进制模式原样透传（字节不走编码层）."""
+        p = tmp_path / "u8.txt"
+        raw = _GBK_UNSAFE.encode("utf-8")
+        p.write_bytes(raw)
+        self._force_nt(monkeypatch)
+        ensure_utf8_mode()
+        with open(p, "rb") as f:
+            assert f.read() == raw
+        with open(p, "rb") as f:  # buffering 位置参数同样透传
+            assert f.read() == raw
 
-class TestRestartArgv:
-    """参数构造两形态（v0.2.1 事故的直接回归网）."""
+    def test_write_default_becomes_utf8(self, monkeypatch, tmp_path, restore_open):
+        """无 encoding 的写文件默认变 UTF-8（与 PEP 540 对 open() 的语义一致）."""
+        p = tmp_path / "w.txt"
+        self._force_nt(monkeypatch)
+        ensure_utf8_mode()
+        with open(p, "w") as f:
+            f.write(_GBK_UNSAFE)
+        assert p.read_bytes() == _GBK_UNSAFE.encode("utf-8")
 
-    def test_frozen_no_argv0_duplication(self, monkeypatch):
-        """冻结态：exe + 原参数——argv[0]（exe 路径）绝不能重复拼入."""
-        monkeypatch.setattr(sys, "frozen", True, raising=False)
-        monkeypatch.setattr(sys, "argv", ["C:\\app\\DataloadV.exe"])
-        monkeypatch.setattr(sys, "executable", "C:\\app\\DataloadV.exe")
-        assert _restart_argv() == ["C:\\app\\DataloadV.exe"]
-
-    def test_frozen_keeps_user_args(self, monkeypatch):
-        monkeypatch.setattr(sys, "frozen", True, raising=False)
-        monkeypatch.setattr(sys, "argv", ["C:\\app\\DataloadV.exe", "--smoke"])
-        monkeypatch.setattr(sys, "executable", "C:\\app\\DataloadV.exe")
-        assert _restart_argv() == ["C:\\app\\DataloadV.exe", "--smoke"]
-
-    def test_source_mode_reconstructs_dash_m(self, monkeypatch):
-        """源码态（python -m dataloadv）：重启命令必须重建 -m dataloadv."""
-        monkeypatch.delattr(sys, "frozen", raising=False)
-        monkeypatch.setattr(
-            sys, "argv",
-            ["/repo/src/dataloadv/__main__.py", "--smoke"],
-        )
-        monkeypatch.setattr(sys, "executable", "/opt/python3.10/bin/python3.10")
-        assert _restart_argv() == [
-            "/opt/python3.10/bin/python3.10", "-m", "dataloadv", "--smoke",
-        ]
+    def test_idempotent(self, monkeypatch, restore_open):
+        """重复调用安全（幂等标记，不叠包装层）."""
+        self._force_nt(monkeypatch)
+        assert ensure_utf8_mode() is True
+        assert ensure_utf8_mode() is False  # 第二次不再打
