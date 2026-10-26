@@ -69,7 +69,7 @@ python scripts/e2e_m4.py                     # M4 端到端：特征计算/视�
 python scripts/e2e_m5.py                     # M5 端到端：45 文件批处理+取消+扩展格式（幂等，可反复跑）
 ```
 
-## 打包（M10）
+## 打包（M10 起；发版流程清单、裁决事项、坑索引与红线见 PACKAGING_HANDOFF.md）
 
 ```bash
 # 本机 macOS 包（dlv 环境、项目根；产物 dist/DataloadV.app + onedir 目录 dist/DataloadV/）

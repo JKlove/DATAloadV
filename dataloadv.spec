@@ -4,14 +4,15 @@
 # 用法（项目根、dlv 环境下）：
 #   python -m PyInstaller dataloadv.spec --noconfirm
 #
-# 设计依据 PACKAGING_HANDOFF.md（2026-09-01）：
+# 设计依据 PACKAGING_HANDOFF.md（打包与发版手册）：
 # - 入口走 packaging/entry.py（console_script 等价 shim），不直接 Analysis app.py
 # - hiddenimports 必须显式收录函数内延迟 import 的 io/neo_reader、io/nwb_reader
 #   （PyInstaller 静态分析扫不到函数体内的 import）
 # - mne 需要自带模板数据（montage/通道名映射等）→ collect_data_files('mne')；
 #   刻意不用 collect_all('mne')——会把 mne.tests 等垃圾打进包、体积暴涨几百 MB
 # - pynwb/hdmf 的命名空间 JSON 必须随包（缺失时 NWB 读取直接报 schema 找不到）
-# - 第一轮全量打包（excludes=[]），冒烟通过后再按 M10-4 逐项瘦身
+# - excludes 留空=全量（M10-4 瘦身已裁决取消：实测 293MB 远低于 ≤900MB 目标，
+#   体积让位可用性——详见 HANDOFF 坑 #59）
 # - onedir 形态（非 onefile）：onefile 每次启动要解包到临时目录，科学栈体积下
 #   启动慢数秒；onedir 压 zip 分发
 # - 不签名不公证（无 Apple 开发者账号），首次打开走"右键→打开"
@@ -73,7 +74,7 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[],  # 第一轮全量，确保能跑；瘦身（M10-4）冒烟全过后再动
+    excludes=[],  # 永久全量（M10-4 瘦身裁决取消：293MB 可接受，勿轻动——动了必须重冒烟）
     noarchive=False,
 )
 

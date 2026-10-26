@@ -1406,3 +1406,24 @@ fixture 收窄 `channels=["EEG00"]` 保 1 条下游零改，新增窗进列头/a
 - README 功能清单未收缩（审计建议细节归 MANUAL）——现状已是模块级摘要且为门面文档，
   裁决保留；FeatureBarGrid 类名未改（docstring 补注记）——3 个测试寻址点的稳定性
   优先于命名洁癖。
+
+## 打包梳理（2026-10-26，用户要求"清晰细致不冗余"）
+
+- **诊断**：PACKAGING_HANDOFF 仍是"已完成的一次性任务指令书"框架——事实卡
+  （287/0.1.0 快照）过时、铁律 9 条与 HANDOFF 通用约定重复、实施步骤 M10-1~5
+  与风险回退是历史叙述；而**日常发版流程**（版本两处/测试/重打包冒烟/隐私清理/
+  tag/验收）没有落成文档，只存在于会话行为与 STATUS 散记。
+- **重构**（174→~100 行，M10 指令书→常态 runbook）：文件地图（spec/entry/_utf8/
+  build.yml/--smoke 各自角色）+ 发版流程七步 + 已裁决事项（不重论证：PyInstaller
+  单 spec/onedir+zip/不签名/不做安装器/瘦身取消/CI 不用 conda）+ 坑索引 #59–#66
+  （只给钥匙，详情在 HANDOFF）+ 打包红线 5 条 + 排查指南；历史沿革指向 STATUS
+  变更记录（沿 M16 单源化裁决）。
+- **CI 硬化**：build.yml 两 job 打包前加**测试门禁**（offscreen pytest；依赖改
+  `pip install -e ".[extra-readers,dev]" pyinstaller` 收 dev 测试件）——此前坏树
+  也能出包；win 压 zip 步骤补坑 #60 注释（DestinationPath 必须带 dist\ 前缀）。
+- **spec 修缮**：两处"第一轮全量、冒烟后按 M10-4 瘦身"过时注释改为"永久全量
+  （瘦身已裁决取消）"；头部依据改为指向重构后的手册。
+- **验证**：actionlint 过；pytest 全量绿；spec 虽仅注释变更仍按惯例重打包 +
+  offscreen `--smoke` SMOKE OK。
+- **注意**：CI 测试门禁本身要等**下一次 tag/dispatch** 才首次实战（main push 不
+  触发 build）；首次发版留意该步日志。

@@ -1,13 +1,13 @@
-# DataloadV 双平台打包（M10-3）
+# DataloadV 双平台打包 CI
 #
-# 设计依据 PACKAGING_HANDOFF.md：
-# - 本机只出 macOS 包；Windows 包经此 workflow 出（无 Windows 本机也能交付）
-# - runner 上不用 conda（慢）——setup-python 3.10 + pip 装齐，与 dlv conda 环境
-#   的核心栈版本等价性说明见 HANDOFF（mne/edfio/neo/pynwb/PySide6 pip 全有）
-# - 与本机共用同一份 dataloadv.spec（sys.platform 分支处理平台差异）
-# - 触发：workflow_dispatch（手动）+ push tag v*（发版）
-# - 产物：DataloadV-{version}-macOS-arm64.zip / DataloadV-{version}-win64.zip
-#   （onedir 压 zip，不解压安装；未签名——macOS 首开右键→打开，Windows 更多信息→仍要运行）
+# 触发：workflow_dispatch（手动）/ push tag v*（发版）
+# 流程：测试门禁（offscreen pytest，绿了才打包）→ PyInstaller（与本机共用同一份
+#   dataloadv.spec，sys.platform 分支处理平台差异）→ 压 zip → upload artifacts
+# 产物：DataloadV-{version}-macOS-arm64.zip / -win64.zip（onedir 压 zip；
+#   未签名——macOS 首开右键→打开，Windows 更多信息→仍要运行）
+# runner 不用 conda（慢）：setup-python 3.10 + pip 装齐（dev extra 含 pytest），
+#   与 dlv conda 环境的等价性说明见 HANDOFF"打包"节
+# 发版流程清单与打包红线见 PACKAGING_HANDOFF.md（打包与发版手册）
 
 name: build
 
@@ -30,10 +30,15 @@ jobs:
         with:
           python-version: "3.10"
 
-      - name: 安装依赖（pip，核心栈 + extra-readers + PyInstaller）
+      - name: 安装依赖（pip：核心栈 + extra-readers + dev 测试件 + PyInstaller）
         run: |
           python -m pip install --upgrade pip
-          pip install -e ".[extra-readers]" pyinstaller
+          pip install -e ".[extra-readers,dev]" pyinstaller
+
+      - name: 测试门禁（offscreen；绿了才打包）
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: python -m pytest -q
 
       - name: PyInstaller 打包
         run: python -m PyInstaller dataloadv.spec --noconfirm
@@ -62,10 +67,15 @@ jobs:
           python-version: "3.10"
 
       # PySide6/pyqtgraph 走 pip（runner 无 conda-forge Qt；pip 版在 win 正常）
-      - name: 安装依赖（pip，核心栈 + extra-readers + PyInstaller）
+      - name: 安装依赖（pip：核心栈 + extra-readers + dev 测试件 + PyInstaller）
         run: |
           python -m pip install --upgrade pip
-          pip install -e ".[extra-readers]" pyinstaller
+          pip install -e ".[extra-readers,dev]" pyinstaller
+
+      - name: 测试门禁（offscreen；绿了才打包——Windows 侧回归在此拦截）
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: python -m pytest -q
 
       - name: PyInstaller 打包
         run: python -m PyInstaller dataloadv.spec --noconfirm
@@ -75,6 +85,7 @@ jobs:
         shell: pwsh
         run: |
           $VER = python -c "import importlib.metadata; print(importlib.metadata.version('dataloadv'))"
+          # DestinationPath 必须带 dist\ 前缀：相对路径落 CWD（仓库根），upload 去 dist\ 找就炸（坑 #60）
           Compress-Archive -Path dist\DataloadV -DestinationPath "dist\DataloadV-$VER-win64.zip"
           echo "ver=$VER" >> $env:GITHUB_OUTPUT
 
