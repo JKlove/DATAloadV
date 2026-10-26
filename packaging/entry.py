@@ -5,16 +5,11 @@
 与安装版完全一致；直接 Analysis app.py 会以模块脚本方式执行，绕过同一入口。
 此文件即 console_script 的等价物，不含任何业务逻辑。
 
-ensure_utf8_mode()（坑 #65）必须在 import dataloadv.app（连带
-PySide6/pyqtgraph/mne）**之前**执行：中文 Windows ANSI=GBK，pyqtgraph
-colormap.get 按平台默认编码读 UTF-8 渐变 CSV 必炸——运行时补丁
-builtins.open 的文本默认编码为 UTF-8（非 Windows 平台 no-op）。
+（曾于 v0.2.1–v0.2.3 在此前置 UTF-8 自举调用，v0.2.4 起撤销——GBK 修复
+收敛到 ui/widgets/color_maps.py 的调用点外科修，不再改任何全局行为，
+详见 HANDOFF 坑 #65。）
 """
 
-from dataloadv._utf8 import ensure_utf8_mode
-
-ensure_utf8_mode()
-
-from dataloadv.app import main  # noqa: E402（须在 UTF-8 补丁之后）
+from dataloadv.app import main
 
 raise SystemExit(main())

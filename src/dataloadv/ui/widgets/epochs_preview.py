@@ -43,6 +43,7 @@ from ...features.tfr import compute_epochs_tfr
 from ...proc.context import ProcessingContext
 from ...workers.generic import run_in_thread
 from ..strings_zh import S
+from .color_maps import get_builtin_gradient
 from .event_lane import event_color
 
 logger = logging.getLogger(__name__)
@@ -77,7 +78,7 @@ def _tfr_colormap(name: str) -> pg.ColorMap:
     """配色名 → pg.ColorMap（进程级缓存；HistogramLUTItem.gradient 用）."""
     cm = _CMAP_CACHE.get(name)
     if cm is None:
-        cm = (pg.colormap.get(name) if name == "viridis"
+        cm = (get_builtin_gradient(name) if name == "viridis"
               else pg.ColorMap(_CMAP_POS, _cmap_bytes(name)))
         _CMAP_CACHE[name] = cm
     return cm

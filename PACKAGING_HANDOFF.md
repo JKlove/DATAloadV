@@ -10,9 +10,9 @@
 | 文件 | 角色 |
 |---|---|
 | `dataloadv.spec` | 唯一打包定义，跨平台单份（darwin 出 .app / win32 出 onedir .exe），本机与 CI 共用 |
-| `packaging/entry.py` | 打包入口 shim：console_script 等价物 + UTF-8 自举**前置**调用（坑 #65/#66） |
-| `src/dataloadv/_utf8.py` | 中文 Windows GBK 自救：运行时包装 `builtins.open` 补 UTF-8 默认编码（冻结环境不吃 PYTHONUTF8，坑 #65；非 Windows no-op） |
-| `.github/workflows/build.yml` | CI 双平台出包：测试门禁 → PyInstaller → 压 zip → artifacts（workflow_dispatch / push tag v* 触发） |
+| `packaging/entry.py` | 打包入口 shim（console_script 等价物，回归纯 3 行；曾前置 UTF-8 自举，v0.2.4 随全局补丁撤销而移除，坑 #65） |
+| `ui/widgets/color_maps.py` | 渐变 CSV 的 GBK 安全加载（坑 #65 终版：显式 UTF-8 + 回填 pyqtgraph 缓存——**调用点外科修，不改全局**） |
+| `.github/workflows/build.yml` | CI 双平台出包：测试门禁（临时 continue-on-error + 180s 超时，坑 #57⑥ 间歇崩溃档案）→ PyInstaller → 压 zip → artifacts |
 | `app.py` 的 `--smoke` | 打包产物无头自检：起主窗口自检后自动退出，末行 `SMOKE OK` |
 
 ## 发版流程（按序执行；命令细节见 HANDOFF「打包」节）
@@ -59,18 +59,18 @@
 | #59 | PyInstaller 七则：spec 全局是 SPECPATH；mne lazy_loader→collect_submodules 四包；collect_data 最小集别用 collect_all；warn 文件 missing 多为 lazy_loader 噪音 |
 | #60 | CI 产物写出路径与 upload path 逐字对账（Compress-Archive 相对路径落 CWD=仓库根） |
 | #61 | 初始窗口尺寸按屏收口 + 首显示 resizeDocks（小屏/高 DPI 首布局截断） |
-| #65 | 中文 Windows GBK 读 UTF-8 资源必炸 → `builtins.open` 运行时补丁（`_utf8.py`；冻结环境不吃 PYTHONUTF8，重启路线已废） |
-| #66 | （历史）execv 参数 argv[0] 不重复拼；windowed 模式 `sys.stderr is None` 要垫（entry/app，垫 stderr 仍在用） |
+| #65 | 中文 Windows GBK 读 UTF-8 资源必炸 → **调用点外科修**（`color_maps.py` 显式 UTF-8 + 缓存回填）；PYTHONUTF8 冻结环境无效；全局改 builtins.open 会炸 shiboken 导入（v0.2.1–v0.2.3 三轮事故全档案） |
+| #66 | （历史）execv 参数 argv[0] 不重复拼；windowed 模式 `sys.stderr is None` 要垫（app.py 垫 stderr 仍在用） |
 
 ## 红线（打包场景违反即事故）
 
 1. `data/`（4.9GB 真实数据）只读，绝不进包（spec 的 datas 只来自 site-packages）。
 2. 分发/换机前完成发版流程第 4 步隐私清理；临床 EEG 截图不得上传公开图床。
 3. 无头 / 打包产物自动化一律 `QT_QPA_PLATFORM=offscreen`。
-4. macOS 上 no-op 的平台分支（如 `_utf8` 的 Windows 补丁路径），改动时必须做
+4. macOS 上 no-op 的平台分支（如中文 Windows 专属修复），改动时必须做
    **行为级断言**（真机行为本地拦不住）；依赖解释器启动配置的策略（环境变量/
-   启动参数）在冻结环境一律实测——bootloader 不保证标准 CPython 行为
-   （坑 #65/#66 两轮教训）。
+   启动参数）在冻结环境一律实测——bootloader 不保证标准 CPython 行为；
+   **能收敛到调用点的修复绝不改全局内建行为**（坑 #65/#66 三轮教训）。
 5. 项目通用约束（conda 优先、中文注释、治理实时同步、命令习惯）见
    HANDOFF「代码风格约定」「当前接手要点」。
 

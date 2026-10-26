@@ -401,6 +401,18 @@
 
 ## 最近变更记录（新条目加在最上面）
 
+- 2026-10-26（v0.2.3 用户实锤新崩 → v0.2.4 调用点外科修）：v0.2.3 在用户中文
+  Windows **启动即崩** `TypeError: cannot pickle 'EditorHelper' object`（import 链
+  经 shiboken6 签名系统）——全局包装 builtins.open 改变了 shiboken 导入期容错路径
+  的解码语义；同版本库冻结探针/全应用（强制激活缝）macOS 均不复现（平台+机器态
+  特异）。终版：**撤销全局补丁**（`_utf8.py` 整体删除、entry 回归纯 shim），新
+  `ui/widgets/color_maps.py` 显式 UTF-8 读渐变 CSV + 回填 pyqtgraph `_mapCache`
+  （turbo/viridis 两调用点替换；进程内不再触达 pyqtgraph 文件读取）。**铁律升级：
+  能收敛到调用点的修复绝不改全局内建行为**。pytest **371 绿**（−8 旧 +4 新，含
+  GBK 试金石解析测试）+ 双环境（dlv/CI 同款依赖）冻结冒烟全过；坑 #65 终章二。
+  同日全量 pytest 出现一次**间歇段错误**（复跑即绿）——与 CI runner 门禁失败同源
+  （坑 #57⑥ 家族），CI 的 180s 超时已就位待捕捉。
+
 - 2026-10-26（v0.2.3 出包；CI 门禁竞态性故障档案）：发版链三折——①首跑测试门禁
   双平台失败（Windows 秒崩无摘要 / macOS 挂死 1h+），本地三重复刻（无 data/ 克隆 +
   纯净 env + 全新 HOME 的 pip venv）27s 全绿复现不了；②日志匿名不可读（公共仓库也要

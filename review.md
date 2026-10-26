@@ -1463,3 +1463,24 @@ fixture 收窄 `channels=["EEG00"]` 保 1 条下游零改，新增窗进列头/a
 - **产物**：`DataloadV-0.2.3-win64`（140MB）/ `-macOS-arm64`（98MB），run
   40293240058——含 GBK 运行时补丁（builtins.open）终版。
 - 待办：用户 Windows 复验；门禁观察数轮稳定后恢复拦截（continue-on-error 撤除）。
+
+## v0.2.4 — GBK 修复终版：调用点外科修（2026-10-26，v0.2.3 用户实锤驱动）
+
+- **v0.2.3 用户复验**：启动即崩 `TypeError: cannot pickle 'EditorHelper' object`
+  （entry → app main → main_window import → PySide6.QtWidgets → shiboken6 签名系统）。
+- **定位**：全局包装 builtins.open 改变了 shiboken 导入期容错路径依赖的解码语义
+  （v0.2.2 同版本库能启动=对照，唯一增量是补丁）；本地三层复现尝试（冻结探针、
+  CI 同款依赖全应用冻结、DLV_FORCE_UTF8_PATCH 强制激活缝）macOS 全过——平台+
+  机器态特异，本地不可复现类。
+- **终版修法**：撤销全局补丁（_utf8.py 删除、entry/__main__ 回归纯入口）；新
+  `ui/widgets/color_maps.py` `get_builtin_gradient()`——显式 `utf-8-sig` 读渐变
+  CSV（解析与 pyqtgraph `_getFromFile` 同口径）+ 构造 ColorMap 回填 `_mapCache`
+  （后续 colormap.get 命中缓存，pyqtgraph 文件读取路径不再触达）；turbo（signal_browser）
+  /viridis（epochs_preview）两调用点替换；文件缺失退回原路径。
+- **铁律升级（坑 #65 终章二）**：能收敛到调用点的修复绝不改全局内建行为——
+  "修得广"在用户机器上就是"炸得广"。
+- **验证**：pytest **371 绿**（−8 全局补丁测试 +4 color_maps 测试，含 CJK+ASCII
+  GBK 试金石解析断言）+ dlv 与 CI 同款依赖双环境冻结 offscreen `--smoke` SMOKE OK。
+- **插曲**：一次全量 pytest 间歇段错误（复跑绿）——与 CI runner 门禁失败同源
+  （坑 #57⑥ 家族），已由 CI 的 pytest-timeout 180s 站岗。
+- 待办：用户 Windows 复验 v0.2.4（第四轮）。

@@ -64,6 +64,7 @@ from ...features.tfr import TfrConfig, compute_window_tfr, default_tfr_freqs
 from ...workers.generic import run_in_thread
 from ..dialogs.tfr_settings_dialog import TfrSettingsDialog
 from ..strings_zh import S
+from .color_maps import get_builtin_gradient
 from .event_lane import ROW_AXIS_W, EventLane, event_color
 from .event_list import EventListView
 
@@ -378,7 +379,7 @@ class SignalBrowserView(QWidget):
         # 双击色标区域恢复自动范围
         self._tfr_lut = pg.HistogramLUTItem()
         self._tfr_lut.setImageItem(self._tfr_img)
-        self._tfr_lut.gradient.setColorMap(pg.colormap.get("turbo"))
+        self._tfr_lut.gradient.setColorMap(get_builtin_gradient("turbo"))
         self._tfr_lut.gradient.installEventFilter(self)  # 渐变只显示不交互
         self._tfr_lut.installEventFilter(self)  # 双击恢复自动
         self._gfx.addItem(self._tfr_lut, 1, 1)
