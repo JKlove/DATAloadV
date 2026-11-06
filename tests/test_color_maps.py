@@ -1,59 +1,64 @@
-"""渐变 CSV 的 GBK 安全加载测试（坑 #65 终版，color_maps 模块）.
+"""内嵌渐变加载测试（坑 #65 终章三，color_maps 模块）.
 
-核心保证：加载路径**显式 UTF-8**、与平台 locale 无关——中文 Windows
-GBK 环境行为不变。解析器用含非 ASCII 注释/名称的文本直接验证（GBK
-必炸试金石内容），真实文件加载验证端到端 + 双层缓存命中。
+核心保证：**零磁盘 IO、零编码依赖**——与平台 locale、机器上 pyqtgraph
+数据文件的实际状态完全无关（用户机 turbo.csv 被改写的教训）。交叉核验：
+内嵌数据与本地 pristine 文件加载的官方定义逐字节一致。
 """
 
 from __future__ import annotations
 
-import io
+import base64
 
+import numpy as np
 import pytest
 
 pytest.importorskip("PySide6", reason="无 GUI 环境")
 
 import pyqtgraph as pg
 
-from dataloadv.ui.widgets.color_maps import _parse_gradient_csv, get_builtin_gradient
-
-# GBK 必炸试金石（坑 #65 教训）：CJK 三字节 UTF-8 后跟 ASCII，GBK 配对必炸；
-# 分号后带非 ASCII 名称正是 pyqtgraph 渐变文件的真实形态
-_CSV_WITH_NON_ASCII = (
-    "; gradient definition 文1号脑电©测试\n"
-    "0.0, 0.0, 0.0; 名称甲\n"
-    "\n"
-    "0.5, 0.5, 0.5; 名称乙\n"
-    "1.0, 1.0, 1.0\n"
-    "; trailing comment 注释\n"
-)
+from dataloadv.ui.widgets.color_maps import _EMBEDDED, get_builtin_gradient
 
 
-class TestParseGradientCsv:
-    def test_parses_colors_and_skips_comments(self):
-        colors = _parse_gradient_csv(_CSV_WITH_NON_ASCII)
-        assert colors == [(0, 0, 0), (128, 128, 128), (255, 255, 255)]  # int(255*0.5+0.5)=128
+class TestEmbeddedData:
+    def test_base64_valid_and_256_rgba(self):
+        for name, b64 in _EMBEDDED.items():
+            raw = base64.b64decode(b64, validate=True)
+            assert len(raw) == 256 * 4
+            np.frombuffer(raw, dtype=np.uint8).reshape(-1, 4)  # 形状可解
 
-    def test_encoding_explicit_not_locale_dependent(self):
-        """解析输入是 str（调用方以显式 utf-8 读入）——GBK 环境行为不变的保证."""
-        # 同一文本经 UTF-8 解码后进来，结果与 locale 无关
-        text = _CSV_WITH_NON_ASCII.encode("utf-8").decode("utf-8")
-        assert _parse_gradient_csv(text) == _parse_gradient_csv(_CSV_WITH_NON_ASCII)
+    def test_matches_official_definition(self):
+        """交叉核验：内嵌值 == 本地 pristine 文件经 pg.colormap.get 的官方值."""
+        for name in _EMBEDDED:
+            ours = np.asarray(get_builtin_gradient(name).getColors(), dtype=np.uint8)
+            official = np.asarray(pg.colormap.get(name).getColors(), dtype=np.uint8)
+            assert np.array_equal(ours, official), f"{name} 与官方定义不一致"
 
 
 class TestGetBuiltinGradient:
-    def test_loads_real_turbo_and_fills_cache(self):
-        _mapCache = getattr(pg.colormap, "_mapCache", None)
-        if _mapCache is not None:
-            _mapCache.pop("turbo", None)  # 清场：验证完整加载路径
-        cm = get_builtin_gradient("turbo")
-        assert isinstance(cm, pg.ColorMap)
-        assert cm.name == "turbo"
-        assert len(cm.getColors()) == 256  # pyqtgraph 内置 turbo 为 256 级
-        # 回填了 pyqtgraph 缓存——后续 colormap.get 直接命中，不再触文件
-        assert _mapCache is None or "turbo" in _mapCache
+    def test_no_disk_io(self, tmp_path, monkeypatch):
+        """打桩 open 抛异常——内嵌路径不触任何文件读取（终章核心保证）."""
+        import builtins
+
+        real_open = builtins.open
+
+        def _no_open(*a, **k):
+            raise AssertionError(f"内嵌渐变不应读盘: {a[0]}")
+
+        pg.colormap._mapCache.pop("turbo", None)  # 清缓存走完整路径
+        monkeypatch.setattr(builtins, "open", _no_open)
+        try:
+            cm = get_builtin_gradient("turbo")
+            assert isinstance(cm, pg.ColorMap)
+        finally:
+            monkeypatch.setattr(builtins, "open", real_open)
+            pg.colormap._mapCache.pop("turbo", None)  # 清掉本次回填，别污染其他测试
 
     def test_second_call_returns_cached_object(self):
         cm1 = get_builtin_gradient("viridis")
         cm2 = get_builtin_gradient("viridis")
-        assert cm1 is cm2  # 同一对象（缓存命中）
+        assert cm1 is cm2
+
+    def test_unknown_name_falls_back_to_pyqtgraph(self):
+        # 防御性回退路径：未知名交给 pg.colormap.get（其行为=抛 FileNotFoundError）
+        with pytest.raises(Exception):
+            get_builtin_gradient("no_such_gradient")

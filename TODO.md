@@ -348,7 +348,14 @@ Qt 6.x 后续版本须换 `filterInvalidated` 信号或 `beginFilterChange`，�
 - [x] **v0.2.4 调用点外科修（同日）**：撤销全局补丁（_utf8.py 删除），新
       color_maps.py 显式 UTF-8 读渐变 CSV+回填 _mapCache；pytest 371 绿+双环境
       冻结冒烟
-- [ ] **用户 Windows 复验 v0.2.4（第四轮）**：双击打开 + 打开 01号 DGDJ 文件
+- [x] **用户 Windows 复验 v0.2.4（2026-11-06，报错原文粘贴）**：启动 ✓（调用点
+      外科修生效）但**所有文件打开仍崩**在 color_maps.py 的 UTF-8 读取——用户机
+      turbo.csv 被改写实锤（一切分发渠道均纯 ASCII），坑 #65 终章三
+- [x] **v0.2.5 渐变内嵌（同日）**：turbo/viridis 256 级 RGBA base64 程序化转储
+      内嵌，零读盘零编码依赖；pytest 372 绿（含零读盘保证+官方逐字节核验）
+- [ ] **用户 Windows 复验 v0.2.5（第五轮）**：打开 01号 DGDJ 文件 + 公共数据集
+      文件（应与机器上文件状态彻底无关）；（可选）提供其机器上的 turbo.csv
+      闭合"谁改写了文件"之谜
 - [ ] CI 门禁恢复拦截（观察数轮稳定后）：竞态根因未明（本地复现不了），先保留
       continue-on-error + pytest-timeout 180s（挂死爆栈走注解外显）
 

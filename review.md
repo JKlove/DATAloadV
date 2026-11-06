@@ -1484,3 +1484,23 @@ fixture 收窄 `channels=["EEG00"]` 保 1 条下游零改，新增窗进列头/a
 - **插曲**：一次全量 pytest 间歇段错误（复跑绿）——与 CI runner 门禁失败同源
   （坑 #57⑥ 家族），已由 CI 的 pytest-timeout 180s 站岗。
 - 待办：用户 Windows 复验 v0.2.4（第四轮）。
+
+## v0.2.5 — 渐变内嵌（2026-11-06，v0.2.4 报错原文驱动）
+
+- **v0.2.4 用户复验（原文粘贴，两文件同崩点）**：启动 ✓（调用点外科修生效）；
+  所有文件打开崩在 `color_maps.py:60` 的 `utf-8-sig` 读取——
+  `UnicodeDecodeError: ... byte 0xbd in position 2313: invalid start byte`。
+- **决定性对比**：conda / PyPI wheel（今日新下）/ pyqtgraph 发版史——0.14.0 仅
+  一个 py3-none-any 通用 wheel，turbo.csv 全渠道纯 ASCII 6401B。用户机文件含
+  0xa9/0xab/0xbd（UTF-8/GBK 双不可解码）且自 v0.2.0 起如此——**该文件在用户
+  机器上被改写**（解压工具/杀软"智能转码"文本文件为最可能解释；取证待用户
+  提供该文件，但修复不再依赖它）。
+- **终版（坑 #65 终章三）**：turbo/viridis 256×4 RGBA 程序化转储为 base64 内嵌
+  color_maps.py（各 ~1.4KB），`get_builtin_gradient` 零磁盘 IO、零编码依赖；
+  回填 `_mapCache` 不变。手贴 base64 首版即翻车（turbo 丢 3 字符）——改由脚本
+  生成整个文件，杜绝人工转写。
+- **测试**：5 项——base64 合法性/256×4、**与官方 pristine 定义逐字节交叉核验**、
+  **打桩 open 必炸的零读盘保证**、缓存同一性、未知名回退。pytest **372 绿**
+  + 重打包冒烟 SMOKE OK。
+- 待办：用户 Windows 复验 v0.2.5（第五轮）；（可选）用户提供其机器上的
+  turbo.csv 以闭合"谁改写了文件"之谜。

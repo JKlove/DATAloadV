@@ -11,7 +11,7 @@
 |---|---|
 | `dataloadv.spec` | 唯一打包定义，跨平台单份（darwin 出 .app / win32 出 onedir .exe），本机与 CI 共用 |
 | `packaging/entry.py` | 打包入口 shim（console_script 等价物，回归纯 3 行；曾前置 UTF-8 自举，v0.2.4 随全局补丁撤销而移除，坑 #65） |
-| `ui/widgets/color_maps.py` | 渐变 CSV 的 GBK 安全加载（坑 #65 终版：显式 UTF-8 + 回填 pyqtgraph 缓存——**调用点外科修，不改全局**） |
+| `ui/widgets/color_maps.py` | 渐变**内嵌**加载（坑 #65 终章三：turbo/viridis base64 程序化转储，零读盘零编码——用户机文件被改写的教训） |
 | `.github/workflows/build.yml` | CI 双平台出包：测试门禁（临时 continue-on-error + 180s 超时，坑 #57⑥ 间歇崩溃档案）→ PyInstaller → 压 zip → artifacts |
 | `app.py` 的 `--smoke` | 打包产物无头自检：起主窗口自检后自动退出，末行 `SMOKE OK` |
 
@@ -59,7 +59,7 @@
 | #59 | PyInstaller 七则：spec 全局是 SPECPATH；mne lazy_loader→collect_submodules 四包；collect_data 最小集别用 collect_all；warn 文件 missing 多为 lazy_loader 噪音 |
 | #60 | CI 产物写出路径与 upload path 逐字对账（Compress-Archive 相对路径落 CWD=仓库根） |
 | #61 | 初始窗口尺寸按屏收口 + 首显示 resizeDocks（小屏/高 DPI 首布局截断） |
-| #65 | 中文 Windows GBK 读 UTF-8 资源必炸 → **调用点外科修**（`color_maps.py` 显式 UTF-8 + 缓存回填）；PYTHONUTF8 冻结环境无效；全局改 builtins.open 会炸 shiboken 导入（v0.2.1–v0.2.3 三轮事故全档案） |
+| #65 | 中文 Windows GBK 读 UTF-8 资源必炸 → **渐变内嵌**（`color_maps.py`，零读盘零编码）；PYTHONUTF8 冻结环境无效；全局改 builtins.open 炸 shiboken；用户机文件本身会被改写——四方案三轮事故全档案（v0.2.1–v0.2.5） |
 | #66 | （历史）execv 参数 argv[0] 不重复拼；windowed 模式 `sys.stderr is None` 要垫（app.py 垫 stderr 仍在用） |
 
 ## 红线（打包场景违反即事故）
