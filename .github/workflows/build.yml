@@ -1,8 +1,10 @@
 # DataloadV 双平台打包 CI
 #
-# 触发：workflow_dispatch（手动）/ push tag v*（发版）
+# 触发：workflow_dispatch（手动，gh workflow run build.yml）/ push tag v*（发版）
 # 流程：测试门禁（offscreen pytest，绿了才打包）→ PyInstaller（与本机共用同一份
-#   dataloadv.spec，sys.platform 分支处理平台差异）→ 压 zip → upload artifacts
+#   dataloadv.spec，sys.platform 分支处理平台差异）→ 真机冒烟（产物在 runner 上
+#   直接运行 --smoke——v0.2.1/v0.2.3 两轮 Windows 启动崩溃出货前无人运行过的
+#   教训）→ 压 zip → upload artifacts
 # 产物：DataloadV-{version}-macOS-arm64.zip / -win64.zip（onedir 压 zip；
 #   未签名——macOS 首开右键→打开，Windows 更多信息→仍要运行）
 # runner 不用 conda（慢）：setup-python 3.10 + pip 装齐（dev extra 含 pytest），
@@ -35,11 +37,10 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e ".[extra-readers,dev]" pyinstaller
 
-      # 临时 continue-on-error（2026-10-26）：门禁在 runner 上硬崩且注解采不到
-      # 失败摘要（疑似 Qt 崩溃无输出），本地三重复刻全绿背书——先放行发版，
-      # 测试结果照常记录（失败步黄标不红标），根因另行排查后恢复拦截
-      - name: 测试门禁（offscreen；记录不拦截）
-        continue-on-error: true
+      # 门禁已恢复拦截（2026-11-07）：放行观察期三轮全绿（v0.2.3 末轮/2.4/2.5），
+      # 间歇崩溃（坑 #57⑥ 家族）已由 pytest-timeout 180s 兜底——挂死会转成带
+      # 调用栈的失败经 ::error:: 注解外显，不再需要人工登录看日志
+      - name: 测试门禁（offscreen；绿了才打包）
         env:
           QT_QPA_PLATFORM: offscreen
         run: |
@@ -60,6 +61,24 @@ jobs:
 
       - name: PyInstaller 打包
         run: python -m PyInstaller dataloadv.spec --noconfirm
+
+      # 真机冒烟（2026-11-07 新增）：产物在 runner 上直接运行——启动崩溃类
+      # 问题（v0.2.1 argv / v0.2.3 shiboken）出货前当场拦截，不再依赖用户真机
+      - name: 真机冒烟（打包产物直接运行 offscreen --smoke）
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          set +e
+          dist/DataloadV/DataloadV --smoke > smoke_out.txt 2>&1
+          rc=$?
+          tail -2 smoke_out.txt
+          if [ "$rc" -ne 0 ]; then
+            echo "::error::真机冒烟退出码 $rc；输出末 10 行："
+            tail -10 smoke_out.txt | while IFS= read -r line; do
+              echo "::error::${line:0:200}"
+            done
+          fi
+          exit $rc
 
       - name: 压 zip（-y 保留符号链接，保证 .app bundle 结构完整）
         id: zip
@@ -90,9 +109,8 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e ".[extra-readers,dev]" pyinstaller
 
-      # 临时 continue-on-error（同 mac job：硬崩根因未明，先放行发版，恢复拦截另行提交）
-      - name: 测试门禁（offscreen；记录不拦截）
-        continue-on-error: true
+      # 门禁已恢复拦截（同 mac job；观察期三轮全绿 + pytest-timeout 兜底）
+      - name: 测试门禁（offscreen；绿了才打包）
         env:
           QT_QPA_PLATFORM: offscreen
         run: |
@@ -113,6 +131,25 @@ jobs:
 
       - name: PyInstaller 打包
         run: python -m PyInstaller dataloadv.spec --noconfirm
+
+      # 真机冒烟（同 mac job）：GUI 子系统 exe 在 pwsh 不等待——Start-Process
+      # -Wait -PassThru 取退出码；console=False 的 print 走重定向管道捕获
+      - name: 真机冒烟（打包产物直接运行 offscreen --smoke）
+        env:
+          QT_QPA_PLATFORM: offscreen
+        shell: pwsh
+        run: |
+          $p = Start-Process -FilePath "dist\DataloadV\DataloadV.exe" -ArgumentList "--smoke" `
+            -RedirectStandardOutput "smoke_out.txt" -RedirectStandardError "smoke_err.txt" -Wait -PassThru
+          if ($p.ExitCode -ne 0) {
+            Write-Output "::error::真机冒烟退出码 $($p.ExitCode)；输出："
+            Get-Content smoke_out.txt, smoke_err.txt -ErrorAction SilentlyContinue |
+              Select-Object -First 8 | ForEach-Object {
+                $l = $_.ToString().Substring(0, [Math]::Min(200, $_.ToString().Length))
+                Write-Output "::error::$l"
+              }
+          }
+          exit $p.ExitCode
 
       - name: 压 zip
         id: zip
