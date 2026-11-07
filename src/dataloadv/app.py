@@ -52,14 +52,22 @@ def _run_smoke() -> int:
 
     等价 ``scripts/smoke_gui.py``（打包产物无法直接跑 scripts/ 下的脚本，
     故在入口内置一份等价逻辑）。无头运行配 ``QT_QPA_PLATFORM=offscreen``。
+
+    不用 ``app.exec()``：Windows runner 的 offscreen 环境下事件循环可能
+    不投递（QTimer 2500ms 永不触发 → exec 永不返回，2026-11-07 CI 实测
+    挂 10min+；用户真机正常=环境特有病症）。改用**有界 processEvents 轮询**：
+    正常环境 2.5s 定时器回调采集后跳出；病态环境最多 30s 走完并明确报告
+    ——任何环境必然终止（CI 不再需要外层看门狗兜这种挂）。
     """
+    import time as _time
+
     app = QApplication(sys.argv)
     win = MainWindow()
     win.show()
     checks: dict[str, object] = {}
 
     def check_and_quit():
-        """集中所有断言；任何一条失败也要保证 quit 被调用（finally）."""
+        """集中所有断言；任何一条失败也要保证标记写入（finally）."""
         try:
             checks["title"] = win.windowTitle()
             checks["docks"] = [d.windowTitle() for d in win.findChildren(QDockWidget)]
@@ -67,10 +75,15 @@ def _run_smoke() -> int:
             checks["tabs"] = win.tabs.count()
             checks["log_widget"] = win.log_panel is not None
         finally:
-            app.quit()  # 关键：回调内任何异常都不能阻塞退出（scripts/smoke_gui.py 踩过的坑）
+            checks["_done"] = True  # 回调内任何异常都不能阻塞退出标记
 
     QTimer.singleShot(2500, check_and_quit)
-    app.exec()
+    deadline = _time.monotonic() + 30.0
+    while _time.monotonic() < deadline:
+        app.processEvents()
+        if checks.get("_done"):
+            break
+        _time.sleep(0.05)
 
     print("窗口标题:", checks.get("title"))
     print("Dock:", checks.get("docks"))
@@ -83,6 +96,9 @@ def _run_smoke() -> int:
         and checks.get("tabs", 0) >= 1
         and checks.get("log_widget")
     )
+    if not checks.get("_done"):
+        print("事件循环投递异常：QTimer 2500ms 未触发（环境病症，非应用逻辑）")
+        ok = False
     print("SMOKE", "OK" if ok else "FAILED")
     return 0 if ok else 1
 
