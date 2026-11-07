@@ -43,6 +43,7 @@ jobs:
       - name: 测试门禁（offscreen；绿了才打包）
         env:
           QT_QPA_PLATFORM: offscreen
+          DLV_TEST_WAIT_S: "60"  # runner 慢约 20 倍，等待上限按比例放宽
         run: |
           set +e
           python -m pytest -q -ra --tb=short --timeout=180 --timeout_method=thread > pytest_out.txt 2>&1
@@ -113,6 +114,7 @@ jobs:
       - name: 测试门禁（offscreen；绿了才打包）
         env:
           QT_QPA_PLATFORM: offscreen
+          DLV_TEST_WAIT_S: "60"  # 同 mac job：慢速 runner 放宽等待上限
         run: |
           python -m pytest -q -ra --tb=short --timeout=180 --timeout_method=thread > pytest_out.txt 2>&1
           if ($LASTEXITCODE -ne 0) {

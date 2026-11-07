@@ -70,11 +70,20 @@ def synthetic_raw():
 # 明确 FAIL 可见，不会永挂。坑 #57⑥（已根除）。时间戳探针常设：
 # 文件级写入不经 pytest fd 捕获、不改变 Qt 时序（-s 观测会改变行为）——再有
 # 挂死时看 /tmp/pytest_trace.log 最后一个 START 无 FINISH 即精确挂点，零成本。
+import os as _os
 import time as _time
 
+# 等待上限默认 15s，可用 DLV_TEST_WAIT_S 覆盖——CI 的 Windows runner 比
+# 本机慢约 20 倍（全量套件 23s→8.5min），TFR 后台线程收尾在 GIL 争抢下
+# 常态超过 15s（2026-11-07 dispatch 实测轮询超时成批失败），CI 置 60
+def _wait_budget() -> float:
+    return float(_os.environ.get("DLV_TEST_WAIT_S", "15"))
 
-def wait_until(qtbot, cond, what: str = "条件", timeout_s: float = 15.0) -> None:
+
+def wait_until(qtbot, cond, what: str = "条件", timeout_s: float | None = None) -> None:
     """Python 层 deadline 轮询等待（qtbot.waitUntil 的防挂死替代）."""
+    if timeout_s is None:
+        timeout_s = _wait_budget()
     deadline = _time.monotonic() + timeout_s
     while not cond():
         if _time.monotonic() > deadline:

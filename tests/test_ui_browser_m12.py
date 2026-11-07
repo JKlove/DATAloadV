@@ -24,14 +24,20 @@ from dataloadv.ui.strings_zh import S  # noqa: E402
 from dataloadv.workers.generic import _keepalive as _KA_THREADS  # noqa: E402
 
 
-def _poll_until(qtbot, cond, what: str, timeout_s: float = 15.0) -> None:
+def _poll_until(qtbot, cond, what: str, timeout_s: float | None = None) -> None:
     """Python 层 deadline 轮询等待（防挂死兜底）.
 
     qtbot.waitUntil 的超时检查在 Qt 事件循环侧——事件分发被饿死时超时本身
     也不触发 → 永等挂死（2026-10-13 全量 Heisenbug，系统高负载下 ~50% 复
     现，挂点集中在 TFR 等待；观测手段 -s/faulthandler 一介入就绿）。
     本函数条件与超时都在 Python 层：最坏 timeout_s 后明确 FAIL 可见。
+    timeout_s 缺省走 conftest._wait_budget（DLV_TEST_WAIT_S 可覆盖——CI 的
+    慢速 Windows runner 上 TFR 线程收尾常态超 15s，2026-11-07 实测）。
     """
+    import os as _os
+
+    if timeout_s is None:
+        timeout_s = float(_os.environ.get("DLV_TEST_WAIT_S", "15"))
     deadline = time.monotonic() + timeout_s
     while not cond():
         if time.monotonic() > deadline:
