@@ -148,7 +148,14 @@ jobs:
         shell: pwsh
         run: |
           $p = Start-Process -FilePath "dist\DataloadV\DataloadV.exe" -ArgumentList "--smoke" `
-            -RedirectStandardOutput "smoke_out.txt" -RedirectStandardError "smoke_err.txt" -Wait -PassThru
+            -RedirectStandardOutput "smoke_out.txt" -RedirectStandardError "smoke_err.txt" -PassThru
+          # 硬超时 120s：Windows runner 的 offscreen 事件循环可能不投递（QTimer
+          # 不触发 → 永不退出，2026-11-07 实测挂 10min+；用户真机正常=runner 特有）
+          if (-not $p.WaitForExit(120000)) {
+            $p.Kill()
+            Write-Output "::error::真机冒烟 120s 未退出（offscreen 事件循环不投递，runner 特有病症，TODO 根因）"
+            exit 1
+          }
           if ($p.ExitCode -ne 0) {
             Write-Output "::error::真机冒烟退出码 $($p.ExitCode)；输出："
             Get-Content smoke_out.txt, smoke_err.txt -ErrorAction SilentlyContinue |
