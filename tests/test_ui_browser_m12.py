@@ -41,6 +41,11 @@ def _poll_until(qtbot, cond, what: str, timeout_s: float | None = None) -> None:
     deadline = time.monotonic() + timeout_s
     while not cond():
         if time.monotonic() > deadline:
+            # 超时即转储全线程栈（Windows runner TFR 链死锁取证，2026-11-07）
+            import faulthandler
+            import sys
+            print(f"=== 轮询超时（{timeout_s}s）：{what}；全线程栈转储 ===", file=sys.stderr)
+            faulthandler.dump_traceback(file=sys.stderr)
             pytest.fail(f"轮询超时（{timeout_s}s）：{what}")
         qtbot.wait(50)
 

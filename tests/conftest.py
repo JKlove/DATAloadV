@@ -87,6 +87,12 @@ def wait_until(qtbot, cond, what: str = "条件", timeout_s: float | None = None
     deadline = _time.monotonic() + timeout_s
     while not cond():
         if _time.monotonic() > deadline:
+            # 超时即转储全部线程栈（Windows runner TFR 链死锁取证用，
+            # 2026-11-07）——卡点在哪条线程哪个调用一目了然
+            import faulthandler
+            import sys
+            print(f"=== 等待超时（{timeout_s}s）：{what}；全线程栈转储 ===", file=sys.stderr)
+            faulthandler.dump_traceback(file=sys.stderr)
             import pytest
             pytest.fail(f"等待超时（{timeout_s}s）：{what}")
         qtbot.wait(50)
