@@ -12,7 +12,7 @@
 | `dataloadv.spec` | 唯一打包定义，跨平台单份（darwin 出 .app / win32 出 onedir .exe），本机与 CI 共用 |
 | `packaging/entry.py` | 打包入口 shim（console_script 等价物，回归纯 3 行；曾前置 UTF-8 自举，v0.2.4 随全局补丁撤销而移除，坑 #65） |
 | `ui/widgets/color_maps.py` | 渐变**内嵌**加载（坑 #65 终章三：turbo/viridis base64 程序化转储，零读盘零编码——用户机文件被改写的教训） |
-| `.github/workflows/build.yml` | CI 双平台出包：测试门禁（临时 continue-on-error + 180s 超时，坑 #57⑥ 间歇崩溃档案）→ PyInstaller → 压 zip → artifacts |
+| `.github/workflows/build.yml` | CI 双平台出包：测试门禁（拦截 + 失败重试一次容错）→ PyInstaller → 真机冒烟（mac 拦截 / Windows 记录）→ 压 zip → artifacts |
 | `app.py` 的 `--smoke` | 打包产物无头自检：起主窗口自检后自动退出，末行 `SMOKE OK` |
 
 ## 发版流程（按序执行；命令细节见 HANDOFF「打包」节）

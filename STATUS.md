@@ -401,6 +401,17 @@
 
 ## 最近变更记录（新条目加在最上面）
 
+- 2026-11-07（CI 三件套落地）：用户指示三项全做——①**gh 接入**（用户配置）：
+  dispatch 免 tag 迭代 + 真实日志读取，当天即破案 CI 间歇失败之谜；②**门禁恢复
+  拦截**+失败自动重试一次（flake 容错：间歇崩重跑即消、真回归连败两次仍拦截）；
+  ③**双平台真机冒烟步**（产物在 runner 直接运行 --smoke；mac 拦截恒绿 / Windows
+  记录不拦截——间歇挂起 2/3，权威验证=用户真机）。**runner 三族病症档案**（坑
+  #57⑥）：mac 间歇段错误 139 / Windows TFR 线程链永不收尾（两测试文件 Windows
+  侧 --ignore）/ Windows 冻结 exe 间歇挂起——本地与用户真机均正常=runner 环境
+  特有；等待上限 DLV_TEST_WAIT_S 可调（CI=60）、超时自动 faulthandler 全线程栈
+  转储（取证已埋）、--smoke 改有界 processEvents 轮询永不挂死。最终架构验证
+  run 42340008195 **双平台全绿**。dispatch 调试 6 轮归档 review。
+
 - 2026-10-26（v0.2.3 用户实锤新崩 → v0.2.4 调用点外科修）：v0.2.3 在用户中文
   Windows **启动即崩** `TypeError: cannot pickle 'EditorHelper' object`（import 链
   经 shiboken6 签名系统）——全局包装 builtins.open 改变了 shiboken 导入期容错路径
